@@ -29,7 +29,7 @@ var _first := true
 func _ready() -> void:
 	fov = 70.0
 	near = 0.05
-	far = 40000.0
+	far = 60000.0
 	current = true
 	process_physics_priority = 10
 

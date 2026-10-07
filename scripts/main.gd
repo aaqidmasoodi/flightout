@@ -1,18 +1,20 @@
 extends Node3D
 ## Builds the Flightout test world: sky, sun, ground, runway, hills, jet, camera, HUD.
 
-const SPAWN := Vector3(0.0, 2.0, 1200.0)
 
 
 func _ready() -> void:
 	_setup_input()
 	_build_environment()
-	_build_ground()
+
+	var world: Node3D = preload("res://scripts/world/world.gd").new()
+	world.name = "World"
+	add_child(world)
 
 	var aircraft: Node3D = preload("res://scripts/su27_controller.gd").new()
 	aircraft.name = "Su27"
 	add_child(aircraft)
-	aircraft.global_position = SPAWN
+	aircraft.global_transform = WorldData.spawn_transform(0)
 	aircraft.spawn = aircraft.global_transform
 
 	var cam: Camera3D = preload("res://scripts/chase_camera.gd").new()
@@ -70,8 +72,9 @@ func _build_environment() -> void:
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.fog_enabled = true
 	env.fog_light_color = Color(0.68, 0.76, 0.86)
-	env.fog_density = 0.00008
-	env.fog_sky_affect = 0.0
+	env.fog_density = 0.000035
+	env.fog_sky_affect = 0.15
+	env.fog_aerial_perspective = 0.6
 
 	var world_env := WorldEnvironment.new()
 	world_env.environment = env
@@ -82,63 +85,3 @@ func _build_environment() -> void:
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 300.0
 	add_child(sun)
-
-
-func _mat(c: Color, rough: float = 1.0) -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.albedo_color = c
-	m.roughness = rough
-	return m
-
-
-func _build_ground() -> void:
-	var ground := MeshInstance3D.new()
-	var plane := PlaneMesh.new()
-	plane.size = Vector2(60000.0, 60000.0)
-	ground.mesh = plane
-	ground.material_override = _mat(Color(0.30, 0.42, 0.22))
-	add_child(ground)
-
-	var runway := MeshInstance3D.new()
-	var rbox := BoxMesh.new()
-	rbox.size = Vector3(45.0, 0.1, 3000.0)
-	runway.mesh = rbox
-	runway.material_override = _mat(Color(0.17, 0.17, 0.18), 0.9)
-	add_child(runway)
-
-	var stripe := BoxMesh.new()
-	stripe.size = Vector3(1.0, 0.12, 30.0)
-	var mm := MultiMesh.new()
-	mm.transform_format = MultiMesh.TRANSFORM_3D
-	mm.mesh = stripe
-	mm.instance_count = 50
-	for i in 50:
-		mm.set_instance_transform(i, Transform3D(Basis(), Vector3(0.0, 0.0, -1470.0 + i * 60.0)))
-	var stripes := MultiMeshInstance3D.new()
-	stripes.multimesh = mm
-	stripes.material_override = _mat(Color(0.95, 0.95, 0.90))
-	add_child(stripes)
-
-	# scattered hills so you can feel speed and height
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 7
-	var hill := SphereMesh.new()
-	hill.radius = 1.0
-	hill.height = 2.0
-	hill.radial_segments = 16
-	hill.rings = 8
-	var hm := MultiMesh.new()
-	hm.transform_format = MultiMesh.TRANSFORM_3D
-	hm.mesh = hill
-	hm.instance_count = 400
-	for i in 400:
-		var ang := rng.randf() * TAU
-		var dist := rng.randf_range(2500.0, 25000.0)
-		var r := rng.randf_range(150.0, 900.0)
-		var h := rng.randf_range(60.0, 500.0)
-		var p := Vector3(cos(ang) * dist, 0.0, sin(ang) * dist)
-		hm.set_instance_transform(i, Transform3D(Basis().scaled(Vector3(r, h, r)), p))
-	var hills := MultiMeshInstance3D.new()
-	hills.multimesh = hm
-	hills.material_override = _mat(Color(0.24, 0.34, 0.20))
-	add_child(hills)

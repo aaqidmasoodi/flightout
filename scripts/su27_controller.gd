@@ -37,6 +37,9 @@ const MAX_STEER := deg_to_rad(55.0) # nose wheel angle at taxi speed
 const BRAKE_FRICTION := 0.45
 const MAX_SINK_RATE := 6.0          # m/s, harder than this breaks the gear
 const GROUND_CLEARANCE := GEAR_HEIGHT
+const MAX_GROUND_PITCH := deg_to_rad(13.0)   # tail touches the runway beyond this
+const CRASH_PROBES := [Vector3(0.0, -0.2, -11.0), Vector3(7.4, -0.3, 1.0), Vector3(-7.4, -0.3, 1.0),
+		Vector3(2.15, 3.9, 3.9), Vector3(-2.15, 3.9, 3.9), Vector3(0.0, 0.0, 10.9)]
 
 const GRAVITY := 9.81
 const RHO0 := 1.225
@@ -65,6 +68,8 @@ var flaps := false
 var radar_on := false
 var radome_open := false
 var wheel_brakes := false
+var wow := true                     # weight on wheels
+var nose_steer_deg := 0.0           # nose-wheel deflection, + = right
 
 # telemetry for HUD
 var speed := 0.0
@@ -72,6 +77,7 @@ var mach := 0.0
 var aoa_deg := 0.0
 var g_load := 1.0
 var vertical_speed := 0.0
+var altitude_agl := 0.0
 var thrust_now := 0.0
 
 # smoothed pilot inputs (also drive control surface visuals)
@@ -83,6 +89,8 @@ var brake_pos := 0.0
 
 var _surfaces := {}
 var _tires: Array[Node3D] = []
+var _nose_gear: Node3D
+var _nose_rest: Basis
 
 
 func _ready() -> void:
@@ -105,6 +113,9 @@ func _ready() -> void:
 		var node := model.find_child(n, true, false) as Node3D
 		if node:
 			_surfaces[n] = [node, node.transform.basis]
+	_nose_gear = model.find_child("NoseGear", true, false) as Node3D
+	if _nose_gear:
+		_nose_rest = _nose_gear.transform.basis
 	for n in ["NoseGear_Tire", "MainGear_Tire_L", "MainGear_Tire_R"]:
 		var t := model.find_child(n, true, false) as Node3D
 		if t:
@@ -176,6 +187,7 @@ func _physics_process(delta: float) -> void:
 		if crashed:
 			break
 	_update_surfaces()
+	_update_nose_wheel(delta)
 	if on_ground and gear_down and not gear_player.is_playing():
 		for t in _tires:
 			t.rotate_object_local(Vector3.RIGHT, speed / 0.45 * delta)
@@ -237,6 +249,7 @@ func _simulate(dt: float) -> void:
 
 	# --- ground contact forces ---
 	var touching := _ground_contact_height() <= 0.05
+	wow = touching
 	if touching:
 		var normal := maxf(MASS * GRAVITY - aero.dot(Vector3.UP), 0.0)
 		var flat_v := Vector3(velocity.x, 0.0, velocity.z)
@@ -290,6 +303,9 @@ func _simulate(dt: float) -> void:
 		if e.x < 0.0:
 			e.x = 0.0
 			omega.x = maxf(omega.x, 0.0)
+		if e.x > MAX_GROUND_PITCH:   # tail bumper: the stinger rests on the runway instead of digging in
+			e.x = MAX_GROUND_PITCH
+			omega.x = minf(omega.x, 0.0)
 		b = Basis.from_euler(e)
 		# tyres grip sideways: kill sideways sliding
 		var side := b.x
@@ -307,7 +323,10 @@ func _simulate(dt: float) -> void:
 		global_position.y -= depth
 		if was_airborne:
 			var e2 := global_transform.basis.get_euler()
-			if not gear_down or gear_player.is_playing():
+			var cp := global_transform * MAIN_CONTACT
+			if WorldData.is_water(cp.x, cp.z):
+				_crash("Ditched in the sea")
+			elif not gear_down or gear_player.is_playing():
 				_crash("Landed with the gear up")
 			elif prev_y < -MAX_SINK_RATE:
 				_crash("Hard landing (%.1f m/s sink)" % -prev_y)
@@ -318,16 +337,38 @@ func _simulate(dt: float) -> void:
 		if velocity.y < 0.0:
 			velocity.y = 0.0
 		on_ground = true
+		var t := global_transform
+		var mp := t * MAIN_CONTACT
+		if not crashed and WorldData.is_water(mp.x, mp.z):
+			_crash("Ditched in the sea")
 	elif depth > 0.3:
 		on_ground = false
+	if not crashed and _airframe_hit_terrain():
+		_crash("Hit the terrain")
+	altitude_agl = maxf(_height_above_ground(global_position) - GEAR_HEIGHT, 0.0)
+
+
+func _height_above_ground(p: Vector3) -> float:
+	return p.y - WorldData.ground_height(p.x, p.z)
 
 
 func _ground_contact_height() -> float:
-	# lowest gear contact point height above the ground (y = 0)
+	# lowest gear contact point height above the terrain / sea surface
 	var t := global_transform
 	if not gear_down:
-		return (t * Vector3(0.0, -1.3, 0.0)).y
-	return minf((t * NOSE_CONTACT).y, (t * MAIN_CONTACT).y)
+		return _height_above_ground(t * Vector3(0.0, -1.3, 0.0))
+	return minf(_height_above_ground(t * NOSE_CONTACT), _height_above_ground(t * MAIN_CONTACT))
+
+
+func _airframe_hit_terrain() -> bool:
+	# nose, wingtips, fin tips and tail: any of them in the ground = crash
+	var t := global_transform
+	for lp in CRASH_PROBES:
+		if wow and lp.z > 9.0:
+			continue
+		if _height_above_ground(t * lp) < -0.3:
+			return true
+	return false
 
 
 func _crash(reason: String) -> void:
@@ -357,6 +398,18 @@ func _update_surfaces() -> void:
 	_set_surface("Slat_R", slat)
 	_set_surface("Rudder_L", yaw_in * 25.0)
 	_set_surface("Rudder_R", yaw_in * 25.0)
+
+
+func _update_nose_wheel(delta: float) -> void:
+	# tiller steering: the nose wheel follows Q/E whenever the wheels are on the ground,
+	# even when stopped; it centres itself in the air
+	var target := 0.0
+	if wow:
+		target = yaw_in * rad_to_deg(MAX_STEER) * clampf(1.0 - speed / 60.0, 0.12, 1.0)
+	nose_steer_deg = move_toward(nose_steer_deg, target, 90.0 * delta)
+	if _nose_gear and gear_down and not gear_player.is_playing():
+		# model nose is +Z and model-left is +X, so a right turn is a negative rotation about +Y
+		_nose_gear.transform.basis = _nose_rest * Basis(Vector3.UP, deg_to_rad(-nose_steer_deg))
 
 
 func _toggle_clip(p: AnimationPlayer, clip: String, open: bool) -> void:
