@@ -1,0 +1,15 @@
+# Godot
+.godot/
+*.import.tmp
+export_presets.cfg
+/build/
+
+# Blender
+*.blend1
+*.blend2
+*_backup_*.blend
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log
