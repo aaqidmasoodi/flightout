@@ -1,7 +1,9 @@
 @tool
 extends CompositorEffect
-## Volumetric clouds as a compositor effect: raymarched at half resolution on the GPU, depth-aware (clouds sit
-## correctly in front of and behind terrain and aircraft), then upsampled and composited over the HDR scene.
+## Volumetric clouds as a compositor effect, in three GPU passes:
+##   1. march   (half resolution): raymarch the cloud volume; colour + cloud start/end distances
+##   2. resolve (half resolution): temporal accumulation with reprojection and neighbourhood variance clipping
+##   3. composite (full resolution): depth-aware upsample; each pixel trims the clouds to what lies in front of it
 ## The sky system sets the public parameters every frame from the time of day and weather.
 
 const UBO_FLOATS := 92          # 3 mat4 + 11 vec4
@@ -23,25 +25,28 @@ var darkness := 0.0
 var wind := Vector2.ZERO
 var max_distance := 40000.0
 var primary_steps := 72
-var light_steps := 5
+var light_steps := 3
 var height_variation := 450.0   # metres the layer base and the cloud tops wander across the map
-var history_weight := 0.88      # temporal accumulation (higher = smoother, slower to react)
+var history_weight := 0.95      # temporal accumulation (motion-adaptive clipping keeps it from smearing)
 
 var _rd: RenderingDevice
-var _march_shader := RID()
-var _march_pipe := RID()
-var _comp_shader := RID()
-var _comp_pipe := RID()
+var _pipes := {}                # name -> [shader, pipeline]
 var _repeat_sampler := RID()
 var _clamp_sampler := RID()
+var _point_sampler := RID()
 var _ubo := RID()
-var _half := [RID(), RID()]     # ping-pong: current result and last frame's (history)
+var _raw_color := RID()
+var _raw_depth := RID()
+var _hist_color := [RID(), RID()]
+var _hist_depth := [RID(), RID()]
 var _half_size := Vector2i.ZERO
+var _full_size := Vector2i.ZERO
 var _cur := 0
 var _prev_vp := Projection()
 var _has_history := false
-var _noise := {}                 # name -> RD texture RID
+var _noise := {}
 var _frame := 0
+var _prev_wind := Vector2.ZERO
 
 
 func _init() -> void:
@@ -51,25 +56,24 @@ func _init() -> void:
 
 
 func _setup() -> void:
-	_march_shader = _rd.shader_create_from_spirv((load("res://shaders/clouds_march.glsl") as RDShaderFile).get_spirv())
-	_march_pipe = _rd.compute_pipeline_create(_march_shader)
-	_comp_shader = _rd.shader_create_from_spirv((load("res://shaders/clouds_composite.glsl") as RDShaderFile).get_spirv())
-	_comp_pipe = _rd.compute_pipeline_create(_comp_shader)
-	var s := RDSamplerState.new()
-	s.min_filter = RenderingDevice.SAMPLER_FILTER_LINEAR
-	s.mag_filter = RenderingDevice.SAMPLER_FILTER_LINEAR
-	s.mip_filter = RenderingDevice.SAMPLER_FILTER_LINEAR
-	s.repeat_u = RenderingDevice.SAMPLER_REPEAT_MODE_REPEAT
-	s.repeat_v = RenderingDevice.SAMPLER_REPEAT_MODE_REPEAT
-	s.repeat_w = RenderingDevice.SAMPLER_REPEAT_MODE_REPEAT
-	_repeat_sampler = _rd.sampler_create(s)
-	var c := RDSamplerState.new()
-	c.min_filter = RenderingDevice.SAMPLER_FILTER_LINEAR
-	c.mag_filter = RenderingDevice.SAMPLER_FILTER_LINEAR
-	c.repeat_u = RenderingDevice.SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE
-	c.repeat_v = RenderingDevice.SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE
-	_clamp_sampler = _rd.sampler_create(c)
+	for n in ["march", "resolve", "composite"]:
+		var sh := _rd.shader_create_from_spirv((load("res://shaders/clouds_%s.glsl" % n) as RDShaderFile).get_spirv())
+		_pipes[n] = [sh, _rd.compute_pipeline_create(sh)]
+	_repeat_sampler = _sampler(RenderingDevice.SAMPLER_REPEAT_MODE_REPEAT, RenderingDevice.SAMPLER_FILTER_LINEAR)
+	_clamp_sampler = _sampler(RenderingDevice.SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE, RenderingDevice.SAMPLER_FILTER_LINEAR)
+	_point_sampler = _sampler(RenderingDevice.SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE, RenderingDevice.SAMPLER_FILTER_NEAREST)
 	_ubo = _rd.uniform_buffer_create(UBO_FLOATS * 4)
+
+
+func _sampler(rep: int, filt: int) -> RID:
+	var s := RDSamplerState.new()
+	s.min_filter = filt
+	s.mag_filter = filt
+	s.mip_filter = filt
+	s.repeat_u = rep
+	s.repeat_v = rep
+	s.repeat_w = rep
+	return _rd.sampler_create(s)
 
 
 ## Called from the main thread once the noise textures have generated.
@@ -80,26 +84,45 @@ func set_noise_textures(textures: Dictionary) -> void:
 	_noise = rids
 
 
+func _all_targets() -> Array:
+	return [_raw_color, _raw_depth, _hist_color[0], _hist_color[1], _hist_depth[0], _hist_depth[1]]
+
+
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE and _rd:
-		for r in [_march_pipe, _march_shader, _comp_pipe, _comp_shader, _repeat_sampler, _clamp_sampler, _ubo, _half[0], _half[1]]:
-			if r.is_valid():
+		var rids: Array = [_raw_color, _raw_depth, _hist_color[0], _hist_color[1], _hist_depth[0], _hist_depth[1],
+			_repeat_sampler, _clamp_sampler, _point_sampler, _ubo]
+		for k in _pipes:
+			rids.append(_pipes[k][1])
+			rids.append(_pipes[k][0])
+		for r in rids:
+			if (r as RID).is_valid():
 				_rd.free_rid(r)
 
 
-func _ensure_half(size: Vector2i) -> void:
-	var hs := Vector2i(maxi(size.x / 2, 1), maxi(size.y / 2, 1))
-	if hs == _half_size and (_half[0] as RID).is_valid():
+func _target(fmt: int, size: Vector2i) -> RID:
+	var f := RDTextureFormat.new()
+	f.format = fmt
+	f.width = size.x
+	f.height = size.y
+	f.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
+	return _rd.texture_create(f, RDTextureView.new())
+
+
+func _ensure_targets(size: Vector2i) -> void:
+	var hs := Vector2i(maxi((size.x + 1) / 2, 1), maxi((size.y + 1) / 2, 1))
+	if hs == _half_size and _raw_color.is_valid():
 		return
+	for r in _all_targets():
+		if (r as RID).is_valid():
+			_rd.free_rid(r)
+	var rgba := RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT
+	var rg := RenderingDevice.DATA_FORMAT_R32G32_SFLOAT
+	_raw_color = _target(rgba, hs)
+	_raw_depth = _target(rg, hs)
 	for i in 2:
-		if (_half[i] as RID).is_valid():
-			_rd.free_rid(_half[i])
-		var f := RDTextureFormat.new()
-		f.format = RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT
-		f.width = hs.x
-		f.height = hs.y
-		f.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT
-		_half[i] = _rd.texture_create(f, RDTextureView.new())
+		_hist_color[i] = _target(rgba, hs)
+		_hist_depth[i] = _target(rg, hs)
 	_half_size = hs
 	_has_history = false
 
@@ -115,7 +138,15 @@ static func _xform_floats(t: Transform3D) -> PackedFloat32Array:
 		b.z.x, b.z.y, b.z.z, 0.0, t.origin.x, t.origin.y, t.origin.z, 1.0])
 
 
-func _sampler_uniform(binding: int, sampler: RID, tex: RID) -> RDUniform:
+func _u_image(binding: int, tex: RID) -> RDUniform:
+	var u := RDUniform.new()
+	u.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+	u.binding = binding
+	u.add_id(tex)
+	return u
+
+
+func _u_tex(binding: int, sampler: RID, tex: RID) -> RDUniform:
 	var u := RDUniform.new()
 	u.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
 	u.binding = binding
@@ -124,8 +155,26 @@ func _sampler_uniform(binding: int, sampler: RID, tex: RID) -> RDUniform:
 	return u
 
 
+func _u_ubo(binding: int) -> RDUniform:
+	var u := RDUniform.new()
+	u.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+	u.binding = binding
+	u.add_id(_ubo)
+	return u
+
+
+func _dispatch(name: String, uniforms: Array, size: Vector2i) -> void:
+	var sh: RID = _pipes[name][0]
+	var set := UniformSetCacheRD.get_cache(sh, 0, uniforms)
+	var cl := _rd.compute_list_begin()
+	_rd.compute_list_bind_compute_pipeline(cl, _pipes[name][1])
+	_rd.compute_list_bind_uniform_set(cl, set, 0)
+	_rd.compute_list_dispatch(cl, (size.x + 7) / 8, (size.y + 7) / 8, 1)
+	_rd.compute_list_end()
+
+
 func _render_callback(_type: int, render_data: RenderData) -> void:
-	if not _march_pipe.is_valid() or _noise.size() < 4 or coverage <= 0.001:
+	if _pipes.size() < 3 or _noise.size() < 5 or coverage <= 0.001:
 		_has_history = false
 		return
 	var buffers := render_data.get_render_scene_buffers() as RenderSceneBuffersRD
@@ -134,28 +183,29 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	var size := buffers.get_internal_size()
 	if size.x == 0 or size.y == 0:
 		return
-	_ensure_half(size)
+	_ensure_targets(size)
 	var sd := render_data.get_render_scene_data()
 	var cam_xf := sd.get_cam_transform()
 	var proj := sd.get_cam_projection()
 	var vp := proj * Projection(cam_xf.affine_inverse())
 	_frame += 1
 	_cur = 1 - _cur
-	var cur_tex: RID = _half[_cur]
-	var hist_tex: RID = _half[1 - _cur]
 	var data := PackedFloat32Array()
 	data.append_array(_proj_floats(proj.inverse()))
 	data.append_array(_xform_floats(cam_xf))
-	data.append_array([cam_xf.origin.x, cam_xf.origin.y, cam_xf.origin.z, 0.0])
+	# the noise offset moves opposite to the clouds; the world-space cloud movement this frame is its negation
+	var wind_move := -(wind - _prev_wind) if _has_history else Vector2.ZERO
+	_prev_wind = wind
+	data.append_array([cam_xf.origin.x, cam_xf.origin.y, cam_xf.origin.z, wind_move.x])
 	data.append_array([sun_dir.x, sun_dir.y, sun_dir.z, light_intensity])
 	data.append_array([sun_color.r, sun_color.g, sun_color.b, ambient])
-	data.append_array([amb_top.r, amb_top.g, amb_top.b, 0.0])
+	data.append_array([amb_top.r, amb_top.g, amb_top.b, wind_move.y])
 	data.append_array([amb_bottom.r, amb_bottom.g, amb_bottom.b, 0.0])
 	data.append_array([fog_color.r, fog_color.g, fog_color.b, fog_density])
 	data.append_array([base, top, coverage, density])
 	data.append_array([stratus, darkness, wind.x, wind.y])
 	data.append_array([float(_half_size.x), float(_half_size.y), float(size.x), float(size.y)])
-	data.append_array([max_distance, float(_frame), float(primary_steps), float(light_steps)])
+	data.append_array([max_distance, float(_frame % 4096), float(primary_steps), float(light_steps)])
 	data.append_array(_proj_floats(_prev_vp))
 	data.append_array([1.0 if _has_history else 0.0, history_weight, height_variation, 0.0])
 	var bytes := data.to_byte_array()
@@ -163,36 +213,14 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	for view in buffers.get_view_count():
 		var color := buffers.get_color_layer(view)
 		var depth := buffers.get_depth_layer(view)
-		# pass 1: raymarch at half resolution
-		var out := RDUniform.new()
-		out.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
-		out.binding = 0
-		out.add_id(cur_tex)
-		var ub := RDUniform.new()
-		ub.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
-		ub.binding = 6
-		ub.add_id(_ubo)
-		var set1 := UniformSetCacheRD.get_cache(_march_shader, 0, [out, _sampler_uniform(1, _clamp_sampler, depth),
-			_sampler_uniform(2, _repeat_sampler, _noise.perlin), _sampler_uniform(3, _repeat_sampler, _noise.worley),
-			_sampler_uniform(4, _repeat_sampler, _noise.detail), _sampler_uniform(5, _repeat_sampler, _noise.weather), ub,
-			_sampler_uniform(7, _clamp_sampler, hist_tex)])
-		var cl := _rd.compute_list_begin()
-		_rd.compute_list_bind_compute_pipeline(cl, _march_pipe)
-		_rd.compute_list_bind_uniform_set(cl, set1, 0)
-		_rd.compute_list_dispatch(cl, (_half_size.x + 7) / 8, (_half_size.y + 7) / 8, 1)
-		_rd.compute_list_end()
-		# pass 2: upsample and composite over the scene
-		var col := RDUniform.new()
-		col.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
-		col.binding = 0
-		col.add_id(color)
-		var set2 := UniformSetCacheRD.get_cache(_comp_shader, 0, [col, _sampler_uniform(1, _clamp_sampler, cur_tex)])
-		var push := PackedFloat32Array([float(size.x), float(size.y), 0.0, 0.0]).to_byte_array()
-		cl = _rd.compute_list_begin()
-		_rd.compute_list_bind_compute_pipeline(cl, _comp_pipe)
-		_rd.compute_list_bind_uniform_set(cl, set2, 0)
-		_rd.compute_list_set_push_constant(cl, push, push.size())
-		_rd.compute_list_dispatch(cl, (size.x + 7) / 8, (size.y + 7) / 8, 1)
-		_rd.compute_list_end()
+		_dispatch("march", [_u_image(0, _raw_color), _u_tex(1, _point_sampler, depth),
+			_u_tex(2, _repeat_sampler, _noise.perlin), _u_tex(3, _repeat_sampler, _noise.worley),
+			_u_tex(4, _repeat_sampler, _noise.detail), _u_tex(5, _repeat_sampler, _noise.weather),
+			_u_ubo(6), _u_image(7, _raw_depth), _u_tex(8, _point_sampler, _noise.blue)], _half_size)
+		_dispatch("resolve", [_u_image(0, _hist_color[_cur]), _u_image(1, _hist_depth[_cur]),
+			_u_tex(2, _point_sampler, _raw_color), _u_tex(3, _point_sampler, _raw_depth),
+			_u_tex(4, _clamp_sampler, _hist_color[1 - _cur]), _u_ubo(6)], _half_size)
+		_dispatch("composite", [_u_image(0, color), _u_tex(1, _point_sampler, _hist_color[_cur]),
+			_u_tex(2, _point_sampler, _hist_depth[_cur]), _u_tex(3, _point_sampler, depth), _u_ubo(4)], size)
 	_prev_vp = vp
 	_has_history = true

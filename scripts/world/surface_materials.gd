@@ -133,6 +133,7 @@ static func cloud_volumes() -> Dictionary:
 		"worley": _volume(96, worley, true),
 		"detail": _volume(32, detail, true),
 		"weather": _noise(512, 0.009, 4, 808, false),
+		"blue": load("res://assets/clouds/blue_noise_64.png"),
 	}
 	return _volumes
 
