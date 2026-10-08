@@ -27,7 +27,16 @@ A flight game built in Godot 4, starring a fully animated Su-27 Flanker.
 | V | Cycle camera (close, far, cockpit) |
 | Right mouse drag | Look around |
 | Mouse wheel | Zoom |
+| L | Exterior lights |
+| Z | Auto-throttle (holds current speed) |
+| P | Practice approach: 7 km final to runway 36, configured to land |
 | Backspace | Reset |
+
+## Landing
+Press **P** for a practice approach. Follow the ILS box (bottom right): keep both needles centred, about 270-300 km/h, gear down, flaps on.
+The PAPI lights left of the touchdown zone show two white and two red on the correct 3 degree glide (all white = high, all red = low).
+Flare gently a few metres above the runway and close the throttle. Touchdowns are graded: smooth (<1.5 m/s), good (<3), firm (<4.5), hard (<7), and above 7 m/s the gear collapses.
+Runway 36 (approach from the south over the sea) is the instrument runway; runway 18 is visual only because of the mountains to the north.
 
 ## Project layout
 - `project.godot`, `scenes/`, `scripts/`, `shaders/` : Godot project

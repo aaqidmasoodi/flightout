@@ -29,6 +29,9 @@ func _ready() -> void:
 
 	_build_ocean()
 	_build_forests()
+	var lights: Node3D = preload("res://scripts/world/airfield_lights.gd").new()
+	lights.name = "AirfieldLights"
+	add_child(lights)
 
 
 func _process(_delta: float) -> void:

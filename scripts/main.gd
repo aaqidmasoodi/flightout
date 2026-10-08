@@ -55,6 +55,8 @@ func _setup_input() -> void:
 	_add_keys("reset", [KEY_BACKSPACE])
 	_add_keys("wheel_brake", [KEY_SPACE])
 	_add_keys("toggle_lights", [KEY_L])
+	_add_keys("toggle_autothrottle", [KEY_Z])
+	_add_keys("practice_approach", [KEY_P])
 
 
 func _build_environment() -> void:

@@ -7,7 +7,7 @@ extends Camera3D
 enum View { CLOSE, FAR, COCKPIT }
 const VIEW_NAMES := ["CLOSE", "FAR", "COCKPIT"]
 const OFFSETS := [Vector3(0.0, 3.2, 15.0), Vector3(0.0, 8.0, 42.0)]
-const COCKPIT_EYE := Vector3(0.0, 1.3, -5.1)
+const COCKPIT_EYE := Vector3(0.0, 1.36, -5.0)
 const SENSITIVITY := 0.005
 const RECENTER_DELAY := 1.0
 const FOLLOW_SHARPNESS := 5.0   # higher = camera rotates with the jet more tightly

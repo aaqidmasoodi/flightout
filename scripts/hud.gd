@@ -14,6 +14,9 @@ func _ready() -> void:
 	_label.add_theme_color_override("font_outline_color", Color.BLACK)
 	_label.add_theme_constant_override("outline_size", 6)
 	add_child(_label)
+	var overlay: Control = preload("res://scripts/hud_overlay.gd").new()
+	overlay.aircraft = aircraft
+	add_child(overlay)
 
 	# big ground / air status badge, top centre
 	_status_bg = PanelContainer.new()
@@ -48,7 +51,7 @@ func _process(_delta: float) -> void:
 		"DOWN" if a.gear_down else "UP", "ON" if a.flaps else "OFF",
 		"OUT" if a.airbrake else "IN", "ON" if a.wheel_brakes else "OFF",
 		"ON" if a.radar_on else "OFF", view_txt])
-	lines.append("LIGHTS %s" % ("ON" if a.fx and a.fx.lights_on else "OFF"))
+	lines.append("LIGHTS %s    AUTO-THROTTLE %s" % ["ON" if a.fx and a.fx.lights_on else "OFF", ("%d km/h" % int(a.at_target * 3.6)) if a.autothrottle else "OFF"])
 	if a.aoa_deg > 22.0 and not a.on_ground:
 		lines.append(">>> HIGH AoA / STALL WARNING <<<")
 	if a.crashed:
@@ -56,7 +59,7 @@ func _process(_delta: float) -> void:
 	lines.append("")
 	lines.append("W/S pitch   A/D roll   Q/E yaw   Shift/Ctrl throttle (above 85% = afterburner)")
 	lines.append("G gear   F flaps   B airbrake   Space wheel brakes   C canopy   R radar   T radome   L lights")
-	lines.append("V view (close/far/cockpit)   Right-drag look   Wheel zoom   Backspace reset")
+	lines.append("P practice approach   Z auto-throttle   V view (close/far/cockpit)   Right-drag look   Wheel zoom   Backspace reset")
 	_label.text = "\n".join(lines)
 
 

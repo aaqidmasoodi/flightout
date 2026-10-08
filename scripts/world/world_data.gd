@@ -12,6 +12,15 @@ var cell_size := 40.0
 var half_extent := 20480.0
 var sea_level := 0.0
 var spawns: Array = []
+## Runways: threshold = start of the landing direction, dir = landing direction (unit, flat).
+## Runway 36 (from the south, over the sea) is the instrument runway. Runway 18 is visual only:
+## the northern mountains block a straight-in approach, so it gets no ILS or PAPI.
+var runways: Array = [
+	{"name": "36", "threshold": Vector3(0.0, 40.0, 7500.0), "dir": Vector3(0.0, 0.0, -1.0), "length": 3000.0, "width": 45.0, "ils": true},
+	{"name": "18", "threshold": Vector3(0.0, 40.0, 4500.0), "dir": Vector3(0.0, 0.0, 1.0), "length": 3000.0, "width": 45.0, "ils": false},
+]
+const AIM_DISTANCE := 300.0      # touchdown aim point beyond the threshold
+const GLIDESLOPE_DEG := 3.0
 var loaded := false
 
 var _h := PackedFloat32Array()
@@ -74,3 +83,33 @@ func spawn_transform(index: int = 0) -> Transform3D:
 	var p: Array = s.get("godot_pos", [0.0, 42.0, 7350.0])
 	var basis := Basis(Vector3.UP, deg_to_rad(-float(s.get("heading_deg", 0.0))))
 	return Transform3D(basis, Vector3(p[0], p[1], p[2]))
+
+
+## ILS-style guidance to the runway the aircraft is lined up for (empty if none).
+## loc_dev > 0: aircraft is right of the centreline. gs_dev > 0: aircraft is above the glideslope.
+func approach_guidance(pos: Vector3, heading: Vector3) -> Dictionary:
+	var best := {}
+	var best_dist := INF
+	for r in runways:
+		if not r.get("ils", false):
+			continue
+		var dir: Vector3 = r.dir
+		var aim: Vector3 = r.threshold + dir * AIM_DISTANCE
+		var d := pos - aim
+		var along := -d.dot(dir)
+		if along < 150.0 or along > 25000.0:
+			continue
+		var right := dir.cross(Vector3.UP).normalized()
+		var lateral := d.dot(right)
+		var loc := atan2(lateral, along)
+		if absf(loc) > deg_to_rad(35.0):
+			continue
+		var h2 := Vector2(heading.x, heading.z)
+		if h2.length() < 0.1 or h2.normalized().dot(Vector2(dir.x, dir.z)) < 0.5:
+			continue
+		var height := pos.y - 2.0 - aim.y
+		var gs := atan2(height, along)
+		if along < best_dist:
+			best_dist = along
+			best = {"name": r.name, "dist": along, "loc_dev": rad_to_deg(loc), "gs_dev": rad_to_deg(gs) - GLIDESLOPE_DEG, "height": height}
+	return best
