@@ -262,7 +262,12 @@ func _on_reset() -> void:
 	_refresh_keys()
 
 
-# ---------------- toast: status messages at the bottom-left of the screen ----------------
+# ---------------- toast: status messages at the bottom-right of the screen ----------------
+const TOAST_IN := -60.0       # resting offset from the right edge (lines up with the settings panel)
+const TOAST_OUT := 60.0       # off-screen to the right
+var _toast_visible := false
+
+
 func _ensure_toast() -> void:
 	if _toast:
 		return
@@ -271,12 +276,16 @@ func _ensure_toast() -> void:
 	add_child(_toast_layer)
 	_toast = T.glass(0.78)
 	_toast.theme = T.get_theme()
+	_toast.anchor_left = 1.0
+	_toast.anchor_right = 1.0
 	_toast.anchor_top = 1.0
 	_toast.anchor_bottom = 1.0
-	_toast.offset_left = 24.0
-	_toast.offset_top = -78.0
-	_toast.offset_bottom = -24.0
+	_toast.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	_toast.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_toast.offset_right = TOAST_OUT
+	_toast.offset_left = TOAST_OUT
+	_toast.offset_bottom = -9.0      # in the gap below the settings panel (which ends 60 px above the edge)
+	_toast.offset_top = -9.0
 	_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_toast_layer.add_child(_toast)
 	var row := HBoxContainer.new()
@@ -286,12 +295,12 @@ func _ensure_toast() -> void:
 	_toast_bar = ColorRect.new()
 	_toast_bar.custom_minimum_size = Vector2(4, 0)
 	row.add_child(_toast_bar)
-	_toast_text = T.label("", 20, "SemiBold", T.TEXT)
+	_toast_text = T.label("", 18, "SemiBold", T.TEXT)
 	_toast_text.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var m := MarginContainer.new()
-	m.add_theme_constant_override("margin_right", 22)
-	m.add_theme_constant_override("margin_top", 12)
-	m.add_theme_constant_override("margin_bottom", 12)
+	m.add_theme_constant_override("margin_right", 20)
+	m.add_theme_constant_override("margin_top", 7)
+	m.add_theme_constant_override("margin_bottom", 7)
 	m.add_child(_toast_text)
 	row.add_child(m)
 	_toast.modulate.a = 0.0
@@ -300,12 +309,41 @@ func _ensure_toast() -> void:
 func _show_toast(text: String, col: Color, persistent: bool = false) -> void:
 	_ensure_toast()
 	_toast_text.text = text
-	_toast_bar.color = col
-	_toast.reset_size()
+	_toast.offset_left = _toast.offset_right    # let the minimum size decide the width (grows to the left)
+	_toast.offset_top = _toast.offset_bottom
 	if _toast_tween:
 		_toast_tween.kill()
 	_toast_tween = create_tween()
-	_toast_tween.tween_property(_toast, "modulate:a", 1.0, 0.15)
+	if _toast_visible:
+		# already on screen: update in place, with a quick pulse of the colour bar
+		_toast_bar.color = Color(1, 1, 1)
+		_toast_tween.tween_property(_toast_bar, "color", col, 0.25)
+		_toast_tween.parallel().tween_property(_toast, "modulate:a", 1.0, 0.1)
+		_toast_tween.parallel().tween_property(_toast, "offset_right", TOAST_IN, 0.2)
+	else:
+		# entry: slide in from the right with a slight overshoot, fading in
+		_toast_bar.color = col
+		_toast.offset_right = TOAST_OUT
+		_toast_tween.tween_property(_toast, "offset_right", TOAST_IN, 0.42).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		_toast_tween.parallel().tween_property(_toast, "modulate:a", 1.0, 0.25)
+	_toast_visible = true
+	_yield_corner(true)
 	if not persistent:
 		_toast_tween.tween_interval(2.6)
-		_toast_tween.tween_property(_toast, "modulate:a", 0.0, 0.5)
+		_toast_tween.tween_callback(func():
+			_toast_visible = false
+			_yield_corner(false))
+		# exit: slide back out to the right, fading away
+		_toast_tween.tween_property(_toast, "offset_right", TOAST_OUT, 0.32).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+		_toast_tween.parallel().tween_property(_toast, "modulate:a", 0.0, 0.28)
+
+
+## Other corner elements (the version label) step aside while a toast is showing.
+func _yield_corner(hide: bool) -> void:
+	for n in get_tree().get_nodes_in_group("toast_yield"):
+		create_tween().tween_property(n, "modulate:a", 0.0 if hide else 1.0, 0.25)
+
+
+func _exit_tree() -> void:
+	if is_inside_tree():
+		_yield_corner(false)

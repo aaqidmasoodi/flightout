@@ -79,6 +79,7 @@ func _build_corner_info() -> void:
 	v.anchor_left = 1.0; v.anchor_right = 1.0; v.anchor_top = 1.0; v.anchor_bottom = 1.0
 	v.offset_left = -220; v.offset_right = -28; v.offset_top = -44; v.offset_bottom = -18
 	v.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	v.add_to_group("toast_yield")   # fades out while a settings toast occupies this corner
 	_ui.add_child(v)
 
 
