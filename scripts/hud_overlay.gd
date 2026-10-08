@@ -60,10 +60,13 @@ func _draw() -> void:
 		draw_rect(Rect2(cc - Vector2(6, 6), Vector2(12, 12)), Color(1, 1, 1, 0.9), false, 2.0)
 		var kmh := int(a.speed * 3.6)
 		var spd_col := GREEN if (kmh >= 260 and kmh <= 310) else AMBER
+		var spd: Array = Settings.speed_text(a.speed)
+		var dist: Array = Settings.dist_text(float(g.dist))
+		var aviation := int(Settings.get_value("hud/unit_system")) == 1
 		draw_string(font, box.position + Vector2(0, -64), "ILS  RWY %s" % g.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, AMBER)
-		draw_string(font, box.position + Vector2(box.size.x, -64), "%.1f KM" % (float(g.dist) / 1000.0), HORIZONTAL_ALIGNMENT_RIGHT, -1, 18, Color.WHITE)
+		draw_string(font, box.position + Vector2(box.size.x, -64), "%s %s" % [dist[0], dist[1]], HORIZONTAL_ALIGNMENT_RIGHT, -1, 18, Color.WHITE)
 		draw_string(font, box.position + Vector2(0, -38), "GLIDE %s    CENTRE %s" % [_dev_text(g.gs_dev, "HIGH", "LOW", 0.2), _dev_text(g.loc_dev, "RIGHT", "LEFT", 0.5)], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.WHITE)
-		draw_string(font, box.position + Vector2(0, -12), "SPEED %d  ·  TARGET 270-300 KM/H" % kmh, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, spd_col)
+		draw_string(font, box.position + Vector2(0, -12), "SPEED %s  ·  TARGET %s" % [spd[0], "145-160 KT" if aviation else "270-300 KM/H"], HORIZONTAL_ALIGNMENT_LEFT, -1, 18, spd_col)
 
 	# --- warnings ---
 	var warns: Array[String] = []

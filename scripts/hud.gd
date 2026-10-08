@@ -10,6 +10,7 @@ var _panel: Control
 var _vals := {}
 var _units := {}
 var _chips := {}
+var _chip_state := {}
 var _thr_bar: ProgressBar
 var _thr_txt: Label
 var _status: Label
@@ -54,7 +55,6 @@ func _apply_settings() -> void:
 func _build_panel() -> void:
 	_panel = T.glass(0.5)
 	_panel.position = Vector2(22, 22)
-	_panel.custom_minimum_size = Vector2(360, 0)
 	_root.add_child(_panel)
 	var m := MarginContainer.new()
 	for s in ["left", "right"]:
@@ -64,29 +64,35 @@ func _build_panel() -> void:
 	_panel.add_child(m)
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 6)
+	col.custom_minimum_size = Vector2(PANEL_W, 0)
 	m.add_child(col)
 	var head := HBoxContainer.new()
 	head.add_child(T.label("FLIGHT DATA", 15, "Bold", T.ACCENT, 4))
 	var sp := Control.new(); sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(sp)
 	_vals["view"] = T.label("", 15, "Bold", T.DIM, 3)
+	_vals["view"].horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_vals["view"].custom_minimum_size = Vector2(150, 0)
 	head.add_child(_vals["view"])
 	col.add_child(head)
 	var big := HBoxContainer.new()
-	big.add_theme_constant_override("separation", 26)
-	big.add_child(_readout("spd", "SPEED", 44))
-	big.add_child(_readout("alt", "ALTITUDE", 44))
+	big.add_theme_constant_override("separation", 18)
+	big.add_child(_readout("spd", "SPEED", 44, 4, 4))
+	big.add_child(_readout("alt", "ALTITUDE", 44, 5, 2))
 	col.add_child(big)
 	var grid := GridContainer.new()
 	grid.columns = 3
-	grid.add_theme_constant_override("h_separation", 22)
+	grid.add_theme_constant_override("h_separation", 16)
 	grid.add_theme_constant_override("v_separation", 2)
-	for k in [["mach", "MACH"], ["vs", "V/S"], ["agl", "RADAR ALT"], ["g", "G"], ["aoa", "AOA"], ["thrust", "THRUST"]]:
-		grid.add_child(_readout(k[0], k[1], 24))
+	for k in [["mach", "MACH", 4, 0], ["vs", "V/S", 6, 6], ["agl", "RADAR ALT", 5, 2],
+			["g", "G", 4, 0], ["aoa", "AOA", 5, 3], ["thrust", "THRUST", 3, 2]]:
+		grid.add_child(_readout(k[0], k[1], 24, k[2], k[3]))
 	col.add_child(grid)
 	var thr := HBoxContainer.new()
 	thr.add_theme_constant_override("separation", 10)
-	thr.add_child(T.label("THR", 15, "Bold", T.DIM, 3))
+	var tl := T.label("THR", 15, "Bold", T.DIM, 3)
+	tl.custom_minimum_size = Vector2(40, 0)
+	thr.add_child(tl)
 	_thr_bar = ProgressBar.new()
 	_thr_bar.show_percentage = false
 	_thr_bar.custom_minimum_size = Vector2(0, 6)
@@ -94,36 +100,76 @@ func _build_panel() -> void:
 	_thr_bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	thr.add_child(_thr_bar)
 	_thr_txt = T.label("", 18, "Bold", T.TEXT)
-	_thr_txt.custom_minimum_size = Vector2(64, 0)
+	_thr_txt.add_theme_font_override("font", T.tabular("Bold"))
+	_thr_txt.custom_minimum_size = Vector2(58, 0)
 	_thr_txt.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	thr.add_child(_thr_txt)
 	col.add_child(thr)
-	var chips := HFlowContainer.new()
+	var chips := GridContainer.new()
+	chips.columns = 3
 	chips.add_theme_constant_override("h_separation", 6)
 	chips.add_theme_constant_override("v_separation", 6)
-	for k in ["GEAR", "FLAPS", "A/BRK", "BRAKE", "A/THR", "LIGHTS", "RADAR"]:
-		var c := T.label(k, 15, "Bold", T.DIM, 2)
-		c.add_theme_stylebox_override("normal", T.flat(Color(1, 1, 1, 0.05), Color(1, 1, 1, 0.12), [1, 1, 1, 1], [8, 1, 8, 1]))
-		chips.add_child(c)
-		_chips[k] = c
+	for k in [["GEAR", "G"], ["FLAPS", "F"], ["A/BRK", "B"], ["BRAKE", "SPACE"], ["A/THR", "Z"], ["LIGHTS", "L"], ["RADAR", "R"], ["CANOPY", "C"], ["VIEW", "V"]]:
+		chips.add_child(_chip_node(k[0], k[1]))
 	col.add_child(chips)
 
 
-func _readout(key: String, title: String, size: int) -> Control:
+const PANEL_W := 392.0
+
+
+## A readout with fixed-width slots: value (right-aligned, tabular digits) and unit.
+## `chars` and `unit_chars` reserve room for the widest value, so updates never move anything.
+func _readout(key: String, title: String, size: int, chars: int, unit_chars: int) -> Control:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", -6)
 	v.add_child(T.label(title, 14, "Bold", T.DIM, 3))
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 5)
+	row.add_theme_constant_override("separation", 4)
 	var val := T.label("0", size, "Bold", T.TEXT)
+	val.add_theme_font_override("font", T.tabular("Bold"))
+	val.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	val.custom_minimum_size = Vector2(ceilf(chars * size * 0.53), 0)
+	val.clip_text = true
 	row.add_child(val)
-	var unit := T.label("", int(size * 0.42), "Bold", T.DIM, 1)
+	var usize := int(size * 0.42)
+	var unit := T.label("", usize, "Bold", T.DIM, 1)
 	unit.size_flags_vertical = Control.SIZE_SHRINK_END
+	unit.custom_minimum_size = Vector2(ceilf(unit_chars * usize * 0.72), 0)
 	row.add_child(unit)
 	v.add_child(row)
 	_vals[key] = val
 	_units[key] = unit
 	return v
+
+
+## System chip: name plus its hotkey in a small key cap, e.g. GEAR [G].
+func _chip_node(title: String, key: String) -> Control:
+	var box := PanelContainer.new()
+	box.custom_minimum_size = Vector2(122, 30)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	box.add_child(row)
+	var n := T.label(title, 15, "Bold", T.DIM, 2)
+	n.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	n.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(n)
+	var cap := T.label(key, 12, "Bold", T.DIM, 1)
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cap.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	cap.custom_minimum_size = Vector2(22, 0)
+	row.add_child(cap)
+	_chips[title] = [box, n, cap]
+	_style_chip(title, false, T.ACCENT)
+	return box
+
+
+func _style_chip(k: String, on: bool, col: Color) -> void:
+	var c: Array = _chips[k]
+	(c[0] as PanelContainer).add_theme_stylebox_override("panel", T.flat(col if on else Color(1, 1, 1, 0.05), col if on else Color(1, 1, 1, 0.12), [1, 1, 1, 1], [8, 2, 5, 2]))
+	(c[1] as Label).add_theme_color_override("font_color", Color(0.04, 0.04, 0.05) if on else T.DIM)
+	var cap: Label = c[2]
+	cap.add_theme_color_override("font_color", Color(0.04, 0.04, 0.05) if on else T.TEXT)
+	cap.add_theme_stylebox_override("normal", T.flat(Color(0, 0, 0, 0.18) if on else Color(1, 1, 1, 0.07), Color(0, 0, 0, 0.45) if on else Color(1, 1, 1, 0.3), [1, 1, 1, 2], [4, 0, 4, 0]))
 
 
 func _build_status() -> void:
@@ -162,9 +208,10 @@ func _show(key: String, pair: Array) -> void:
 
 
 func _chip(k: String, on: bool, col: Color = T.ACCENT) -> void:
-	var c: Label = _chips[k]
-	c.add_theme_color_override("font_color", Color.BLACK if on else T.DIM)
-	c.add_theme_stylebox_override("normal", T.flat(col if on else Color(1, 1, 1, 0.05), col if on else Color(1, 1, 1, 0.12), [1, 1, 1, 1], [8, 1, 8, 1]))
+	if _chip_state.get(k) == on:
+		return
+	_chip_state[k] = on
+	_style_chip(k, on, col)
 
 
 func _process(_delta: float) -> void:
@@ -195,7 +242,7 @@ func _process(_delta: float) -> void:
 	_show("vs", Settings.vs_text(a.vertical_speed))
 	_show("agl", Settings.alt_text(a.altitude_agl))
 	_show("g", ["%.1f" % a.g_load, ""])
-	_show("aoa", ["%.1f" % a.aoa_deg, "°"])
+	_show("aoa", ["%.1f" % a.aoa_deg, "DEG"])
 	_show("thrust", ["%d" % int(a.thrust_now / 1000.0), "KN"])
 	_vals["aoa"].add_theme_color_override("font_color", T.BAD if a.aoa_deg > 21.0 else T.TEXT)
 	_vals["g"].add_theme_color_override("font_color", T.WARN if a.g_load > 7.0 else T.TEXT)
@@ -211,6 +258,8 @@ func _process(_delta: float) -> void:
 	_chip("A/THR", a.autothrottle)
 	_chip("LIGHTS", a.fx != null and a.fx.lights_on)
 	_chip("RADAR", a.radar_on)
+	_chip("CANOPY", a.canopy_open, T.WARN)
+	_chip("VIEW", cam != null and "view" in cam and int(cam.view) == 2, Color(0.4, 0.7, 1.0))
 
 
 func _unhandled_input(event: InputEvent) -> void:

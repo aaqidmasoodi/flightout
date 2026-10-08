@@ -29,6 +29,18 @@ static func spaced(weight: String, spacing: int) -> Font:
 	return fv
 
 
+## Same font with tabular figures: every digit has the same width, so changing numbers never shift layout.
+static func tabular(weight: String = "Bold") -> Font:
+	var key := "tab_" + weight
+	if not _fonts.has(key):
+		var fv := FontVariation.new()
+		fv.base_font = font(weight)
+		var ts := TextServerManager.get_primary_interface()
+		fv.opentype_features = {ts.name_to_tag("tnum"): 1}
+		_fonts[key] = fv
+	return _fonts[key]
+
+
 static func label(text: String, size: int, weight: String = "SemiBold", color: Color = TEXT, spacing: int = 0) -> Label:
 	var l := Label.new()
 	l.text = text

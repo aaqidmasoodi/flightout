@@ -53,7 +53,7 @@ func _ready() -> void:
 	_toggle(p, "Flight data panel  (H)", "hud/telemetry")
 	_toggle(p, "Key hints", "hud/key_hints")
 	_toggle(p, "FPS counter", "hud/fps")
-	_choice(p, "Units", "hud/units", ["Metric  (km/h, m)", "Aviation  (kt, ft)"], [0, 1])
+	_choice(p, "Units", "hud/unit_system", ["Aviation  (kt, ft, ft/min)", "Metric  (km/h, m, m/s)"], [1, 0])
 
 	p = _page("CONTROLS")
 	_toggle(p, "Invert pitch", "controls/invert_pitch")

@@ -18,7 +18,7 @@ const DEFAULTS := {
 	"hud/telemetry": true,
 	"hud/key_hints": false,
 	"hud/fps": false,
-	"hud/units": 0,                  # 0 metric (km/h, m), 1 aviation (kt, ft)
+	"hud/unit_system": 1,            # 1 aviation (kt, ft, ft/min, NM), 0 metric (km/h, m, m/s, km)
 	"controls/invert_pitch": false,
 	"controls/mouse_sensitivity": 1.0,
 	"audio/master": 0.8,
@@ -72,19 +72,25 @@ func save() -> void:
 
 # ---------------- units ----------------
 func speed_text(mps: float) -> Array:
-	if int(get_value("hud/units")) == 1:
+	if int(get_value("hud/unit_system")) == 1:
 		return ["%d" % int(mps * 1.94384), "KT"]
 	return ["%d" % int(mps * 3.6), "KM/H"]
 
 
 func alt_text(m: float) -> Array:
-	if int(get_value("hud/units")) == 1:
+	if int(get_value("hud/unit_system")) == 1:
 		return ["%d" % int(m * 3.28084), "FT"]
 	return ["%d" % int(m), "M"]
 
 
+func dist_text(m: float) -> Array:
+	if int(get_value("hud/unit_system")) == 1:
+		return ["%.1f" % (m / 1852.0), "NM"]
+	return ["%.1f" % (m / 1000.0), "KM"]
+
+
 func vs_text(mps: float) -> Array:
-	if int(get_value("hud/units")) == 1:
+	if int(get_value("hud/unit_system")) == 1:
 		return ["%+d" % int(mps * 196.85), "FT/MIN"]
 	return ["%+.0f" % mps, "M/S"]
 
