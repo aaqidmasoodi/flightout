@@ -30,6 +30,7 @@ var _xf_view: SubViewport
 var _xf_cam: Camera3D
 var _xf_rect: TextureRect
 const CROSSFADE := 1.6       # seconds the outgoing and incoming shots overlap
+const PREROLL := 0.2         # seconds the incoming view renders invisibly before its dissolve begins
 var _snd := {}
 
 
@@ -65,6 +66,7 @@ func _ready() -> void:
 	_xf_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_xf_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_xf_rect.stretch_mode = TextureRect.STRETCH_SCALE
+	_xf_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST   # 1:1 pixels, no resampling blur
 	_xf_rect.texture = _xf_view.get_texture()
 	_xf_rect.modulate.a = 0.0
 	_xf_rect.visible = false
@@ -233,17 +235,40 @@ func _process(delta: float) -> void:
 	if tau < CROSSFADE and k > 0:
 		_apply_shot(_cam, k - 1, tau + period)
 		_apply_shot(_xf_cam, k, tau)
-		var vs := get_viewport().get_visible_rect().size
-		if Vector2(_xf_view.size) != vs:
-			_xf_view.size = Vector2i(vs)
-		_xf_view.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		_xf_live(true)
 		var a := tau / CROSSFADE
-		_xf_rect.visible = true
 		_xf_rect.modulate.a = a * a * (3.0 - 2.0 * a)
+	elif period - tau < PREROLL:
+		# pre-roll: render the incoming shot (invisible) a few frames early, so its first visible frame is live
+		_apply_shot(_cam, k, tau)
+		_apply_shot(_xf_cam, k + 1, 0.0)
+		_xf_live(true)
+		_xf_rect.modulate.a = 0.0
 	else:
 		_apply_shot(_cam, k, tau)
-		_xf_rect.visible = false
-		_xf_view.render_target_update_mode = SubViewport.UPDATE_DISABLED
+		_xf_live(false)
+
+
+## Turns the crossfade view on or off. When on, it matches the window's real pixel size and the main view's
+## render settings exactly, so the hand-over at the end of a dissolve is invisible.
+func _xf_live(on: bool) -> void:
+	if not on:
+		if _xf_rect.visible:
+			_xf_rect.visible = false
+			_xf_view.render_target_update_mode = SubViewport.UPDATE_DISABLED
+		return
+	var main_vp := get_viewport()
+	var px: Vector2i = get_window().size
+	if _xf_view.size != px:
+		_xf_view.size = px
+	_xf_view.msaa_3d = main_vp.msaa_3d
+	_xf_view.screen_space_aa = main_vp.screen_space_aa
+	_xf_view.use_taa = main_vp.use_taa
+	_xf_view.use_debanding = main_vp.use_debanding
+	_xf_view.scaling_3d_mode = main_vp.scaling_3d_mode
+	_xf_view.scaling_3d_scale = main_vp.scaling_3d_scale
+	_xf_view.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	_xf_rect.visible = true
 
 
 ## Places a camera on shot `idx` at `local` seconds into it: a steady dolly between the shot's two offsets.
