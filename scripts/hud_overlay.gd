@@ -1,11 +1,13 @@
 extends Control
 ## Graphical HUD layer: flight path marker, ILS-style approach guidance, warnings and landing grades.
 
+const UI = preload("res://scripts/ui/ui_theme.gd")
+
 var aircraft: Node3D
 var _t := 0.0
-const GREEN := Color(0.35, 1.0, 0.45)
-const AMBER := Color(1.0, 0.75, 0.2)
-const RED := Color(1.0, 0.25, 0.2)
+const GREEN := Color("57e389")
+const AMBER := Color("ffb347")
+const RED := Color("ff5a4f")
 
 
 func _ready() -> void:
@@ -68,38 +70,79 @@ func _draw() -> void:
 		draw_string(font, box.position + Vector2(0, -38), "GLIDE %s    CENTRE %s" % [_dev_text(g.gs_dev, "HIGH", "LOW", 0.2), _dev_text(g.loc_dev, "RIGHT", "LEFT", 0.5)], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.WHITE)
 		draw_string(font, box.position + Vector2(0, -12), "IAS %s  ·  TARGET %s" % [spd[0], "145-160 KT" if aviation else "270-300 KM/H"], HORIZONTAL_ALIGNMENT_LEFT, -1, 18, spd_col)
 
-	# --- warnings ---
-	var warns: Array[String] = []
+	# --- warnings: themed plates, priority ordered, lower centre of the screen ---
+	var warns: Array = []   # [title, subtitle, colour]
 	var agl: float = a.altitude_agl
 	var vsi: float = a.vertical_speed
 	if not a.wow and not a.crashed:
-		if agl < 300.0 and vsi < -2.0 and not a.gear_down and a.speed < 120.0:
-			warns.append("GEAR")
-		if (agl < 400.0 and vsi < -10.0) or (agl < 60.0 and vsi < -5.0):
-			warns.append("SINK RATE")
 		if vsi < -15.0 and agl / -vsi < 6.0:
-			warns.append("PULL UP")
+			warns.append(["PULL UP", "TERRAIN", RED])
 		if a.stall_frac > 0.55:
-			warns.append("STALL")
-		elif a.stall_frac > 0.05:
-			warns.append("BUFFET")
-	if not warns.is_empty() and fmod(_t, 0.8) < 0.55:
-		var txt := "   ".join(warns)
-		var tw := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 34).x
-		draw_string(font, Vector2((vs.x - tw) / 2.0, vs.y * 0.62), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 34, RED)
+			warns.append(["STALL", "LOWER THE NOSE", RED])
+		if ((agl < 400.0 and vsi < -10.0) or (agl < 60.0 and vsi < -5.0)) and warns.size() < 2:
+			warns.append(["SINK RATE", "DESCENT TOO FAST", RED])
+		if agl < 300.0 and vsi < -2.0 and not a.gear_down and a.speed < 120.0:
+			warns.append(["GEAR", "GEAR NOT DOWN", AMBER])
+		if a.stall_frac > 0.05 and a.stall_frac <= 0.55:
+			warns.append(["BUFFET", "NEAR THE STALL", AMBER])
+	if not a.crashed and a.fuel_kg < 800.0:
+		warns.append(["FUEL", "LOW FUEL", AMBER])
+	if warns.size() > 3:
+		warns.resize(3)
+	if not warns.is_empty():
+		var tf: Font = UI.spaced("Bold", 5)
+		var sf: Font = UI.spaced("Bold", 3)
+		var widths := []
+		var total := 0.0
+		for w in warns:
+			var tw := maxf(tf.get_string_size(w[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 30).x, sf.get_string_size(w[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x) + 46.0
+			widths.append(maxf(tw, 190.0))
+			total += widths[-1]
+		total += 12.0 * (warns.size() - 1)
+		var x := (vs.x - total) / 2.0
+		var y := vs.y * 0.84
+		var pulse := 0.5 + 0.5 * sin(_t * TAU * 1.6)
+		for k in warns.size():
+			var w: Array = warns[k]
+			var col: Color = w[2]
+			var r := Rect2(x, y, widths[k], 64.0)
+			var sb := StyleBoxFlat.new()
+			sb.bg_color = Color(0.03, 0.035, 0.045, 0.74)
+			sb.set_corner_radius_all(4)
+			sb.border_width_left = 5
+			sb.border_width_top = 1
+			sb.border_width_right = 1
+			sb.border_width_bottom = 1
+			var edge := col
+			edge.a = 0.35 + 0.65 * (pulse if col == RED else 0.6)
+			sb.border_color = edge
+			draw_style_box(sb, r)
+			draw_string(tf, Vector2(r.position.x + 24.0, r.position.y + 34.0), w[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 30, col)
+			draw_string(sf, Vector2(r.position.x + 25.0, r.position.y + 53.0), w[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.6))
+			x += widths[k] + 12.0
 
-	# --- landing grade / events ---
+	# --- landing grade / events: same plate style, top centre, fades out ---
 	var age: float = Time.get_ticks_msec() / 1000.0 - float(a.landing_event_time)
 	if age < 5.0 and a.landing_event != "":
 		var e: String = a.landing_event
 		var col := GREEN
-		if e.begins_with("FIRM") or e.begins_with("TAIL") or e.begins_with("PRACTICE"):
+		if e.begins_with("FIRM") or e.begins_with("TAIL") or e.begins_with("PRACTICE") or e.begins_with("AOA"):
 			col = AMBER
-		elif e.begins_with("HARD") or e.begins_with("GEAR"):
+		elif e.begins_with("HARD") or e.begins_with("GEAR") or e.begins_with("CRASH"):
 			col = RED
-		col.a = clampf(5.0 - age, 0.0, 1.0)
-		var ew := font.get_string_size(e, HORIZONTAL_ALIGNMENT_LEFT, -1, 30).x
-		draw_string(font, Vector2((vs.x - ew) / 2.0, 120.0), e, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, col)
+		var fade := clampf(5.0 - age, 0.0, 1.0) * clampf(age * 6.0, 0.0, 1.0)
+		var ef: Font = UI.spaced("Bold", 4)
+		var ew := ef.get_string_size(e, HORIZONTAL_ALIGNMENT_LEFT, -1, 24).x
+		var er := Rect2((vs.x - ew) / 2.0 - 26.0, 84.0, ew + 52.0, 46.0)
+		var eb := StyleBoxFlat.new()
+		eb.bg_color = Color(0.03, 0.035, 0.045, 0.7 * fade)
+		eb.set_corner_radius_all(4)
+		eb.border_width_bottom = 3
+		var ec := col
+		ec.a = fade
+		eb.border_color = ec
+		draw_style_box(eb, er)
+		draw_string(ef, Vector2(er.position.x + 26.0, er.position.y + 31.0), e, HORIZONTAL_ALIGNMENT_LEFT, -1, 24, Color(1, 1, 1, fade))
 
 
 func _dev_text(v, hi: String, lo: String, tol: float) -> String:

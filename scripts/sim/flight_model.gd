@@ -130,6 +130,8 @@ func inertia() -> Vector3:
 # ======================================================================================
 func step(dt: float) -> void:
 	if crashed:
+		tas = 0.0; ias = 0.0; mach = 0.0; qbar = 0.0; alpha = 0.0; beta = 0.0
+		stall_frac = 0.0; buffet = 0.0; thrust = 0.0; fuel_flow = 0.0; nz = 1.0
 		vel = vel.move_toward(Vector3.ZERO, 30.0 * dt)
 		omega = omega.move_toward(Vector3.ZERO, 3.0 * dt)
 		pos += vel * dt
@@ -173,7 +175,10 @@ func step(dt: float) -> void:
 	alpha_crit_deg = spec.alpha_crit_deg * _crit_scale(mach) + slats * spec.slat_crit_bonus_deg
 	var a_abs := absf(alpha)
 	var crit := deg_to_rad(alpha_crit_deg)
-	stall_frac = clampf((a_abs - crit * spec.alpha_buffet_frac) / (crit * (1.0 - spec.alpha_buffet_frac)), 0.0, 1.0)
+	# below ~30 kt the airflow is too weak for AoA to mean anything (vanes droop, flow is gusty):
+	# no stall, buffet or wing rock from a breeze over a parked jet
+	var air_valid := clampf((ias - 15.0) / 10.0, 0.0, 1.0)
+	stall_frac = clampf((a_abs - crit * spec.alpha_buffet_frac) / (crit * (1.0 - spec.alpha_buffet_frac)), 0.0, 1.0) * air_valid
 	buffet = clampf(stall_frac * 1.3, 0.0, 1.0) * clampf(tas / 40.0, 0.0, 1.0)
 	var phat := pr * b / (2.0 * v)
 	var qhat := qr * c / (2.0 * v)
@@ -318,8 +323,12 @@ func _fly_by_wire(dt: float, I: Vector3, S: float, b: float, c: float, cm0: floa
 		e_cmd = (I.x * qd / (qs * c) - cm0) / (spec.cm_de * e_eff)
 		a_cmd = (I.z * pd / (qs * b) - cl0) / (spec.cl_da * a_eff)
 		r_dem = (I.y * rd / (qs * b) - cn0 - spec.cn_da * ail) / spec.cn_dr
-	# at very low airspeed the inversion is meaningless: surfaces just follow the stick
-	var direct := clampf(1.0 - (qs * c - 1500.0) / 6000.0, 0.0, 1.0)
+	# at very low airspeed the inversion is meaningless: surfaces just follow the stick.
+	# On the wheels the FBW is in GROUND MODE (as on real jets): pure stick-to-surface up to taxi speeds,
+	# blending into the flight laws through the take-off run.
+	var direct := clampf(1.0 - (qs * c - 4000.0) / 10000.0, 0.0, 1.0)
+	if wow:
+		direct = maxf(direct, 1.0 - clampf((ias - 45.0) / 20.0, 0.0, 1.0))
 	var e_max := deg_to_rad(spec.elevator_up_deg)
 	var e_min := -deg_to_rad(spec.elevator_down_deg)
 	var a_max := deg_to_rad(spec.aileron_deg)
