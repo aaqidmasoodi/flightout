@@ -48,13 +48,14 @@ func _process(_delta: float) -> void:
 		"DOWN" if a.gear_down else "UP", "ON" if a.flaps else "OFF",
 		"OUT" if a.airbrake else "IN", "ON" if a.wheel_brakes else "OFF",
 		"ON" if a.radar_on else "OFF", view_txt])
+	lines.append("LIGHTS %s" % ("ON" if a.fx and a.fx.lights_on else "OFF"))
 	if a.aoa_deg > 22.0 and not a.on_ground:
 		lines.append(">>> HIGH AoA / STALL WARNING <<<")
 	if a.crashed:
 		lines.append("*** CRASHED: %s. Press Backspace to reset ***" % a.crash_reason)
 	lines.append("")
 	lines.append("W/S pitch   A/D roll   Q/E yaw   Shift/Ctrl throttle (above 85% = afterburner)")
-	lines.append("G gear   F flaps   B airbrake   Space wheel brakes   C canopy   R radar   T radome")
+	lines.append("G gear   F flaps   B airbrake   Space wheel brakes   C canopy   R radar   T radome   L lights")
 	lines.append("V view (close/far/cockpit)   Right-drag look   Wheel zoom   Backspace reset")
 	_label.text = "\n".join(lines)
 

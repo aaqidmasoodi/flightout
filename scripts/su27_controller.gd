@@ -87,6 +87,7 @@ var yaw_in := 0.0
 var flap_pos := 0.0
 var brake_pos := 0.0
 
+var fx: Node
 var _surfaces := {}
 var _tires: Array[Node3D] = []
 var _nose_gear: Node3D
@@ -113,6 +114,11 @@ func _ready() -> void:
 		var node := model.find_child(n, true, false) as Node3D
 		if node:
 			_surfaces[n] = [node, node.transform.basis]
+	fx = preload("res://scripts/aircraft/su27_effects.gd").new()
+	fx.name = "Effects"
+	add_child(fx)
+	fx.setup(self, model)
+
 	_nose_gear = model.find_child("NoseGear", true, false) as Node3D
 	if _nose_gear:
 		_nose_rest = _nose_gear.transform.basis
