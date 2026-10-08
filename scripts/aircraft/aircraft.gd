@@ -128,15 +128,25 @@ func _ready() -> void:
 	model.rotation.y = PI  # glTF model front is +Z, Godot forward is -Z
 	add_child(model)
 
-	gear_player = model.find_child("AnimationPlayer", true, false)
-	canopy_player = _clone_player("CanopyPlayer")
-	brake_player = _clone_player("AirbrakePlayer")
-	radar_player = _clone_player("RadarPlayer")
-	radome_player = _clone_player("RadomePlayer")
-	for clip in gear_player.get_animation_list():
-		if clip.begins_with("radar_scan"):
+	# One AnimationPlayer per system, each with ONLY its own clips. A player that knows other systems'
+	# tracks writes them too (e.g. the airbrake would snap the gear down), so libraries are never shared.
+	var source: AnimationPlayer = model.find_child("AnimationPlayer", true, false)
+	var clips := {}
+	for lib_name in source.get_animation_library_list():
+		var lib := source.get_animation_library(lib_name)
+		for clip in lib.get_animation_list():
+			clips[String(clip)] = lib.get_animation(clip)
+	for clip in clips:
+		if String(clip).begins_with("radar_scan"):
 			radar_clip = clip
-			gear_player.get_animation(clip).loop_mode = Animation.LOOP_LINEAR
+			(clips[clip] as Animation).loop_mode = Animation.LOOP_LINEAR
+	canopy_player = _system_player("CanopyPlayer", source, clips, ["canopy_open"])
+	brake_player = _system_player("AirbrakePlayer", source, clips, ["airbrake_open"])
+	radar_player = _system_player("RadarPlayer", source, clips, [radar_clip])
+	radome_player = _system_player("RadomePlayer", source, clips, ["radome_open"])
+	gear_player = _system_player("GearPlayer", source, clips, ["gear_extend", "gear_retract"])
+	source.stop()
+	source.queue_free()
 	for n in ["Stabilator_L", "Stabilator_R", "Flaperon_L", "Flaperon_R", "Slat_L", "Slat_R", "Rudder_L", "Rudder_R"]:
 		var node := model.find_child(n, true, false) as Node3D
 		if node:
@@ -164,14 +174,46 @@ func _ready() -> void:
 	fm.reset(global_transform, 0.0, true)
 
 
-func _clone_player(player_name: String) -> AnimationPlayer:
+func _system_player(player_name: String, source: AnimationPlayer, clips: Dictionary, names: Array) -> AnimationPlayer:
 	var p := AnimationPlayer.new()
 	p.name = player_name
-	gear_player.get_parent().add_child(p)
-	p.root_node = gear_player.root_node
-	for lib in gear_player.get_animation_library_list():
-		p.add_animation_library(lib, gear_player.get_animation_library(lib))
+	source.get_parent().add_child(p)
+	p.root_node = source.root_node
+	var lib := AnimationLibrary.new()
+	for n in names:
+		if clips.has(n):
+			lib.add_animation(n, _only_moving_tracks(clips[n]))
+	p.add_animation_library("", lib)
 	return p
+
+
+## The exporter samples every animated part into every clip, so e.g. "airbrake_open" also carries the gear
+## frozen at its rest (down) pose. A track whose value never changes inside a clip belongs to another system:
+## drop it, so each clip only moves what it really animates.
+static func _only_moving_tracks(src: Animation) -> Animation:
+	var anim := src.duplicate(true) as Animation
+	for t in range(anim.get_track_count() - 1, -1, -1):
+		var n := anim.track_get_key_count(t)
+		if n < 2:
+			anim.remove_track(t)
+			continue
+		var first = anim.track_get_key_value(t, 0)
+		var moving := false
+		for k in range(1, n):
+			var v = anim.track_get_key_value(t, k)
+			if typeof(v) == TYPE_QUATERNION:
+				if absf((v as Quaternion).dot(first as Quaternion)) < 0.99999:
+					moving = true
+			elif typeof(v) == TYPE_VECTOR3:
+				if ((v as Vector3) - (first as Vector3)).length() > 1e-4:
+					moving = true
+			elif v != first:
+				moving = true
+			if moving:
+				break
+		if not moving:
+			anim.remove_track(t)
+	return anim
 
 
 func _physics_process(delta: float) -> void:
