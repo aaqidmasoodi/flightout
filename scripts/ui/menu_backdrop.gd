@@ -3,6 +3,7 @@ extends Node3D
 ## Light on purpose: only the jet, a sky, a cloud layer and the ocean shader. No world, no physics.
 
 const OCEAN_SHADER := preload("res://shaders/ocean.gdshader")
+const Look = preload("res://scripts/core/look.gd")
 const CLOUD_SHADER := preload("res://shaders/menu_clouds.gdshader")
 const FLAME_SHADER := preload("res://shaders/afterburner_flame.gdshader")
 const SPEED := 260.0          # apparent airspeed, m/s
@@ -111,9 +112,10 @@ func _build_environment() -> void:
 	env.fog_light_color = Color(0.86, 0.64, 0.50)
 	env.fog_density = 0.00004
 	env.fog_sky_affect = 0.0
-	env.adjustment_enabled = true
-	env.adjustment_saturation = 1.08
-	env.adjustment_contrast = 1.04
+	Look.apply(env, 1.04, 1.08)
+	Settings.changed.connect(func(k, _v):
+		if String(k).begins_with("display/"):
+			Look.apply(env, 1.04, 1.08))
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)

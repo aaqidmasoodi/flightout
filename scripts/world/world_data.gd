@@ -120,6 +120,12 @@ func approach_guidance(pos: Vector3, heading: Vector3) -> Dictionary:
 	return best
 
 
+## Time of day (hours, 0..24) and how fast it runs; sky conditions. Owned by the server in multiplayer.
+var time_of_day := 13.5
+var time_scale := 0.0          # game seconds per real second: 0 frozen, 1 real time, 60 = an hour per minute
+var conditions := 1            # 0 clear, 1 scattered, 2 broken, 3 overcast, 4 fog, 5 rain
+const TIME_SCALES := [0.0, 1.0, 60.0]
+
 const WIND_SPEEDS := [0.0, 5.0, 10.0, 15.0]          # calm, light (10 kt), moderate (20 kt), strong (30 kt)
 const TURBULENCE := [0.0, 0.3, 0.6, 1.0]
 
@@ -135,3 +141,11 @@ func apply_weather() -> void:
 	atmosphere.wind_speed = WIND_SPEEDS[clampi(int(Settings.get_value("weather/wind")), 0, 3)]
 	atmosphere.wind_from_deg = float(Settings.get_value("weather/wind_from"))
 	atmosphere.turbulence = TURBULENCE[clampi(int(Settings.get_value("weather/turbulence")), 0, 3)]
+	time_of_day = fposmod(float(Settings.get_value("weather/time")), 24.0)
+	time_scale = TIME_SCALES[clampi(int(Settings.get_value("weather/time_flow")), 0, 2)]
+	conditions = clampi(int(Settings.get_value("weather/conditions")), 0, 5)
+
+
+func _process(delta: float) -> void:
+	if time_scale > 0.0 and not get_tree().paused:
+		time_of_day = fposmod(time_of_day + delta * time_scale / 3600.0, 24.0)

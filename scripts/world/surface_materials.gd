@@ -8,6 +8,8 @@ const CLOUD_SHADER := preload("res://shaders/menu_clouds.gdshader")
 static var _normal_large: NoiseTexture2D
 static var _normal_small: NoiseTexture2D
 static var _clouds: NoiseTexture2D
+static var _sky_clouds: NoiseTexture2D
+static var _puffs: ImageTexture
 
 
 static func _noise(size: int, freq: float, octaves: int, seed: int, normal_map: bool, bump: float = 6.0) -> NoiseTexture2D:
@@ -47,3 +49,52 @@ static func clouds() -> ShaderMaterial:
 	m.shader = CLOUD_SHADER
 	m.set_shader_parameter("cloud_tex", _clouds)
 	return m
+
+
+static func sky_clouds() -> NoiseTexture2D:
+	if _sky_clouds == null:
+		_sky_clouds = _noise(1024, 0.005, 5, 404, false)
+	return _sky_clouds
+
+
+## 2x2 atlas of soft cumulus puff shapes. Alpha is the shape; red stores internal shading (lit top, darker base).
+static func puff_atlas() -> ImageTexture:
+	if _puffs:
+		return _puffs
+	var n := FastNoiseLite.new()
+	n.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	n.frequency = 0.035
+	n.fractal_octaves = 4
+	var size := 256
+	var img := Image.create(size * 2, size * 2, false, Image.FORMAT_RGBA8)
+	for cell in 4:
+		n.seed = 500 + cell
+		var ox := (cell % 2) * size
+		var oy := (cell / 2) * size
+		for y in size:
+			for x in size:
+				var u := (x + 0.5) / size * 2.0 - 1.0
+				var v := (y + 0.5) / size * 2.0 - 1.0
+				var r := sqrt(u * u + v * v)
+				var shape := 1.0 - smoothstep(0.35, 1.0, r + n.get_noise_2d(x, y) * 0.35)
+				var a := clampf(shape * 1.25, 0.0, 1.0)
+				a = a * a * (3.0 - 2.0 * a)
+				var shade := clampf(0.55 - v * 0.45 + n.get_noise_2d(x * 2.0 + 50.0, y * 2.0) * 0.25, 0.0, 1.0)
+				img.set_pixel(ox + x, oy + y, Color(shade, shade, shade, a))
+	img.generate_mipmaps()
+	_puffs = ImageTexture.create_from_image(img)
+	return _puffs
+
+
+static var _terrain_tex := {}
+
+
+## Large-scale variation, fine detail and a detail normal map for the terrain shader.
+static func terrain_textures() -> Dictionary:
+	if _terrain_tex.is_empty():
+		_terrain_tex = {
+			"macro": _noise(1024, 0.006, 5, 611, false),
+			"detail": _noise(512, 0.03, 4, 612, false),
+			"normal": _noise(512, 0.03, 4, 613, true, 6.0),
+		}
+	return _terrain_tex

@@ -11,6 +11,10 @@ const DEFAULTS := {
 	"display/max_fps": 0,            # 0 = unlimited
 	"display/render_scale": 1.0,
 	"display/fov": 70.0,
+	"display/brightness": 1.0,
+	"display/contrast": 1.0,
+	"display/gamma": 1.0,
+	"display/saturation": 1.0,
 	"graphics/msaa": 1,              # 0 off, 1 2x, 2 4x
 	"graphics/shadows": true,
 	"graphics/trees": true,
@@ -29,6 +33,9 @@ const DEFAULTS := {
 	"weather/wind": 1,                # 0 calm, 1 light, 2 moderate, 3 strong
 	"weather/wind_from": 0.0,         # degrees the wind blows from (0 = north, a headwind on runway 36)
 	"weather/turbulence": 1,          # 0 off, 1 light, 2 moderate, 3 severe
+	"weather/time": 13.5,             # local time of day, hours (0..24)
+	"weather/time_flow": 0,           # 0 frozen, 1 real time, 2 fast (1 hour per minute)
+	"weather/conditions": 1,          # 0 clear, 1 scattered, 2 broken, 3 overcast, 4 fog, 5 rain
 }
 
 var _values := {}

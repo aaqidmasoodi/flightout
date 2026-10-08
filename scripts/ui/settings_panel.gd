@@ -49,6 +49,13 @@ func _ready() -> void:
 	_choice(p, "Frame rate limit", "display/max_fps", ["Unlimited", "30", "60", "120", "144", "240"], [0, 30, 60, 120, 144, 240])
 	_slider(p, "Render scale", "display/render_scale", 0.5, 1.0, 0.05, func(v): return "%d%%" % int(round(v * 100.0)))
 	_slider(p, "Field of view", "display/fov", 55.0, 95.0, 1.0, func(v): return "%d°" % int(v))
+	p.add_child(_gap(6))
+	p.add_child(T.label("IMAGE", 18, "Bold", T.DIM, 3))
+	var pct2 := func(v): return "%d%%" % int(round(v * 100.0))
+	_slider(p, "Brightness", "display/brightness", 0.5, 1.5, 0.01, pct2)
+	_slider(p, "Contrast", "display/contrast", 0.5, 1.5, 0.01, pct2)
+	_slider(p, "Gamma", "display/gamma", 0.6, 1.6, 0.01, func(v): return "%.2f" % v)
+	_slider(p, "Saturation", "display/saturation", 0.0, 2.0, 0.01, pct2)
 
 	p = _page("GRAPHICS")
 	_choice(p, "Anti-aliasing", "graphics/msaa", ["Off", "MSAA 2x", "MSAA 4x"], [0, 1, 2])
@@ -88,6 +95,13 @@ func _ready() -> void:
 			_refresh_keys())
 
 	p = _page("WEATHER")
+	p.add_child(T.label("TIME", 18, "Bold", T.DIM, 3))
+	_time_presets(p)
+	_slider(p, "Time of day", "weather/time", 0.0, 23.99, 0.05, func(v): return "%02d:%02d" % [int(v), int(fposmod(v, 1.0) * 60.0)])
+	_choice(p, "Time flow", "weather/time_flow", ["Frozen", "Real time", "Fast  (1 hour per minute)"], [0, 1, 2])
+	p.add_child(_gap(6))
+	p.add_child(T.label("CONDITIONS", 18, "Bold", T.DIM, 3))
+	_choice(p, "Sky", "weather/conditions", ["Clear", "Scattered clouds", "Broken clouds", "Overcast", "Fog", "Rain"], [0, 1, 2, 3, 4, 5])
 	_choice(p, "Wind", "weather/wind", ["Calm", "Light  (10 kt)", "Moderate  (20 kt)", "Strong  (30 kt)"], [0, 1, 2, 3])
 	_choice(p, "Wind from", "weather/wind_from", ["North", "North-east", "East", "South-east", "South", "South-west", "West", "North-west"], [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0])
 	_choice(p, "Turbulence", "weather/turbulence", ["Off", "Light", "Moderate", "Severe"], [0, 1, 2, 3])
@@ -347,3 +361,26 @@ func _yield_corner(hide: bool) -> void:
 func _exit_tree() -> void:
 	if is_inside_tree():
 		_yield_corner(false)
+
+
+## Quick time-of-day presets (each sets the time slider).
+func _time_presets(page: VBoxContainer) -> void:
+	var row := HFlowContainer.new()
+	row.add_theme_constant_override("h_separation", 8)
+	row.add_theme_constant_override("v_separation", 8)
+	for pr in [["NIGHT", 1.0], ["DAWN", 6.1], ["MORNING", 8.5], ["NOON", 12.5], ["AFTERNOON", 15.5], ["SUNSET", 18.1], ["DUSK", 18.75]]:
+		var b := Button.new()
+		b.text = pr[0]
+		b.add_theme_font_override("font", T.spaced("Bold", 2))
+		b.add_theme_font_size_override("font_size", 17)
+		b.add_theme_stylebox_override("normal", T.flat(Color(1, 1, 1, 0.05), Color(1, 1, 1, 0.16), [1, 1, 1, 1], [14, 4, 14, 4]))
+		b.add_theme_stylebox_override("hover", T.flat(Color(1, 1, 1, 0.09), T.ACCENT, [1, 1, 1, 1], [14, 4, 14, 4]))
+		b.add_theme_stylebox_override("focus", T.flat(Color(1, 1, 1, 0.09), T.ACCENT, [1, 1, 1, 1], [14, 4, 14, 4]))
+		b.add_theme_stylebox_override("pressed", T.flat(Color(1.0, 0.6, 0.18, 0.2), T.ACCENT, [1, 1, 1, 1], [14, 4, 14, 4]))
+		var hour: float = pr[1]
+		b.pressed.connect(func():
+			Settings.set_value("weather/time", hour)
+			for r in _refreshers:
+				r.call())
+		row.add_child(b)
+	page.add_child(row)

@@ -38,6 +38,17 @@ All keys can be rebound in Settings → Controls (two keys per action; conflicts
 | Esc | Pause menu (settings, restart, main menu) |
 | Backspace | Reset |
 
+## Time of day, weather and clouds
+Settings → Weather: time presets (night, dawn, morning, noon, afternoon, sunset, dusk), a time slider, time flow (frozen, real time, fast), and sky conditions (clear, scattered, broken, overcast, fog, rain), plus wind and turbulence. Settings → Display → Image: brightness, contrast, gamma, saturation.
+- `scripts/world/sky_system.gd`: sun and moon positions from the hour at a 34°N latitude; light colour and strength, ambient light, fog, exposure and glow keyed to the sun's elevation; weather eases in smoothly; above an overcast deck the sky is clear; rain particles and rain sound.
+- `shaders/sky.gdshader`: sky colour by sun elevation, sun disc and glow, moon, stars, high cirrus.
+- `scripts/world/cloud_field.gd`: 3D cumulus in two layers (about 1,500 m and 3,600 m) built from about 11,500 soft, hand-lit puffs in one draw call; seeded layout, coverage reveals clouds in a fixed order; fly-through whiteout; overcast stratus deck.
+
+## Terrain and forests
+- One forest density map is computed from the heightmap: dense woods on hillsides, groves in the lowlands, a treeline near 1,100 m, nothing on steep rock or beaches. The terrain shader paints forest floor from the same map.
+- About 96,000 trees (conifers higher up, broadleaves lower), each with its own size, lean and tint, swaying in the wind. Per-tree level of detail: a detailed, shadow-casting pool around the camera refilled from a spatial grid, cheap batches beyond, with a dithered crossfade.
+- Terrain, ocean and clouds use mipmapped noise textures, so they stay smooth at any distance.
+
 ## Weather
 Settings → Weather: wind strength and direction (runway 36 points north, so a north wind is a headwind) and turbulence.
 

@@ -10,6 +10,7 @@ const DRAW := [
 
 var _env: Environment
 var _sun: DirectionalLight3D
+var _sky: Node3D
 var _cam: Camera3D
 
 
@@ -51,35 +52,12 @@ func _apply_settings() -> void:
 	_sun.shadow_enabled = bool(Settings.get_value("graphics/shadows"))
 	var d: Dictionary = DRAW[clampi(int(Settings.get_value("graphics/draw_distance")), 0, 2)]
 	_cam.far = d.far
-	_env.fog_density = d.fog
+	_sky.draw_fog = d.fog
 
 
 func _build_environment() -> void:
-	var sky_mat := ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = Color(0.20, 0.40, 0.72)
-	sky_mat.sky_horizon_color = Color(0.66, 0.76, 0.88)
-	sky_mat.ground_horizon_color = Color(0.66, 0.76, 0.88)
-	sky_mat.ground_bottom_color = Color(0.25, 0.30, 0.25)
-	var sky := Sky.new()
-	sky.sky_material = sky_mat
-
-	_env = Environment.new()
-	_env.background_mode = Environment.BG_SKY
-	_env.sky = sky
-	_env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	_env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	_env.fog_enabled = true
-	_env.fog_light_color = Color(0.68, 0.76, 0.86)
-	_env.fog_density = 0.000035
-	_env.fog_sky_affect = 0.15
-	_env.fog_aerial_perspective = 0.6
-
-	var world_env := WorldEnvironment.new()
-	world_env.environment = _env
-	add_child(world_env)
-
-	_sun = DirectionalLight3D.new()
-	_sun.rotation_degrees = Vector3(-50.0, -30.0, 0.0)
-	_sun.shadow_enabled = true
-	_sun.directional_shadow_max_distance = 300.0
-	add_child(_sun)
+	_sky = preload("res://scripts/world/sky_system.gd").new()
+	_sky.name = "Sky"
+	add_child(_sky)
+	_env = _sky.env
+	_sun = _sky.sun
