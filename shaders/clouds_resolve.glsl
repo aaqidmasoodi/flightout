@@ -29,6 +29,18 @@ layout(set = 0, binding = 6, std140) uniform Params {
 } p;
 
 
+// Clip towards the neighbourhood centre along a straight line (not per channel), so the result is always a
+// blend of colours that really exist here; per-channel clamping could pair dark light with opaque cover.
+vec4 clip_box(vec4 h, vec4 lo, vec4 hi) {
+	vec4 c = 0.5 * (hi + lo);
+	vec4 e = 0.5 * (hi - lo) + 1e-4;
+	vec4 v = h - c;
+	vec4 u = abs(v / e);
+	float m = max(max(u.x, u.y), max(u.z, u.w));
+	return m > 1.0 ? c + v / m : h;
+}
+
+
 void main() {
 	ivec2 px = ivec2(gl_GlobalInvocationID.xy);
 	ivec2 hsize = ivec2(p.sizes.xy);
@@ -73,7 +85,7 @@ void main() {
 				// let it converge; when it moved a lot, clip tightly so nothing trails
 				float motion = length((puv - uv) * vec2(hsize));
 				float k = mix(8.0, 2.0, smoothstep(0.25, 4.0, motion));
-				h = clamp(h, m1 - k * sigma, m1 + k * sigma);
+				h = clip_box(h, m1 - k * sigma, m1 + k * sigma);
 				float w = p.misc2.y * mix(1.0, 0.85, smoothstep(2.0, 12.0, motion));
 				// when history is trusted less (fast motion), lean more on the spatially filtered current frame
 				vec4 cf_m = mix(c, m1, mix(0.5, 0.85, smoothstep(0.5, 4.0, motion)));

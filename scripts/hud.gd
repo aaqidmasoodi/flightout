@@ -18,6 +18,7 @@ var _status_box: PanelContainer
 var _hints: Control
 var _hint_grid: GridContainer
 var _fps: Label
+var _net: Label
 
 
 func _ready() -> void:
@@ -39,6 +40,11 @@ func _ready() -> void:
 	_fps.offset_left = -160; _fps.offset_right = -24; _fps.offset_top = 18
 	_fps.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_root.add_child(_fps)
+	_net = T.label("", 15, "Bold", T.DIM, 1)
+	_net.anchor_left = 1.0; _net.anchor_right = 1.0
+	_net.offset_left = -700; _net.offset_right = -24; _net.offset_top = 44
+	_net.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_root.add_child(_net)
 	Settings.changed.connect(_on_setting)
 	_apply_settings()
 
@@ -53,6 +59,7 @@ func _apply_settings() -> void:
 	_panel.visible = bool(Settings.get_value("hud/telemetry"))
 	_hints.visible = bool(Settings.get_value("hud/key_hints"))
 	_fps.visible = bool(Settings.get_value("hud/fps"))
+	_net.visible = bool(Settings.get_value("hud/net_stats"))
 
 
 func _build_panel() -> void:
@@ -253,6 +260,8 @@ func _process(_delta: float) -> void:
 	var a = aircraft
 	if _fps.visible:
 		_fps.text = "%d FPS" % Engine.get_frames_per_second()
+	if _net.visible:
+		_net.text = Game.client.stats_text() if Game.online else ""
 	# status pill
 	var box := StyleBoxFlat.new()
 	box.content_margin_top = 4; box.content_margin_bottom = 4

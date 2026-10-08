@@ -86,6 +86,7 @@ func _ready() -> void:
 	_toggle(p, "Flight data panel  (H)", "hud/telemetry")
 	_toggle(p, "Key hints", "hud/key_hints")
 	_toggle(p, "FPS counter", "hud/fps")
+	_toggle(p, "Network statistics (online)", "hud/net_stats")
 	_choice(p, "Units", "hud/unit_system", ["Aviation  (kt, ft, ft/min)", "Metric  (km/h, m, m/s)"], [1, 0])
 
 	p = _page("CONTROLS")

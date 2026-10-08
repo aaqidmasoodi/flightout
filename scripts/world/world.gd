@@ -31,6 +31,13 @@ func _ready() -> void:
 	add_child(world)
 	_sharpen_textures(world)
 	_procedural_runway(world, preload("res://scripts/world/surface_materials.gd").terrain_textures())
+	# the airbase's shelters, lanes and props are built from AirbaseLayout (shared with the server)
+	for n in world.find_children("Shelter_*", "Node3D", true, false):
+		(n as Node3D).visible = false
+	var airbase: Node3D = preload("res://scripts/world/airbase.gd").new()
+	airbase.name = "Airbase"
+	airbase.map = world
+	add_child(airbase)
 
 	forest_mask = _make_forest_density()
 	var tex: Dictionary = preload("res://scripts/world/surface_materials.gd").terrain_textures()
@@ -127,7 +134,7 @@ func _build_ocean() -> void:
 	_ocean = MeshInstance3D.new()
 	_ocean.name = "Ocean"
 	var pm := PlaneMesh.new()
-	pm.size = Vector2(140000.0, 140000.0)
+	pm.size = Vector2(900000.0, 900000.0)   # reaches the horizon even from 45,000 ft
 	_ocean.mesh = pm
 	_ocean.material_override = preload("res://scripts/world/surface_materials.gd").ocean()
 	_ocean.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF

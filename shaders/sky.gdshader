@@ -31,7 +31,7 @@ vec3 base_sky(vec3 d, vec3 s, float e) {
 	float up = clamp(d.y, 0.0, 1.0);
 	vec3 c = mix(zen, hor, pow(1.0 - up, 4.0));
 	if (d.y < 0.0) {
-		c = mix(hor, hor * 0.3, smoothstep(0.0, -0.35, d.y));
+		c = mix(hor, hor * 0.3, smoothstep(-0.02, -0.45, d.y));   // below the horizon: distant sea haze
 	}
 	// atmospheric glow around the sun (Mie), stronger and warmer near the horizon
 	float mu = max(dot(d, s), 0.0);

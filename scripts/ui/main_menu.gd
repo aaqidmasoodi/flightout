@@ -5,6 +5,7 @@ const T = preload("res://scripts/ui/ui_theme.gd")
 const Backdrop = preload("res://scripts/ui/menu_backdrop.gd")
 const SettingsPanel = preload("res://scripts/ui/settings_panel.gd")
 const AboutPanel = preload("res://scripts/ui/about_panel.gd")
+const MultiplayerPanel = preload("res://scripts/ui/multiplayer_panel.gd")
 const PRELOAD := ["res://assets/su27.glb", "res://assets/world/world.glb", "res://scenes/main.tscn"]
 
 var _ui: Control
@@ -19,6 +20,8 @@ var _switching := false
 
 
 func _ready() -> void:
+	if Game.is_server:
+		return                      # dedicated server: Game replaces this scene, nothing to draw
 	get_tree().paused = false
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	add_child(Backdrop.new())
@@ -32,6 +35,20 @@ func _ready() -> void:
 	_build_corner_info()
 	_ui.modulate.a = 0.0
 	create_tween().tween_property(_ui, "modulate:a", 1.0, 1.0).set_trans(Tween.TRANS_SINE)
+	# test/automation switch: FlightOut.exe -- --start-flight  (skips the menu)
+	if "--start-flight" in OS.get_cmdline_user_args():
+		_on_play.call_deferred()
+	# FlightOut -- --connect=host[:port] [--callsign=Name]  (joins a server straight away)
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--connect="):
+			var cs := "Pilot"
+			for a2 in OS.get_cmdline_user_args():
+				if a2.begins_with("--callsign="):
+					cs = a2.trim_prefix("--callsign=")
+			Game.client.joined.connect(_on_play, CONNECT_ONE_SHOT)
+			Game.client.connect_to(arg.trim_prefix("--connect="), cs)
+	if Game.has_meta("menu_notice"):
+		_on_multiplayer.call_deferred()
 
 
 func _build_left_panel() -> void:
@@ -56,6 +73,7 @@ func _build_left_panel() -> void:
 	_buttons.add_theme_constant_override("separation", 6)
 	col.add_child(_buttons)
 	_menu_button("PLAY", _on_play)
+	_menu_button("MULTIPLAYER", _on_multiplayer)
 	_menu_button("SETTINGS", _on_settings)
 	_menu_button("ABOUT", _on_about)
 	_menu_button("QUIT", func(): Game.quit())
@@ -127,6 +145,12 @@ func _close_sub() -> void:
 
 func _on_settings() -> void:
 	_open_sub(SettingsPanel.new())
+
+
+func _on_multiplayer() -> void:
+	var p := MultiplayerPanel.new()
+	p.join_ready.connect(_on_play)
+	_open_sub(p)
 
 
 func _on_about() -> void:

@@ -12,6 +12,20 @@ uniform sampler2D normal_small : hint_normal, filter_linear_mipmap_anisotropic, 
 uniform sampler2D depth_tex : hint_depth_texture, filter_linear_mipmap;
 uniform vec3 haze_color : source_color = vec3(0.6, 0.7, 0.8);
 uniform float haze_density = 0.0;     // set by the sky system; 0 = use only the scene fog
+uniform vec3 hor_toward : source_color = vec3(0.0);   // sky at the horizon towards the sun (0 = use haze_color)
+uniform vec3 hor_away : source_color = vec3(0.0);
+uniform vec2 sun_xz = vec2(0.0);
+
+// mean haze density between two heights (haze lives low): seen from high up the sea stays visible further
+float haze_mean(float y0, float y1) {
+	const float H = 2500.0;
+	y0 = max(y0, 0.0);
+	y1 = max(y1, 0.0);
+	float a = exp(-y0 / H);
+	float b = exp(-y1 / H);
+	float dy = y0 - y1;
+	return abs(dy) < 1.0 ? a : H * (b - a) / dy;
+}
 
 varying vec3 wpos;
 
@@ -48,7 +62,16 @@ void fragment() {
 	SPECULAR = 0.5;
 	// distant water converges to the horizon haze, like the land does
 	if (haze_density > 0.0) {
-		float haze = 1.0 - exp(-haze_density * dist);
-		FOG = vec4(haze_color, clamp(haze, 0.0, 0.97));
+		float haze = 1.0 - exp(-haze_density * dist * haze_mean(CAMERA_POSITION_WORLD.y, wpos.y));
+		// fade into the sky's own horizon colour for this direction, so sea and sky meet without a seam
+		vec3 hc = haze_color;
+		if (dot(sun_xz, sun_xz) > 0.25) {
+			vec2 dh = normalize(wpos.xz - CAMERA_POSITION_WORLD.xz + vec2(1e-5));
+			float toward = pow(clamp(dot(dh, sun_xz) * 0.5 + 0.5, 0.0, 1.0), 3.0);
+			hc = mix(hor_away, hor_toward, toward);
+		}
+		FOG = vec4(hc, clamp(haze, 0.0, 0.985) * 0.8);
+		// the farthest water fades out, so the sea meets the sky's own horizon with no seam (seen from high up)
+		ALPHA *= 1.0 - smoothstep(0.6, 0.985, haze);
 	}
 }

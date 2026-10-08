@@ -28,6 +28,8 @@ layout(set = 0, binding = 6, std140) uniform Params {
 	vec4 misc;             // x max distance, y frame, z primary steps, w light steps
 	mat4 prev_vp;          // last frame's view-projection, for reprojection
 	vec4 misc2;            // x history valid, y history weight, z height variation (m)
+	vec4 hor_a;            // rgb sky at the horizon towards the sun, w = sun direction x (horizontal, unit)
+	vec4 hor_b;            // rgb sky at the horizon away from the sun, w = sun direction z
 } p;
 
 layout(rg32f, set = 0, binding = 7) uniform restrict writeonly image2D out_depth;
@@ -76,6 +78,18 @@ float cloud_density(vec3 pos, bool cheap, float detail_amt) {
 	return max(d, 0.0) * p.layer.w;
 }
 
+// Mean haze density between two heights, relative to sea level: haze lives in the lowest few km, so from high up
+// the cloud deck stays crisp to the horizon instead of dissolving into fog.
+float haze_mean(float y0, float y1) {
+	const float H = 2500.0;
+	y0 = max(y0, 0.0);
+	y1 = max(y1, 0.0);
+	float a = exp(-y0 / H);
+	float b = exp(-y1 / H);
+	float dy = y0 - y1;
+	return abs(dy) < 1.0 ? a : H * (b - a) / dy;
+}
+
 float hg(float c, float g) {
 	float g2 = g * g;
 	return (1.0 - g2) / (4.0 * 3.14159265 * pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5));
@@ -116,20 +130,28 @@ void main() {
 	vec4 vfar = p.inv_proj * vec4(uv * 2.0 - 1.0, 0.5, 1.0);
 	vec3 ro = p.cam_pos.xyz;
 	vec3 rd = normalize(mat3(p.cam_xform) * normalize(vfar.xyz / vfar.w));
-	float max_dist = min(scene_dist, p.misc.x);
-
 	float base = p.layer.x - p.misc2.z * 0.5;
 	float top = p.layer.y + p.misc2.z * 1.2;
+	// above the layer the deck stretches to the horizon, hundreds of km away: march it that far (steps grow with
+	// distance, and aerial perspective fades it into the haze), so it never ends in a circle around the camera
+	float reach = p.misc.x;
+	if (ro.y > top) {
+		reach = max(reach, min(p.misc.x + (ro.y - top) * 40.0, 450000.0));
+	}
 	float t0, t1;
 	if (abs(rd.y) < 1e-4) {
 		t0 = (ro.y < base || ro.y > top) ? 1.0 : 0.0;
-		t1 = (ro.y < base || ro.y > top) ? 0.0 : max_dist;
+		t1 = (ro.y < base || ro.y > top) ? 0.0 : reach;
 	} else {
 		float ta = (base - ro.y) / rd.y;
 		float tb = (top - ro.y) / rd.y;
 		t0 = max(min(ta, tb), 0.0);
 		t1 = max(ta, tb);
 	}
+	// Objects nearer than the clouds (the jet, nearby scenery) do not stop the march: the composite trims each
+	// pixel to its own depth anyway, and marching through them keeps the cloud image continuous, so when the jet
+	// moves or rolls the history it uncovers is real cloud, not a jet-shaped hole that smears into streaks.
+	float max_dist = (scene_dist < max(t0, 300.0)) ? reach : min(scene_dist, reach);
 	t1 = min(t1, max_dist);
 	if (t1 <= t0 || p.layer.z <= 0.001) {
 		imageStore(out_color, px, vec4(0.0, 0.0, 0.0, 1.0));
@@ -227,8 +249,14 @@ void main() {
 		t += step_here;
 	}
 	if (first < NO_CLOUD) {
-		float f = 1.0 - exp(-p.fog.w * first * 0.85);
-		S = mix(S, p.fog.rgb * (1.0 - T), f);
+		// aerial perspective: fade towards the sky's own horizon colour in this direction, so far clouds melt into
+		// the horizon exactly like the sky behind them
+		float y_cloud = ro.y + rd.y * first;
+		float f = 1.0 - exp(-p.fog.w * first * haze_mean(ro.y, y_cloud));
+		vec2 dh = normalize(rd.xz + vec2(1e-5));
+		float toward = pow(clamp(dot(dh, vec2(p.hor_a.w, p.hor_b.w)) * 0.5 + 0.5, 0.0, 1.0), 3.0);
+		vec3 fc = mix(p.hor_b.rgb, p.hor_a.rgb, toward);
+		S = mix(S, fc * (1.0 - T), f);
 	}
 	imageStore(out_color, px, vec4(S, T));
 	imageStore(out_depth, px, vec4(first, last + last_step, 0.0, 0.0));

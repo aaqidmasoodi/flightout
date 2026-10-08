@@ -105,8 +105,7 @@ func _process(delta: float) -> void:
 	if aircraft == null:
 		return
 	_t += delta
-	if Input.is_action_just_pressed("toggle_lights"):
-		lights_on = not lights_on
+	lights_on = bool(aircraft.fm.lights_on)     # a switch in the simulation, so remote jets show theirs too
 	var on: bool = lights_on and not aircraft.crashed
 
 	# navigation lights: steady

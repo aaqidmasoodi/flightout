@@ -127,6 +127,32 @@ func _build_rain() -> void:
 	_rain_snd.play()
 
 
+## Mean haze density between two heights relative to sea level (scale height 2.5 km). Same model as the shaders.
+static func haze_mean(y0: float, y1: float) -> float:
+	const H := 2500.0
+	y0 = maxf(y0, 0.0)
+	y1 = maxf(y1, 0.0)
+	var a := exp(-y0 / H)
+	var b := exp(-y1 / H)
+	var dy := y0 - y1
+	return a if absf(dy) < 1.0 else H * (b - a) / dy
+
+
+## The sky shader's colour right at the horizon, towards and away from the sun (mirrors sky.gdshader), so
+## fog on land, sea and clouds fades into exactly the sky behind it.
+static func _sky_horizon(e: float, over: float, haze: float) -> Array:
+	var sday := smoothstep(-8.0, 12.0, e)
+	var sgold := (1.0 - smoothstep(3.0, 20.0, e)) * smoothstep(-12.0, -1.0, e)
+	var hor := Color(0.012, 0.02, 0.04).lerp(Color(0.58, 0.71, 0.86), sday)
+	var toward := hor.lerp(Color(1.0, 0.4, 0.13), sgold)
+	var away := hor.lerp(Color(0.3, 0.22, 0.38), sgold * 0.65)
+	var g := Color(0.012, 0.014, 0.02).lerp(Color(0.33, 0.35, 0.39), sday)
+	g = g.lerp(g * Color(1.15, 0.85, 0.7), sgold * 0.6)
+	toward = toward.lerp(g, over).lerp(g * 1.05, haze)
+	away = away.lerp(g, over).lerp(g * 1.05, haze)
+	return [toward, away]
+
+
 ## Direction towards a body from its hour angle (degrees) and declination, at our latitude.
 static func _body_dir(hour_angle: float, decl: float) -> Vector3:
 	var lat := deg_to_rad(LATITUDE)
@@ -190,7 +216,9 @@ func _process(delta: float) -> void:
 	horizon = horizon.lerp(Color(0.95, 0.55, 0.32), golden * 0.55)
 	var grey := Color(0.02, 0.022, 0.03).lerp(Color(0.42, 0.45, 0.5), day).lerp(Color(0.27, 0.3, 0.34) * day, float(_w.rain))
 	env.fog_light_color = horizon.lerp(grey, maxf(over, float(_w.haze)))
-	env.fog_density = maxf(lerpf(0.000016, float(_w.fog), below), draw_fog)
+	# haze is densest near the ground: thinner on average for a camera high up (same model as clouds and sea)
+	env.fog_density = maxf(lerpf(0.000016, float(_w.fog), below), draw_fog) * haze_mean(cam_y, 0.0)
+	env.fog_aerial_perspective = 0.85   # distant land takes the sky's colour in its own direction
 	env.fog_sky_affect = lerpf(0.12, 0.6, float(_w.haze))
 	env.fog_height = 260.0
 	env.fog_height_density = 0.004 * float(_w.haze) * (1.0 if WorldData.conditions == 4 else 0.3)
@@ -220,7 +248,13 @@ func _process(delta: float) -> void:
 	clouds.amb_top = sky_top.lerp(Color(0.36, 0.38, 0.42) * maxf(day, 0.05), over)
 	clouds.amb_bottom = Color(0.01, 0.012, 0.015).lerp(Color(0.2, 0.22, 0.2), day).lerp(Color(0.32, 0.22, 0.16), golden * 0.4)
 	clouds.fog_color = env.fog_light_color
-	clouds.fog_density = env.fog_density
+	clouds.fog_density = maxf(lerpf(0.000016, float(_w.fog), below), draw_fog)   # sea-level value; the shader integrates height
+	var hz := _sky_horizon(e, over, float(_w.haze) * below)
+	var sxz := Vector2(sd.x, sd.z)
+	sxz = sxz.normalized() if sxz.length() > 0.001 else Vector2(0.0, -1.0)
+	clouds.hor_toward = hz[0]
+	clouds.hor_away = hz[1]
+	clouds.sun_xz = sxz
 	clouds.base = float(_w.base)
 	clouds.top = float(_w.top)
 	clouds.coverage = float(_w.ccov)
@@ -232,7 +266,10 @@ func _process(delta: float) -> void:
 	# ---- water haze ----
 	for om in preload("res://scripts/world/surface_materials.gd").ocean_materials:
 		(om as ShaderMaterial).set_shader_parameter("haze_color", env.fog_light_color)
-		(om as ShaderMaterial).set_shader_parameter("haze_density", maxf(env.fog_density * 1.9, 0.00003))
+		(om as ShaderMaterial).set_shader_parameter("haze_density", maxf(clouds.fog_density * 1.9, 0.00003))
+		(om as ShaderMaterial).set_shader_parameter("hor_toward", hz[0])
+		(om as ShaderMaterial).set_shader_parameter("hor_away", hz[1])
+		(om as ShaderMaterial).set_shader_parameter("sun_xz", sxz)
 
 	# ---- sky shader (high cirrus and the sky itself) ----
 	# Changing any sky uniform re-renders the sky's lighting cubemap, so update a few times a second at most, and

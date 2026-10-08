@@ -8,7 +8,24 @@ signal sim_event(type: String, value: float)
 
 const FlightModel = preload("res://scripts/sim/flight_model.gd")
 const AircraftSpec = preload("res://scripts/aircraft/aircraft_spec.gd")
-const SUBSTEPS := 2                  # 2 x 120 Hz physics ticks = 240 Hz simulation
+const P = preload("res://scripts/net/protocol.gd")
+const Layout = preload("res://scripts/world/airbase_layout.gd")
+const SUBSTEPS := P.SUBSTEPS         # 2 substeps per 120 Hz tick = 240 Hz simulation
+const CORRECTION_RATE := 10.0        # 1/s: how fast a network correction is blended out of the view
+const TOGGLES := {"toggle_gear": FlightModel.T_GEAR, "toggle_flaps": FlightModel.T_FLAPS,
+	"toggle_airbrake": FlightModel.T_AIRBRAKE, "toggle_limiter": FlightModel.T_LIMITER,
+	"toggle_canopy": FlightModel.T_CANOPY, "toggle_radar": FlightModel.T_RADAR, "toggle_radome": FlightModel.T_RADOME,
+	"toggle_lights": FlightModel.T_LIGHTS, "reset": FlightModel.T_RESPAWN}
+
+## OFFLINE: single player. PREDICTED: your jet online (simulated here at once, corrected by the server).
+## REMOTE: someone else's jet, drawn from interpolated server snapshots.
+enum NetMode { OFFLINE, PREDICTED, REMOTE }
+var net_mode := NetMode.OFFLINE
+var slot := 0                        # shelter index online
+var callsign := ""
+var input_blocked := false           # menus open online: the jet keeps flying, hands off the stick
+var is_remote: bool:
+	get: return net_mode == NetMode.REMOTE
 const PRACTICE_DISTANCE := 7000.0
 const GLIDESLOPE := deg_to_rad(3.0)
 
@@ -27,9 +44,12 @@ var fx: Node
 
 # pilot / systems state that lives on the client
 var throttle := 0.0
-var canopy_open := false
-var radar_on := false
-var radome_open := false
+var canopy_open: bool:
+	get: return fm.canopy_open
+var radar_on: bool:
+	get: return fm.radar_on
+var radome_open: bool:
+	get: return fm.radome_open
 var wheel_brakes := false
 var autothrottle := false
 var at_target := 0.0
@@ -117,6 +137,13 @@ var _was_ab := false
 var _was_wow := true
 var _prev_ias := 0.0
 var _ias_rate := 0.0
+var _tog := 0                        # local switch counters, 2 bits each (see FlightModel.apply_input)
+var _shown := {}                     # switch states the visuals currently show
+var _vis_pos := Vector3.ZERO         # network correction still being blended out (view only)
+var _vis_rot := Quaternion.IDENTITY
+var _remote_crashed := false
+var _dev_fly := "--dev-fly" in OS.get_cmdline_user_args()   # development: a simple autopilot for netcode tests
+var _dev_gear_done := false
 
 
 func _ready() -> void:
@@ -155,7 +182,12 @@ func _ready() -> void:
 	fx.name = "Effects"
 	add_child(fx)
 	fx.setup(self, model)
-	add_to_group("player_aircraft")
+	if is_remote:
+		add_to_group("remote_aircraft")
+		physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF   # placed every frame from snapshots
+		_add_callsign()
+	else:
+		add_to_group("player_aircraft")
 	var snd: Node3D = preload("res://scripts/aircraft/aircraft_audio.gd").new()
 	snd.name = "Audio"
 	snd.setup(self)
@@ -171,7 +203,8 @@ func _ready() -> void:
 		var t := model.find_child(n, true, false) as Node3D
 		if t:
 			_tires.append(t)
-	fm.reset(global_transform, 0.0, true)
+	fm.respawn(global_transform)
+	_shown = _switches()
 
 
 func _system_player(player_name: String, source: AnimationPlayer, clips: Dictionary, names: Array) -> AnimationPlayer:
@@ -217,20 +250,84 @@ static func _only_moving_tracks(src: Animation) -> Animation:
 
 
 func _physics_process(delta: float) -> void:
-	_handle_toggles()
+	if is_remote:
+		return
+	var t := 0
+	if net_mode == NetMode.PREDICTED:
+		t = Game.client.next_tick()
 	_read_inputs(delta)
-	fm.in_pitch = pitch_in
-	fm.in_roll = roll_in
-	fm.in_yaw = yaw_in
-	fm.in_throttle = throttle
-	fm.in_brake = 1.0 if wheel_brakes else 0.0
-	var dt := delta / SUBSTEPS
-	for i in SUBSTEPS:
-		fm.step(dt)
-	global_transform = Transform3D(fm.rot, fm.pos)
+	var cmd := P.make_cmd(t, pitch_in, roll_in, yaw_in, throttle, 1.0 if wheel_brakes else 0.0, _tog)
+	apply_cmd(cmd, false)
+	step_sim()
+	if net_mode == NetMode.PREDICTED:
+		Game.client.record(cmd, fm.get_state())
+	var k := exp(-CORRECTION_RATE * delta)
+	_vis_pos *= k
+	_vis_rot = Quaternion.IDENTITY.slerp(_vis_rot, k)
+	global_transform = Transform3D(Basis(_vis_rot) * fm.rot, fm.pos + _vis_pos)
 	_process_events()
+	_sync_switches()
 	_update_surfaces()
 	_update_gear_visuals(delta)
+
+
+## One tick of input into the simulation. `replay` is true while re-simulating after a server correction:
+## then nothing audible or visible may fire.
+func apply_cmd(cmd: Array, replay: bool) -> void:
+	var fired: int = fm.apply_input(cmd[1], cmd[2], cmd[3], cmd[4], cmd[5], cmd[6])
+	if fired & (1 << FlightModel.T_RESPAWN):
+		fm.respawn(_spawn_point())
+		if not replay:
+			_after_respawn()
+
+
+func step_sim() -> void:
+	var dt := P.TICK_DT / SUBSTEPS
+	for i in SUBSTEPS:
+		fm.step(dt)
+
+
+## Server correction: restore its state for tick `ack`, replay our inputs since, and blend the difference out of
+## the view over a few frames, so the jet never visibly jumps.
+func rewind(state: Array, ack: int, cmds: Dictionary, states: Dictionary, now: int) -> void:
+	var old_pos := fm.pos
+	var old_rot := Quaternion(fm.rot.orthonormalized())
+	fm.set_state(state)
+	for t in range(ack + 1, now + 1):
+		if cmds.has(t):
+			apply_cmd(cmds[t], true)
+			step_sim()
+			states[t] = fm.get_state()
+	fm.events.clear()
+	var new_rot := Quaternion(fm.rot.orthonormalized())
+	_vis_pos += old_pos - fm.pos
+	_vis_rot = ((_vis_rot * old_rot) * new_rot.inverse()).normalized()
+	if _vis_pos.length() > 40.0:          # a respawn or a big desync: cut, don't glide across the map
+		_vis_pos = Vector3.ZERO
+		_vis_rot = Quaternion.IDENTITY
+		reset_physics_interpolation()
+
+
+## Puts the jet at a spawn point, parked and configured (no input involved: used when the flight starts).
+func place(xform: Transform3D) -> void:
+	fm.respawn(xform)
+	_after_respawn()
+
+
+func _spawn_point() -> Transform3D:
+	return Layout.parking_slot(slot) if net_mode == NetMode.PREDICTED else spawn
+
+
+func _after_respawn() -> void:
+	throttle = 0.0
+	autothrottle = false
+	_vis_pos = Vector3.ZERO
+	_vis_rot = Quaternion.IDENTITY
+	_snap_gear_down()
+	_shown = _switches()
+	sim_event.emit("reset", 0.0)
+	global_transform = Transform3D(fm.rot, fm.pos)
+	reset_physics_interpolation()
 
 
 func _process_events() -> void:
@@ -255,6 +352,25 @@ func _process_events() -> void:
 
 
 func _read_inputs(delta: float) -> void:
+	if _dev_fly:
+		_dev_autopilot()
+		return
+	if input_blocked:
+		pitch_in = move_toward(pitch_in, 0.0, delta * 4.0)
+		roll_in = move_toward(roll_in, 0.0, delta * 5.0)
+		yaw_in = move_toward(yaw_in, 0.0, delta * 3.0)
+		wheel_brakes = false
+		return
+	for action in TOGGLES:
+		if Input.is_action_just_pressed(action):
+			var sh: int = TOGGLES[action] * 2
+			_tog = (_tog & ~(3 << sh)) | ((((_tog >> sh) & 3) + 1) & 3) << sh
+	if Input.is_action_just_pressed("toggle_autothrottle") and not fm.wow and not fm.crashed:
+		autothrottle = not autothrottle
+		at_target = fm.ias
+		sim_event.emit("switch", 0.0)
+	if Input.is_action_just_pressed("practice_approach") and net_mode == NetMode.OFFLINE:
+		practice_approach()
 	var pitch_axis := Input.get_axis("pitch_down", "pitch_up")
 	if bool(Settings.get_value("controls/invert_pitch")):
 		pitch_axis = -pitch_axis
@@ -278,6 +394,20 @@ func _read_inputs(delta: float) -> void:
 			var want := clampf(0.62 + err * 0.05 - _ias_rate * 0.35, 0.0, spec.ab_threshold - 0.01)
 			throttle = move_toward(throttle, want, 0.6 * delta)
 	wheel_brakes = Input.is_action_pressed("wheel_brake")
+
+
+## Development autopilot: full power, rotate at 150 kt, gear up, climb to about 900 m and weave gently.
+func _dev_autopilot() -> void:
+	var t := fm.time
+	throttle = 1.0 if t > 1.0 else 0.0
+	var agl := altitude_agl
+	var climb := 0.0 if fm.ias < 78.0 else (0.45 if fm.pos.y < 900.0 else clampf(-fm.vel.y * 0.05, -0.3, 0.3))
+	pitch_in = climb
+	roll_in = 0.0 if agl < 300.0 else 0.6 * sin(t * 0.25)
+	if agl > 40.0 and not _dev_gear_done:
+		_dev_gear_done = true
+		var sh := FlightModel.T_GEAR * 2
+		_tog = (_tog & ~(3 << sh)) | ((((_tog >> sh) & 3) + 1) & 3) << sh
 
 
 func _event(text: String) -> void:
@@ -331,53 +461,41 @@ func _toggle_clip(p: AnimationPlayer, clip: String, open: bool) -> void:
 		p.play_backwards(clip)
 
 
-func _set_gear(down: bool) -> void:
-	fm.gear_down = down
-	gear_player.speed_scale = gear_player.get_animation("gear_extend").length / spec.gear_transit_time
-	gear_player.play("gear_extend" if down else "gear_retract")
-	sim_event.emit("gear_motion", 1.0 if down else 0.0)
+func _switches() -> Dictionary:
+	return {"gear": fm.gear_down, "flaps": fm.flaps, "airbrake": fm.airbrake, "limiter": fm.limiter,
+		"canopy": fm.canopy_open, "radar": fm.radar_on, "radome": fm.radome_open, "lights": fm.lights_on}
 
 
-func _handle_toggles() -> void:
-	if Input.is_action_just_pressed("reset"):
-		reset()
-	if fm.crashed:
-		return
-	if Input.is_action_just_pressed("toggle_gear") and not fm.wow and not gear_player.is_playing():
-		_set_gear(not fm.gear_down)
-	if Input.is_action_just_pressed("toggle_canopy"):
-		canopy_open = not canopy_open
-		_toggle_clip(canopy_player, "canopy_open", canopy_open)
-		sim_event.emit("canopy", 1.0 if canopy_open else 0.0)
-	if Input.is_action_just_pressed("toggle_airbrake"):
-		fm.airbrake = not fm.airbrake
-		_toggle_clip(brake_player, "airbrake_open", fm.airbrake)
-		sim_event.emit("airbrake", 1.0 if fm.airbrake else 0.0)
-	if Input.is_action_just_pressed("toggle_radome"):
-		radome_open = not radome_open
-		_toggle_clip(radome_player, "radome_open", radome_open)
-	if Input.is_action_just_pressed("toggle_flaps"):
-		fm.flaps = not fm.flaps
-		sim_event.emit("flaps", 1.0 if fm.flaps else 0.0)
-	if Input.is_action_just_pressed("toggle_autothrottle") and not fm.wow:
-		autothrottle = not autothrottle
-		at_target = fm.ias
-		sim_event.emit("switch", 0.0)
-	if Input.is_action_just_pressed("practice_approach"):
-		practice_approach()
-	if Input.is_action_just_pressed("toggle_limiter"):
-		fm.limiter = not fm.limiter
-		_event("AOA LIMITER " + ("ON" if fm.limiter else "OFF  ·  CAREFUL"))
-		sim_event.emit("switch", 0.0)
-	if Input.is_action_just_pressed("toggle_radar"):
-		radar_on = not radar_on
-		sim_event.emit("switch", 0.0)
-		if radar_on:
+## Animations and switch sounds follow the simulation's switch states, whoever changed them (this pilot, a
+## replay, or a remote jet's snapshot), so every jet looks the same on every screen.
+func _sync_switches() -> void:
+	var now := _switches()
+	if now.gear != _shown.gear:
+		gear_player.speed_scale = gear_player.get_animation("gear_extend").length / spec.gear_transit_time
+		gear_player.play("gear_extend" if now.gear else "gear_retract")
+		sim_event.emit("gear_motion", 1.0 if now.gear else 0.0)
+	if now.canopy != _shown.canopy:
+		_toggle_clip(canopy_player, "canopy_open", now.canopy)
+		sim_event.emit("canopy", 1.0 if now.canopy else 0.0)
+	if now.airbrake != _shown.airbrake:
+		_toggle_clip(brake_player, "airbrake_open", now.airbrake)
+		sim_event.emit("airbrake", 1.0 if now.airbrake else 0.0)
+	if now.radome != _shown.radome:
+		_toggle_clip(radome_player, "radome_open", now.radome)
+	if now.flaps != _shown.flaps:
+		sim_event.emit("flaps", 1.0 if now.flaps else 0.0)
+	if now.radar != _shown.radar:
+		if now.radar:
 			radar_player.play(radar_clip)
 		else:
 			radar_player.pause()
-	if Input.is_action_just_pressed("toggle_lights"):
 		sim_event.emit("switch", 0.0)
+	if now.lights != _shown.lights:
+		sim_event.emit("switch", 0.0)
+	if now.limiter != _shown.limiter and not is_remote:
+		_event("AOA LIMITER " + ("ON" if now.limiter else "OFF  ·  CAREFUL"))
+		sim_event.emit("switch", 0.0)
+	_shown = now
 
 
 func _snap_gear_down() -> void:
@@ -401,6 +519,7 @@ func practice_approach() -> void:
 	fm.airbrake = false
 	fm.set_engines_n2(88.0)
 	_snap_gear_down()
+	_shown = _switches()
 	throttle = 0.6
 	autothrottle = true
 	at_target = 78.0
@@ -409,13 +528,73 @@ func practice_approach() -> void:
 	_event("PRACTICE APPROACH  RWY 36")
 
 
+## Back to the start: the runway offline, your shelter online. Goes through the input stream (the R switch),
+## so online the server respawns you at the same tick.
 func reset() -> void:
-	fm.reset(spawn, 0.0, true)
-	sim_event.emit("reset", 0.0)
-	throttle = 0.0
-	autothrottle = false
-	fm.flaps = false
-	fm.flap_pos = 0.0
-	_snap_gear_down()
-	global_transform = spawn
-	reset_physics_interpolation()
+	var sh := FlightModel.T_RESPAWN * 2
+	_tog = (_tog & ~(3 << sh)) | ((((_tog >> sh) & 3) + 1) & 3) << sh
+
+
+# ---------------- remote jets ----------------
+## Places a remote jet from the interpolated snapshot and drives its visuals and sound from it.
+func apply_remote(pos: Vector3, q: Quaternion, vel: Vector3, omega: Vector3, d: Dictionary, delta: float) -> void:
+	fm.pos = pos
+	fm.rot = Basis(q)
+	fm.vel = vel
+	fm.omega = omega
+	fm.elev = d.elev
+	fm.ail = d.ail
+	fm.rud = d.rud
+	fm.steer = d.steer
+	fm.gear_pos = d.gear_pos
+	fm.flap_pos = d.flap_pos
+	fm.airbrake_pos = d.airbrake_pos
+	fm.gear_comp = d.comp
+	var f: int = d.flags
+	fm.gear_down = f & P.FLAG_GEAR != 0
+	fm.wow = f & P.FLAG_WOW != 0
+	fm.flaps = f & P.FLAG_FLAPS != 0
+	fm.airbrake = f & P.FLAG_AIRBRAKE != 0
+	fm.crashed = f & P.FLAG_CRASHED != 0
+	fm.canopy_open = f & P.FLAG_CANOPY != 0
+	fm.lights_on = f & P.FLAG_LIGHTS != 0
+	fm.radar_on = f & P.FLAG_RADAR != 0
+	fm.radome_open = f & P.FLAG_RADOME != 0
+	for e in fm.engines:
+		e.n2 = d.n2
+		e.ab = d.ab
+	# air data the sound and effects use, estimated from the motion
+	var vb := fm.rot.inverse() * (vel - WorldData.atmosphere.wind_at(pos, 0.0, 0.0))
+	fm.tas = vb.length()
+	fm.alpha = atan2(-vb.y, maxf(-vb.z, 1.0))
+	var rho_ratio := exp(-maxf(pos.y, 0.0) / 9500.0)
+	fm.ias = fm.tas * sqrt(rho_ratio)
+	fm.qbar = 0.5 * 1.225 * rho_ratio * fm.tas * fm.tas
+	fm.mach = fm.tas / 340.0
+	var n := clampf((d.n2 - spec.engine_idle_n2) / (100.0 - spec.engine_idle_n2), 0.0, 1.0)
+	fm.thrust = spec.engine_count * (lerpf(2000.0, 79400.0, n * n) + d.ab * 43000.0)
+	fm.wheel_speed = Vector2(vel.x, vel.z).length() if fm.wow else 0.0
+	if fm.crashed != _remote_crashed:
+		_remote_crashed = fm.crashed
+		sim_event.emit("crash" if fm.crashed else "reset", 0.0)
+	global_transform = Transform3D(fm.rot, fm.pos)
+	_sync_switches()
+	_update_surfaces()
+	_update_gear_visuals(delta)
+
+
+func _add_callsign() -> void:
+	var l := Label3D.new()
+	l.name = "Callsign"
+	l.text = callsign
+	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	l.fixed_size = true
+	l.pixel_size = 0.0009
+	l.font_size = 30
+	l.outline_size = 8
+	l.modulate = Color(1.0, 1.0, 1.0, 0.85)
+	l.outline_modulate = Color(0.0, 0.0, 0.0, 0.6)
+	l.no_depth_test = true
+	l.position = Vector3(0.0, 4.5, 0.0)
+	l.visibility_range_end = 15000.0
+	add_child(l)

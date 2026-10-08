@@ -95,9 +95,13 @@ func _process(delta: float) -> void:
 	if ac == null:
 		return
 	var cam := get_viewport().get_camera_3d()
-	var cockpit: bool = cam != null and "view_name" in cam and String(cam.view_name) == "COCKPIT"
+	var local: bool = not ac.is_remote       # other pilots' jets: positional sound only, no cockpit or warnings
+	if not local:
+		_dead = ac.crashed
+	var cockpit: bool = local and cam != null and "view_name" in cam and String(cam.view_name) == "COCKPIT"
 	var canopy_open: bool = ac.canopy_open
-	Audio.set_cockpit_muffle(1.0 if (cockpit and not canopy_open) else (0.35 if cockpit else 0.0))
+	if local:
+		Audio.set_cockpit_muffle(1.0 if (cockpit and not canopy_open) else (0.35 if cockpit else 0.0))
 	if _dead:
 		for p in [_whine, _core, _low, _ab, _ab_body, _wind, _buffet, _roll, _motor]:
 			p.volume_db = move_toward(p.volume_db, -80.0, 60.0 * delta)
@@ -162,7 +166,8 @@ func _process(delta: float) -> void:
 	_hum.volume_db = move_toward(_hum.volume_db, -30.0 if cockpit else -80.0, 80.0 * delta)
 
 	# ---- warnings ----
-	_update_warnings()
+	if local:
+		_update_warnings()
 
 
 func _update_warnings() -> void:

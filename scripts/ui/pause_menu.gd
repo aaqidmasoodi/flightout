@@ -1,5 +1,6 @@
 extends CanvasLayer
-## In-flight pause menu (Esc): freezes the simulation behind blurred glass.
+## In-flight menu (Esc). Offline it freezes the simulation behind blurred glass. Online the world cannot pause:
+## the jet keeps flying with hands off the stick while the menu is open.
 
 const T = preload("res://scripts/ui/ui_theme.gd")
 const SettingsPanel = preload("res://scripts/ui/settings_panel.gd")
@@ -34,7 +35,7 @@ func _ready() -> void:
 	var col := VBoxContainer.new()
 	m.add_child(col)
 	col.add_child(T.logo(0.75))
-	col.add_child(T.label("PAUSED", 22, "Bold", T.ACCENT, 6))
+	col.add_child(T.label("ONLINE  ·  " + Game.client.server_name.to_upper() if Game.online else "PAUSED", 22, "Bold", T.ACCENT, 6))
 	var sp := Control.new(); sp.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	col.add_child(sp)
 	_buttons = VBoxContainer.new()
@@ -42,9 +43,13 @@ func _ready() -> void:
 	col.add_child(_buttons)
 	_button("RESUME", resume)
 	_button("SETTINGS", _open_settings)
-	_button("RESTART AT RUNWAY", func(): _aircraft_call("reset"))
-	_button("PRACTICE APPROACH", func(): _aircraft_call("practice_approach"))
-	_button("MAIN MENU", func(): Game.goto_menu())
+	if Game.online:
+		_button("RESPAWN IN SHELTER", func(): _aircraft_call("reset"))
+		_button("LEAVE SERVER", func(): Game.goto_menu())
+	else:
+		_button("RESTART AT RUNWAY", func(): _aircraft_call("reset"))
+		_button("PRACTICE APPROACH", func(): _aircraft_call("practice_approach"))
+		_button("MAIN MENU", func(): Game.goto_menu())
 	_button("QUIT TO DESKTOP", func(): Game.quit())
 	var sp2 := Control.new(); sp2.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	col.add_child(sp2)
@@ -78,7 +83,10 @@ func _unhandled_input(event: InputEvent) -> void:
 func open() -> void:
 	_prev_mouse = Input.mouse_mode
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	get_tree().paused = true
+	if Game.online:
+		_set_blocked(true)
+	else:
+		get_tree().paused = true
 	_root.visible = true
 	_root.modulate.a = 0.0
 	create_tween().tween_property(_root, "modulate:a", 1.0, 0.18)
@@ -89,7 +97,14 @@ func resume() -> void:
 	_close_settings()
 	_root.visible = false
 	get_tree().paused = false
+	_set_blocked(false)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
+func _set_blocked(on: bool) -> void:
+	var ac := get_tree().get_first_node_in_group("player_aircraft")
+	if ac:
+		ac.input_blocked = on
 
 
 func _aircraft_call(method: String) -> void:

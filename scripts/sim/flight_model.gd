@@ -49,6 +49,15 @@ var in_yaw := 0.0             # -1..1, + right
 var in_throttle := 0.0        # 0..1 (AB above spec.ab_threshold)
 var in_brake := 0.0           # 0..1
 
+# switches with no aerodynamic effect, kept in the state so every client sees them
+var canopy_open := false
+var radar_on := false
+var radome_open := false
+var lights_on := true
+## Last applied toggle counters: 2 bits per switch (see T_*). A switch fires when its counter changes, so a press
+## is applied exactly once even though inputs are resent several times over the network.
+var toggles := 0
+
 # outputs / telemetry
 var mass := 0.0
 var tas := 0.0
@@ -75,6 +84,131 @@ var _air_time := 0.0
 var _rock_t := 0.0
 var _drop := 0.0
 var _prev_comp := [0.0, 0.0, 0.0]
+
+
+# ---------------- pilot input (the only way controls enter the simulation) ----------------
+enum { T_GEAR, T_FLAPS, T_AIRBRAKE, T_LIMITER, T_CANOPY, T_RADAR, T_RADOME, T_LIGHTS, T_RESPAWN, T_COUNT }
+
+## Applies one tick of pilot input. Axis values must already be quantised (see net/protocol.gd), so client and
+## server apply bit-identical numbers. Returns a bitmask of the switches that changed state (1 << T_*), and
+## T_RESPAWN when a respawn was requested (the caller owns spawn points).
+func apply_input(pitch: float, roll: float, yaw: float, throttle: float, brake: float, tog: int) -> int:
+	in_pitch = clampf(pitch, -1.0, 1.0)
+	in_roll = clampf(roll, -1.0, 1.0)
+	in_yaw = clampf(yaw, -1.0, 1.0)
+	in_throttle = clampf(throttle, 0.0, 1.0)
+	in_brake = clampf(brake, 0.0, 1.0)
+	var pressed := 0
+	for i in T_COUNT:
+		if ((tog >> (i * 2)) & 3) != ((toggles >> (i * 2)) & 3):
+			pressed |= 1 << i
+	toggles = tog
+	var fired := pressed & (1 << T_RESPAWN)
+	if crashed:
+		return fired
+	if pressed & (1 << T_GEAR) and not wow and (gear_pos <= 0.0 or gear_pos >= 1.0):
+		gear_down = not gear_down
+		fired |= 1 << T_GEAR
+	if pressed & (1 << T_FLAPS):
+		flaps = not flaps
+		fired |= 1 << T_FLAPS
+	if pressed & (1 << T_AIRBRAKE):
+		airbrake = not airbrake
+		fired |= 1 << T_AIRBRAKE
+	if pressed & (1 << T_LIMITER):
+		limiter = not limiter
+		fired |= 1 << T_LIMITER
+	if pressed & (1 << T_CANOPY):
+		canopy_open = not canopy_open
+		fired |= 1 << T_CANOPY
+	if pressed & (1 << T_RADAR):
+		radar_on = not radar_on
+		fired |= 1 << T_RADAR
+	if pressed & (1 << T_RADOME):
+		radome_open = not radome_open
+		fired |= 1 << T_RADOME
+	if pressed & (1 << T_LIGHTS):
+		lights_on = not lights_on
+		fired |= 1 << T_LIGHTS
+	return fired
+
+
+# ---------------- full state (prediction, reconciliation, server snapshots) ----------------
+## Everything that influences the next step, in a fixed order. Restoring it and replaying the same inputs
+## reproduces the same trajectory, which is what client-side prediction relies on.
+func get_state() -> Array:
+	var e := []
+	for en in engines:
+		e.append_array([en.n2, en.ab, en.ab_lit, en._ab_timer, en.running])
+	return [pos, vel, rot, omega, fuel, time, gear_down, gear_pos, flaps, flap_pos, airbrake, airbrake_pos, limiter,
+		elev, ail, rud, steer, nz, alpha, beta, tas, ias, mach, qbar, stall_frac, buffet, wow,
+		gear_comp[0], gear_comp[1], gear_comp[2], _prev_comp[0], _prev_comp[1], _prev_comp[2],
+		crashed, _air_time, _rock_t, _drop, alpha_crit_deg, rng.state,
+		in_pitch, in_roll, in_yaw, in_throttle, in_brake, canopy_open, radar_on, radome_open, lights_on, toggles,
+		tail_scrape, wheel_speed, thrust, fuel_flow, wind, e]
+
+
+func set_state(s: Array) -> void:
+	var i := 0
+	pos = s[i]; i += 1
+	vel = s[i]; i += 1
+	rot = s[i]; i += 1
+	omega = s[i]; i += 1
+	fuel = s[i]; i += 1
+	time = s[i]; i += 1
+	gear_down = s[i]; i += 1
+	gear_pos = s[i]; i += 1
+	flaps = s[i]; i += 1
+	flap_pos = s[i]; i += 1
+	airbrake = s[i]; i += 1
+	airbrake_pos = s[i]; i += 1
+	limiter = s[i]; i += 1
+	elev = s[i]; i += 1
+	ail = s[i]; i += 1
+	rud = s[i]; i += 1
+	steer = s[i]; i += 1
+	nz = s[i]; i += 1
+	alpha = s[i]; i += 1
+	beta = s[i]; i += 1
+	tas = s[i]; i += 1
+	ias = s[i]; i += 1
+	mach = s[i]; i += 1
+	qbar = s[i]; i += 1
+	stall_frac = s[i]; i += 1
+	buffet = s[i]; i += 1
+	wow = s[i]; i += 1
+	gear_comp = [s[i], s[i + 1], s[i + 2]]; i += 3
+	_prev_comp = [s[i], s[i + 1], s[i + 2]]; i += 3
+	crashed = s[i]; i += 1
+	_air_time = s[i]; i += 1
+	_rock_t = s[i]; i += 1
+	_drop = s[i]; i += 1
+	alpha_crit_deg = s[i]; i += 1
+	rng.state = s[i]; i += 1
+	in_pitch = s[i]; i += 1
+	in_roll = s[i]; i += 1
+	in_yaw = s[i]; i += 1
+	in_throttle = s[i]; i += 1
+	in_brake = s[i]; i += 1
+	canopy_open = s[i]; i += 1
+	radar_on = s[i]; i += 1
+	radome_open = s[i]; i += 1
+	lights_on = s[i]; i += 1
+	toggles = s[i]; i += 1
+	tail_scrape = s[i]; i += 1
+	wheel_speed = s[i]; i += 1
+	thrust = s[i]; i += 1
+	fuel_flow = s[i]; i += 1
+	wind = s[i]; i += 1
+	var e: Array = s[i]
+	for k in engines.size():
+		var en = engines[k]
+		en.n2 = e[k * 5]
+		en.ab = e[k * 5 + 1]
+		en.ab_lit = e[k * 5 + 2]
+		en._ab_timer = e[k * 5 + 3]
+		en.running = e[k * 5 + 4]
+	_update_mass()
 
 
 func setup(p_spec: AircraftSpec, p_atmo: Atmosphere, p_ground: Callable, p_water: Callable, p_seed: int = 1) -> void:
@@ -112,6 +246,17 @@ func reset(xform: Transform3D, speed: float = 0.0, on_ground: bool = true) -> vo
 		e.ab = 0.0
 		e.ab_lit = false
 	events.clear()
+
+
+## Back to a parked, configured jet: what the R key (respawn) does, identically on client and server.
+func respawn(xform: Transform3D) -> void:
+	reset(xform, 0.0, true)
+	flaps = false
+	flap_pos = 0.0
+	airbrake = false
+	airbrake_pos = 0.0
+	gear_down = true
+	gear_pos = 1.0
 
 
 func set_engines_n2(n2: float) -> void:

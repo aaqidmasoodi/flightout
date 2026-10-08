@@ -6,7 +6,7 @@ extends CompositorEffect
 ##   3. composite (full resolution): depth-aware upsample; each pixel trims the clouds to what lies in front of it
 ## The sky system sets the public parameters every frame from the time of day and weather.
 
-const UBO_FLOATS := 92          # 3 mat4 + 11 vec4
+const UBO_FLOATS := 100         # 3 mat4 + 13 vec4
 
 var sun_dir := Vector3.UP
 var light_intensity := 1.0
@@ -27,6 +27,9 @@ var max_distance := 40000.0
 var primary_steps := 72
 var light_steps := 3
 var height_variation := 450.0   # metres the layer base and the cloud tops wander across the map
+var hor_toward := Color(0.6, 0.7, 0.8)   # sky colour at the horizon towards the sun (aerial perspective)
+var hor_away := Color(0.6, 0.7, 0.8)
+var sun_xz := Vector2(0.0, -1.0)
 var history_weight := 0.95      # temporal accumulation (motion-adaptive clipping keeps it from smearing)
 
 var _rd: RenderingDevice
@@ -52,6 +55,8 @@ var _prev_wind := Vector2.ZERO
 func _init() -> void:
 	effect_callback_type = EFFECT_CALLBACK_TYPE_POST_TRANSPARENT
 	_rd = RenderingServer.get_rendering_device()
+	if _rd == null:
+		return   # headless (dedicated server): nothing to render
 	RenderingServer.call_on_render_thread(_setup)
 
 
@@ -208,6 +213,8 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	data.append_array([max_distance, float(_frame % 4096), float(primary_steps), float(light_steps)])
 	data.append_array(_proj_floats(_prev_vp))
 	data.append_array([1.0 if _has_history else 0.0, history_weight, height_variation, 0.0])
+	data.append_array([hor_toward.r, hor_toward.g, hor_toward.b, sun_xz.x])
+	data.append_array([hor_away.r, hor_away.g, hor_away.b, sun_xz.y])
 	var bytes := data.to_byte_array()
 	_rd.buffer_update(_ubo, 0, bytes.size(), bytes)
 	for view in buffers.get_view_count():

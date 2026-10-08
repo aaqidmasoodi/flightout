@@ -31,6 +31,9 @@ const DEFAULTS := {
 	"hud/telemetry": true,
 	"hud/key_hints": false,
 	"hud/fps": false,
+	"hud/net_stats": false,          # ping, loss, corrections; only shown online
+	"net/callsign": "",
+	"net/last_server": "127.0.0.1",
 	"hud/unit_system": 1,            # 1 aviation (kt, ft, ft/min, NM), 0 metric (km/h, m, m/s, km)
 	"controls/invert_pitch": false,
 	"controls/mouse_sensitivity": 1.0,
