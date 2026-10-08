@@ -1,26 +1,20 @@
 shader_type spatial;
 render_mode blend_mix, depth_draw_always, cull_back, diffuse_burley, specular_schlick_ggx;
-// Ocean: animated normal-only waves (cheap at any size), fresnel-ish look, shallow-water tint from scene depth.
+// Ocean: three scrolling, mipmapped normal-map layers (swell, waves, chop). Texture filtering keeps it smooth
+// at any distance; fine detail fades out far away and distant water gets slightly rougher (no glitter, no grain).
 
 uniform vec3 deep_color : source_color = vec3(0.015, 0.08, 0.15);
 uniform vec3 shallow_color : source_color = vec3(0.09, 0.38, 0.42);
 uniform float shallow_depth = 14.0;
 uniform vec2 scroll = vec2(0.0);   // world-space offset (menu backdrop fakes forward flight with it)
+uniform sampler2D normal_large : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D normal_small : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D depth_tex : hint_depth_texture, filter_linear_mipmap;
 
 varying vec3 wpos;
 
-float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-float vnoise(vec2 p) {
-	vec2 i = floor(p); vec2 f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
-	return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
-}
-float waves(vec2 p, float t) {
-	float h = vnoise(p * 0.015 + vec2(t * 0.04, t * 0.025));
-	h += vnoise(p * 0.06 - vec2(t * 0.08, -t * 0.05)) * 0.5;
-	h += vnoise(p * 0.22 + vec2(t * 0.18, t * 0.12)) * 0.22;
-	h += vnoise(p * 0.8 - vec2(t * 0.35, t * 0.28)) * 0.08;
-	return h;
+vec2 nm(sampler2D tex, vec2 uv) {
+	return texture(tex, uv).xy * 2.0 - 1.0;
 }
 
 void vertex() {
@@ -30,12 +24,14 @@ void vertex() {
 void fragment() {
 	vec2 p = wpos.xz + scroll;
 	float t = TIME;
-	float e = 0.6;
 	float dist = length(CAMERA_POSITION_WORLD - wpos);
-	float strength = mix(3.0, 0.4, clamp(dist / 6000.0, 0.0, 1.0));
-	float hx = waves(p - vec2(e, 0.0), t) - waves(p + vec2(e, 0.0), t);
-	float hz = waves(p - vec2(0.0, e), t) - waves(p + vec2(0.0, e), t);
-	vec3 n_world = normalize(vec3(hx * strength, 2.0 * e, hz * strength));
+	float near_detail = 1.0 - smoothstep(600.0, 7000.0, dist);
+	vec2 swell = nm(normal_large, p / 1400.0 + vec2(t * 0.0021, t * 0.0013));
+	vec2 waves = nm(normal_large, p / 260.0 - vec2(t * 0.0075, -t * 0.0050));
+	vec2 chop = nm(normal_small, p / 48.0 + vec2(t * 0.021, t * 0.016));
+	vec2 slope = swell * 0.55 + waves * 0.45 + chop * 0.35 * near_detail;
+	slope *= mix(1.0, 0.45, smoothstep(2000.0, 20000.0, dist));
+	vec3 n_world = normalize(vec3(slope.x, 1.0, slope.y));
 	NORMAL = normalize((VIEW_MATRIX * vec4(n_world, 0.0)).xyz);
 
 	float depth_raw = texture(depth_tex, SCREEN_UV).r;
@@ -46,6 +42,6 @@ void fragment() {
 
 	ALBEDO = mix(shallow_color, deep_color, thickness);
 	ALPHA = mix(0.6, 0.97, thickness);
-	ROUGHNESS = 0.05;
-	SPECULAR = 0.55;
+	ROUGHNESS = mix(0.07, 0.24, smoothstep(300.0, 9000.0, dist));
+	SPECULAR = 0.5;
 }

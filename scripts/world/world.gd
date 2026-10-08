@@ -76,9 +76,7 @@ func _build_ocean() -> void:
 	var pm := PlaneMesh.new()
 	pm.size = Vector2(140000.0, 140000.0)
 	_ocean.mesh = pm
-	var om := ShaderMaterial.new()
-	om.shader = OCEAN_SHADER
-	_ocean.material_override = om
+	_ocean.material_override = preload("res://scripts/world/surface_materials.gd").ocean()
 	_ocean.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(_ocean)
 

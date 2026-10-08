@@ -98,7 +98,7 @@ func _build_environment() -> void:
 	var ocean := MeshInstance3D.new()
 	var pm := PlaneMesh.new(); pm.size = Vector2(90000.0, 90000.0)
 	ocean.mesh = pm
-	_ocean_mat = ShaderMaterial.new(); _ocean_mat.shader = OCEAN_SHADER
+	_ocean_mat = preload("res://scripts/world/surface_materials.gd").ocean()
 	ocean.material_override = _ocean_mat
 	ocean.position.y = -1600.0
 	add_child(ocean)
@@ -106,7 +106,7 @@ func _build_environment() -> void:
 	var clouds := MeshInstance3D.new()
 	var cm := PlaneMesh.new(); cm.size = Vector2(70000.0, 70000.0)
 	clouds.mesh = cm
-	_cloud_mat = ShaderMaterial.new(); _cloud_mat.shader = CLOUD_SHADER
+	_cloud_mat = preload("res://scripts/world/surface_materials.gd").clouds()
 	clouds.material_override = _cloud_mat
 	clouds.position.y = -420.0
 	clouds.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
