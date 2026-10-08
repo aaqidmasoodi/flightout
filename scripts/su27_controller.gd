@@ -31,16 +31,16 @@ const Q_REF_ROLL := 14000.0         # roll needs more airspeed for full rate (ca
 # ---------------- ground / gear ----------------
 const GEAR_HEIGHT := 2.0            # origin height above ground, level, gear down
 const NOSE_CONTACT := Vector3(0.0, -2.0, -5.2)
-const MAIN_CONTACT := Vector3(0.0, -2.0, 1.7)
+const MAIN_CONTACT := Vector3(0.0, -2.0, 1.8)
 const TAIL_PROBE := Vector3(0.0, 0.0, 10.9)
 const ROLL_FRICTION := 0.025
-const WHEELBASE := 6.9             # m, nose wheel to main wheels
+const WHEELBASE := 7.0             # m, nose wheel to main wheels
 const MAX_STEER := deg_to_rad(55.0) # nose wheel angle at taxi speed
 const BRAKE_FRICTION := 0.45
 # suspension: one spring-damper per wheel; contact points are at full oleo extension (aircraft frame)
 const STATIC_STROKE := 0.12          # oleo compression sitting on the ground
 const MAX_STROKE := 0.32             # beyond this the gear bottoms out
-const GEAR_CONTACTS := [Vector3(0.0, -2.12, -5.2), Vector3(-2.42, -2.12, 1.7), Vector3(2.42, -2.12, 1.7)]
+const GEAR_CONTACTS := [Vector3(0.0, -2.12, -5.2), Vector3(-2.22, -2.12, 1.8), Vector3(2.22, -2.12, 1.8)]
 const GEAR_K := [280000.0, 800000.0, 800000.0]    # N/m
 const GEAR_C := [40000.0, 110000.0, 110000.0]     # N/(m/s)
 const SINK_SMOOTH := 1.5            # m/s touchdown grades
