@@ -153,10 +153,18 @@ func _chip_node(title: String, key: String) -> Control:
 	n.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	n.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(n)
-	var cap := T.label(key, 12, "Bold", T.DIM, 1)
+	# key cap: small white rounded box, bold black letter (same in every chip state for clear contrast)
+	var cap := T.label(key, 12, "Bold", Color(0.03, 0.03, 0.04), 0)
 	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cap.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	cap.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	cap.custom_minimum_size = Vector2(22, 0)
+	cap.custom_minimum_size = Vector2(16, 16)
+	var cs := StyleBoxFlat.new()
+	cs.bg_color = Color(0.96, 0.97, 0.98)
+	cs.set_corner_radius_all(3)
+	cs.content_margin_left = 4; cs.content_margin_right = 4
+	cs.content_margin_top = -1; cs.content_margin_bottom = -1
+	cap.add_theme_stylebox_override("normal", cs)
 	row.add_child(cap)
 	_chips[title] = [box, n, cap]
 	_style_chip(title, false, T.ACCENT)
@@ -165,11 +173,9 @@ func _chip_node(title: String, key: String) -> Control:
 
 func _style_chip(k: String, on: bool, col: Color) -> void:
 	var c: Array = _chips[k]
-	(c[0] as PanelContainer).add_theme_stylebox_override("panel", T.flat(col if on else Color(1, 1, 1, 0.05), col if on else Color(1, 1, 1, 0.12), [1, 1, 1, 1], [8, 2, 5, 2]))
+	(c[0] as PanelContainer).add_theme_stylebox_override("panel", T.flat(col if on else Color(1, 1, 1, 0.05), col if on else Color(1, 1, 1, 0.12), [1, 1, 1, 1], [8, 2, 6, 2]))
 	(c[1] as Label).add_theme_color_override("font_color", Color(0.04, 0.04, 0.05) if on else T.DIM)
-	var cap: Label = c[2]
-	cap.add_theme_color_override("font_color", Color(0.04, 0.04, 0.05) if on else T.TEXT)
-	cap.add_theme_stylebox_override("normal", T.flat(Color(0, 0, 0, 0.18) if on else Color(1, 1, 1, 0.07), Color(0, 0, 0, 0.45) if on else Color(1, 1, 1, 0.3), [1, 1, 1, 2], [4, 0, 4, 0]))
+	(c[2] as Label).modulate = Color(1, 1, 1, 1.0 if on else 0.82)
 
 
 func _build_status() -> void:
