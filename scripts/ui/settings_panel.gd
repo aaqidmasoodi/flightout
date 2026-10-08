@@ -8,7 +8,11 @@ var _tabs: TabContainer
 var _refreshers: Array[Callable] = []
 var _key_buttons: Array = []       # [button, action, slot]
 var _capture = null                # [button, action, slot] while waiting for a key
-var _bind_note: Label
+var _toast_layer: CanvasLayer
+var _toast: PanelContainer
+var _toast_text: Label
+var _toast_bar: ColorRect
+var _toast_tween: Tween
 
 
 func _ready() -> void:
@@ -61,9 +65,6 @@ func _ready() -> void:
 	p = _page("CONTROLS")
 	_toggle(p, "Invert pitch", "controls/invert_pitch")
 	_slider(p, "Mouse look sensitivity", "controls/mouse_sensitivity", 0.3, 2.0, 0.05, func(v): return "%.2fx" % v)
-	_bind_note = T.label("Click a key to change it.  Esc cancels, Delete clears.", 18, "Medium", T.DIM)
-	p.add_child(_gap(4))
-	p.add_child(_bind_note)
 	for entry in Settings.BINDABLE:
 		if entry.size() == 1:
 			p.add_child(_gap(8))
@@ -125,13 +126,13 @@ func _input(event: InputEvent) -> void:
 	var cap: Array = _capture
 	_capture = null
 	if code == KEY_ESCAPE:
-		_bind_note.text = "Cancelled."
+		_show_toast("Cancelled", T.DIM)
 	elif code == KEY_DELETE:
 		Settings.clear_key(cap[1], cap[2])
-		_bind_note.text = "Cleared %s." % Settings.action_label(cap[1])
+		_show_toast("Cleared  ·  %s" % Settings.action_label(cap[1]), T.DIM)
 	else:
 		var from := Settings.bind_key(cap[1], cap[2], code)
-		_bind_note.text = "%s → %s" % [Settings.key_name(code), Settings.action_label(cap[1])] + ("   (moved from %s)" % from if from != "" else "")
+		_show_toast("%s  →  %s" % [Settings.key_name(code), Settings.action_label(cap[1])] + ("    ·  moved from %s" % from if from != "" else ""), T.WARN if from != "" else T.GOOD)
 	_refresh_keys()
 
 
@@ -150,7 +151,7 @@ func _key_button(action: String, slot: int) -> Button:
 		_capture = [b, action, slot]
 		b.text = "PRESS A KEY"
 		b.add_theme_color_override("font_color", T.ACCENT)
-		_bind_note.text = "Press a key for %s  (Esc cancels, Delete clears)" % Settings.action_label(action))
+		_show_toast("Press a key for %s    ·  Esc cancels  ·  Delete clears" % Settings.action_label(action), T.ACCENT, true))
 	_key_buttons.append([b, action, slot])
 	_set_key_text(b, action, slot)
 	return b
@@ -259,3 +260,52 @@ func _on_reset() -> void:
 	for r in _refreshers:
 		r.call()
 	_refresh_keys()
+
+
+# ---------------- toast: status messages at the bottom-left of the screen ----------------
+func _ensure_toast() -> void:
+	if _toast:
+		return
+	_toast_layer = CanvasLayer.new()
+	_toast_layer.layer = 40
+	add_child(_toast_layer)
+	_toast = T.glass(0.78)
+	_toast.theme = T.get_theme()
+	_toast.anchor_top = 1.0
+	_toast.anchor_bottom = 1.0
+	_toast.offset_left = 24.0
+	_toast.offset_top = -78.0
+	_toast.offset_bottom = -24.0
+	_toast.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_toast_layer.add_child(_toast)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_toast.add_child(row)
+	_toast_bar = ColorRect.new()
+	_toast_bar.custom_minimum_size = Vector2(4, 0)
+	row.add_child(_toast_bar)
+	_toast_text = T.label("", 20, "SemiBold", T.TEXT)
+	_toast_text.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var m := MarginContainer.new()
+	m.add_theme_constant_override("margin_right", 22)
+	m.add_theme_constant_override("margin_top", 12)
+	m.add_theme_constant_override("margin_bottom", 12)
+	m.add_child(_toast_text)
+	row.add_child(m)
+	_toast.modulate.a = 0.0
+
+
+func _show_toast(text: String, col: Color, persistent: bool = false) -> void:
+	_ensure_toast()
+	_toast_text.text = text
+	_toast_bar.color = col
+	_toast.reset_size()
+	if _toast_tween:
+		_toast_tween.kill()
+	_toast_tween = create_tween()
+	_toast_tween.tween_property(_toast, "modulate:a", 1.0, 0.15)
+	if not persistent:
+		_toast_tween.tween_interval(2.6)
+		_toast_tween.tween_property(_toast, "modulate:a", 0.0, 0.5)
