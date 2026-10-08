@@ -31,7 +31,7 @@ func _ready() -> void:
 	body.add_theme_font_size_override("normal_font_size", 23)
 	body.add_theme_font_size_override("bold_font_size", 23)
 	body.add_theme_color_override("default_color", T.TEXT)
-	body.text = "[b]FlightOut[/b] is a combat flight game with a physics-based flight model: real lift, drag and thrust, a fly-by-wire Su-27 with working gear, flaps and lights, and a 41 km island to fly over.\n\nToday it is a single-player sandbox. It is being built as the foundation for team-based multiplayer air combat.\n\n[color=#8f98a1]Designed & Developed by[/color] [b]Yembera[/b]\n[color=#8f98a1]Technology from Kashmir, built for the world  ·  yembera.com[/color]\n\n[color=#8f98a1]© 2026 Yembera. All rights reserved.[/color]"
+	body.text = "[b]FlightOut[/b] is a combat flight game with a physics-based flight model: real lift, drag and thrust, a fly-by-wire Su-27 with working gear, flaps and lights, and a 41 km island to fly over.\n\nMultiplayer is in early alpha: join the official server or host your own, up to 16 pilots. Air combat is next.\n\n[color=#8f98a1]Designed & Developed by[/color] [b]Yembera[/b]\n[color=#8f98a1]Technology from Kashmir, built for the world  ·  yembera.com[/color]\n\n[color=#8f98a1]© 2026 Yembera. All rights reserved.[/color]"
 	col.add_child(body)
 	var foot := HBoxContainer.new()
 	var ym := T.svg(T.YEMBERA, 34)

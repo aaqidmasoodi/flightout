@@ -33,7 +33,7 @@ const DEFAULTS := {
 	"hud/fps": false,
 	"hud/net_stats": false,          # ping, loss, corrections; only shown online
 	"net/callsign": "",
-	"net/last_server": "127.0.0.1",
+	"net/last_server": "",
 	"hud/unit_system": 1,            # 1 aviation (kt, ft, ft/min, NM), 0 metric (km/h, m, m/s, km)
 	"controls/invert_pitch": false,
 	"controls/mouse_sensitivity": 1.0,
@@ -70,6 +70,7 @@ func _enter_tree() -> void:
 
 func _ready() -> void:
 	DisplayServer.window_set_title("Yembera FlightOut")
+	_fit_window.call_deferred()
 	for k in _values.keys():
 		_apply(k)
 
@@ -334,3 +335,21 @@ func action_label(action: String) -> String:
 		if b.size() == 2 and b[0] == action:
 			return b[1]
 	return action
+
+
+## A windowed game must never open larger than the screen (a 13" laptop is smaller than the 1600x900 default):
+## shrink to fit the usable area at 16:9 and centre it. Runs once at startup.
+func _fit_window() -> void:
+	if DisplayServer.get_name() == "headless" or DisplayServer.window_get_mode() != DisplayServer.WINDOW_MODE_WINDOWED:
+		return
+	var screen := DisplayServer.window_get_current_screen()
+	var area := DisplayServer.screen_get_usable_rect(screen)
+	var size := DisplayServer.window_get_size()
+	var deco := Vector2i(0, 40)                  # leave room for the title bar
+	var room := area.size - deco
+	if size.x <= room.x and size.y <= room.y:
+		return
+	var scale := minf(float(room.x) * 0.92 / size.x, float(room.y) * 0.92 / size.y)
+	var fitted := Vector2i(int(size.x * scale), int(size.y * scale))
+	DisplayServer.window_set_size(fitted)
+	DisplayServer.window_set_position(area.position + (area.size - fitted) / 2 + Vector2i(0, deco.y / 2))

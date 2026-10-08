@@ -17,3 +17,17 @@ Thumbs.db
 
 # raw downloaded audio packs (the used files are copied into assets/audio)
 blender/audio_sources/
+
+# Secrets: never commit keys or credentials
+*.key
+*.key.pub
+*.pem
+*.ppk
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+*_oci
+*_oci.pub
+.env
+.env.*

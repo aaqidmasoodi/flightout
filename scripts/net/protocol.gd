@@ -20,9 +20,14 @@ const CH_STATE := 0
 const CH_EVENTS := 1
 const CHANNELS := 2
 
+## Official FlightOut servers, shown first on the Multiplayer screen (a server list service will replace this).
+const OFFICIAL_SERVERS := [
+	{"name": "FlightOut London", "region": "Europe  ·  London", "address": "play.flightout.app"},
+]
+
 enum {
-	C_HELLO = 1, C_INPUT = 2, C_BYE = 3,
-	S_WELCOME = 64, S_REJECT = 65, S_JOIN = 66, S_LEAVE = 67, S_SNAPSHOT = 68, S_WEATHER = 69,
+	C_HELLO = 1, C_INPUT = 2, C_BYE = 3, C_INFO = 4,
+	S_WELCOME = 64, S_REJECT = 65, S_JOIN = 66, S_LEAVE = 67, S_SNAPSHOT = 68, S_WEATHER = 69, S_INFO = 70,
 }
 
 

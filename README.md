@@ -4,6 +4,30 @@
 
 A flight game built in Godot 4, starring a fully animated Su-27 Flanker.
 
+## Download and play
+Get the latest build from [Releases](https://github.com/aaqidmasoodi/flightout/releases). FlightOut is in alpha.
+
+| System | Download | Install |
+|---|---|---|
+| Windows 10 / 11 (64-bit) | `FlightOut-<version>-Windows-Setup.exe` | Run the installer. |
+| macOS 11+ on Apple Silicon, macOS 10.15+ on Intel | `FlightOut-<version>-macOS.dmg` | Open it and drag FlightOut into Applications. |
+| Linux x86_64 / arm64 | `FlightOut-<version>-Linux-<arch>.tar.gz` | Extract, run `FlightOut.x86_64` (or `.arm64`). `./install.sh` adds a menu entry. |
+
+**macOS, first launch:** the app is not yet notarized by Apple, so macOS says it can't verify the developer. Open
+System Settings → Privacy & Security, scroll down and click **Open Anyway** (once). On macOS 14 or older you can
+instead right-click FlightOut in Applications and choose Open.
+
+**Linux:** Vulkan drivers give the full graphics; without them the game falls back to OpenGL
+(Debian/Ubuntu: `sudo apt install mesa-vulkan-drivers`, or the proprietary NVIDIA driver).
+
+## Multiplayer
+Server-authoritative with client-side prediction: your jet responds instantly and the server corrects it invisibly;
+other jets are interpolated along smooth curves. Up to 16 pilots a server, each starting in their own hardened shelter.
+- **Official server:** Multiplayer → enter a callsign → JOIN on FlightOut London.
+- **Host your own:** Multiplayer → HOST A SERVER (UDP port 27015; forward it for friends outside your network), or run a
+  dedicated server anywhere: `FlightOut --headless -- --server --name="My server"`. See `server/README.md`.
+- Settings → HUD → Network statistics shows ping, loss and corrections in flight.
+
 ## Features
 - 41 x 41 km island map surrounded by sea: hills, forests, a northern mountain range with snow, and an airbase with a 3 km runway, taxiways, apron, hardened shelters, hangar, tower and fuel farm
 - Su-27 model built at real scale in Blender, with animated landing gear, canopy, airbrake, radome, radar dish, flaperons, slats, stabilators and rudders

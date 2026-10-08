@@ -1,0 +1,58 @@
+name: macOS disk image
+
+# Turns the macOS app attached to a release (FlightOut-<version>-macOS.zip) into a drag-to-Applications disk image
+# and attaches it to the same release. Runs on every published release; can be re-run by hand for a tag.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v0.2.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-14
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: installer/macos
+
+      - name: Download the app from the release
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "*-macOS.zip" --dir in
+          ditto -x -k in/*-macOS.zip app
+          test -d app/FlightOut.app
+
+      - name: Sign (ad-hoc) and check the app
+        run: |
+          set -euo pipefail
+          xattr -cr app/FlightOut.app
+          codesign --force --deep --sign - app/FlightOut.app
+          codesign --verify --deep --strict --verbose=2 app/FlightOut.app
+          lipo -archs app/FlightOut.app/Contents/MacOS/FlightOut
+
+      - name: Build the disk image
+        run: |
+          set -euo pipefail
+          VER="${TAG#v}"
+          python3 -m venv venv
+          venv/bin/pip install --quiet dmgbuild
+          tiffutil -cathidpicheck installer/macos/dmg_background.png installer/macos/dmg_background@2x.png -out background.tiff
+          venv/bin/dmgbuild -s installer/macos/dmg_settings.py \
+            -D app="app/FlightOut.app" -D background=background.tiff \
+            -D volicon="app/FlightOut.app/Contents/Resources/icon.icns" \
+            "FlightOut $VER" "FlightOut-$VER-macOS.dmg"
+          hdiutil verify "FlightOut-$VER-macOS.dmg"
+          shasum -a 256 "FlightOut-$VER-macOS.dmg"
+
+      - name: Attach to the release
+        run: gh release upload "$TAG" "FlightOut-${TAG#v}-macOS.dmg" --repo "$GITHUB_REPOSITORY" --clobber

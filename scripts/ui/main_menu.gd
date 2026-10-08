@@ -49,6 +49,13 @@ func _ready() -> void:
 			Game.client.connect_to(arg.trim_prefix("--connect="), cs)
 	if Game.has_meta("menu_notice"):
 		_on_multiplayer.call_deferred()
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--dev-mp-shot="):   # development: screenshot of the Multiplayer screen
+			_on_multiplayer.call_deferred()
+			await get_tree().create_timer(5.0).timeout
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png(arg.trim_prefix("--dev-mp-shot="))
+			get_tree().quit()
 
 
 func _build_left_panel() -> void:

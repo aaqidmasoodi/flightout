@@ -118,6 +118,20 @@ func _receive(pl: Player, data: PackedByteArray) -> void:
 						pl.queue.erase(t)
 		P.C_BYE:
 			pl.peer.peer_disconnect_later()
+		P.C_INFO:
+			# server-list probe: name, pilots, capacity and protocol, echoing the probe's nonce, then hang up
+			if pl.joined:
+				return
+			var nonce := b.get_u32() if b.get_available_bytes() >= 4 else 0
+			var out := StreamPeerBuffer.new()
+			out.put_u8(P.S_INFO)
+			out.put_u16(P.VERSION)
+			out.put_u8(players.size())
+			out.put_u8(P.MAX_PLAYERS)
+			out.put_u32(nonce)
+			out.put_utf8_string(server_name)
+			link.send(pl.peer, P.CH_EVENTS, out.data_array, true)
+			pl.peer.peer_disconnect_later()
 
 
 func _hello(pl: Player, b: StreamPeerBuffer) -> void:

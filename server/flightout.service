@@ -1,0 +1,25 @@
+[Unit]
+Description=FlightOut dedicated game server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=flightout
+Group=flightout
+WorkingDirectory=/opt/flightout
+Environment=HOME=/var/lib/flightout
+ExecStart=/opt/flightout/flightout_server.x86_64 --headless -- --server "--name=FlightOut London"
+Restart=always
+RestartSec=3
+Nice=-5
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+StateDirectory=flightout
+ReadWritePaths=/var/lib/flightout
+
+[Install]
+WantedBy=multi-user.target
