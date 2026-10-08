@@ -148,6 +148,7 @@ func _register_input() -> void:
 	_add_keys("practice_approach", [KEY_P])
 	_add_keys("toggle_hud", [KEY_H])
 	_add_keys("pause_menu", [KEY_ESCAPE])
+	_add_keys("toggle_limiter", [KEY_K])
 
 
 ## Human-readable bindings for the settings screen.
@@ -155,7 +156,7 @@ const BINDINGS := [
 	["Pitch down / up", "W / S"], ["Roll", "A / D"], ["Yaw / nose-wheel steering", "Q / E"],
 	["Throttle up / down", "Shift / Ctrl"], ["Landing gear", "G"], ["Flaps", "F"], ["Airbrake", "B"],
 	["Wheel brakes", "Space"], ["Auto-throttle", "Z"], ["Canopy", "C"], ["Exterior lights", "L"],
-	["Radar scan", "R"], ["Radome", "T"], ["Camera view", "V"], ["Look around", "Right mouse drag"],
+	["AoA limiter on / off (Cobra)", "K"], ["Radar scan", "R"], ["Radome", "T"], ["Camera view (close, far, orbit, cockpit)", "V"], ["Look around", "Right mouse drag"],
 	["Zoom", "Mouse wheel"], ["Flight data panel", "H"], ["Practice approach", "P"],
 	["Reset to runway", "Backspace"], ["Pause menu", "Esc"],
 ]

@@ -26,7 +26,7 @@ func _draw() -> void:
 	var vs := get_viewport_rect().size
 	var cam := get_viewport().get_camera_3d()
 
-	var cockpit: bool = cam != null and "view" in cam and int(cam.view) == 2
+	var cockpit: bool = cam != null and "view_name" in cam and String(cam.view_name) == "COCKPIT"
 
 	# --- flight path marker: where the jet is actually going (cockpit view only) ---
 	var vel: Vector3 = a.velocity
@@ -58,15 +58,15 @@ func _draw() -> void:
 		draw_line(cc + Vector2(lx, -90), cc + Vector2(lx, 90), GREEN if ok_loc else AMBER, 3.0)
 		draw_line(cc + Vector2(-90, gy), cc + Vector2(90, gy), GREEN if ok_gs else AMBER, 3.0)
 		draw_rect(Rect2(cc - Vector2(6, 6), Vector2(12, 12)), Color(1, 1, 1, 0.9), false, 2.0)
-		var kmh := int(a.speed * 3.6)
+		var kmh := int(a.ias * 3.6)
 		var spd_col := GREEN if (kmh >= 260 and kmh <= 310) else AMBER
-		var spd: Array = Settings.speed_text(a.speed)
+		var spd: Array = Settings.speed_text(a.ias)
 		var dist: Array = Settings.dist_text(float(g.dist))
 		var aviation := int(Settings.get_value("hud/unit_system")) == 1
 		draw_string(font, box.position + Vector2(0, -64), "ILS  RWY %s" % g.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, AMBER)
 		draw_string(font, box.position + Vector2(box.size.x, -64), "%s %s" % [dist[0], dist[1]], HORIZONTAL_ALIGNMENT_RIGHT, -1, 18, Color.WHITE)
 		draw_string(font, box.position + Vector2(0, -38), "GLIDE %s    CENTRE %s" % [_dev_text(g.gs_dev, "HIGH", "LOW", 0.2), _dev_text(g.loc_dev, "RIGHT", "LEFT", 0.5)], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.WHITE)
-		draw_string(font, box.position + Vector2(0, -12), "SPEED %s  ·  TARGET %s" % [spd[0], "145-160 KT" if aviation else "270-300 KM/H"], HORIZONTAL_ALIGNMENT_LEFT, -1, 18, spd_col)
+		draw_string(font, box.position + Vector2(0, -12), "IAS %s  ·  TARGET %s" % [spd[0], "145-160 KT" if aviation else "270-300 KM/H"], HORIZONTAL_ALIGNMENT_LEFT, -1, 18, spd_col)
 
 	# --- warnings ---
 	var warns: Array[String] = []
@@ -79,8 +79,10 @@ func _draw() -> void:
 			warns.append("SINK RATE")
 		if vsi < -15.0 and agl / -vsi < 6.0:
 			warns.append("PULL UP")
-		if a.aoa_deg > 21.0:
+		if a.stall_frac > 0.55:
 			warns.append("STALL")
+		elif a.stall_frac > 0.05:
+			warns.append("BUFFET")
 	if not warns.is_empty() and fmod(_t, 0.8) < 0.55:
 		var txt := "   ".join(warns)
 		var tw := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 34).x

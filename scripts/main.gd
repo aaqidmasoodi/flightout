@@ -1,6 +1,7 @@
 extends Node3D
 ## Flight scene: world, jet, camera, HUD and pause menu. Entered from the main menu's loading screen.
 
+const DEFAULT_AIRCRAFT := "res://data/aircraft/su27.tres"
 const DRAW := [
 	{"far": 22000.0, "fog": 0.00007},
 	{"far": 40000.0, "fog": 0.000035},
@@ -21,7 +22,8 @@ func _ready() -> void:
 	world.name = "World"
 	add_child(world)
 
-	var aircraft: Node3D = preload("res://scripts/su27_controller.gd").new()
+	var aircraft: Node3D = preload("res://scripts/aircraft/aircraft.gd").new()
+	aircraft.spec = load("res://data/aircraft/su27.tres")
 	aircraft.name = "Su27"
 	add_child(aircraft)
 	aircraft.global_transform = WorldData.spawn_transform(0)

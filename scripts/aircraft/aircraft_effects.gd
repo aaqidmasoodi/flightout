@@ -1,5 +1,5 @@
 extends Node
-## Presentation-only effects for the Su-27: exterior lights and afterburner.
+## Presentation-only effects for any aircraft following the FlightOut model naming contract: exterior lights and afterburner.
 ## Reads state from the flight controller and never touches the physics,
 ## so a dedicated server can skip this node entirely.
 

@@ -12,6 +12,8 @@ var cell_size := 40.0
 var half_extent := 20480.0
 var sea_level := 0.0
 var spawns: Array = []
+## Wind (m/s, world space, the direction the air moves). Aerodynamics use velocity minus wind.
+var wind := Vector3.ZERO
 ## Runways: threshold = start of the landing direction, dir = landing direction (unit, flat).
 ## Runway 36 (from the south, over the sea) is the instrument runway. Runway 18 is visual only:
 ## the northern mountains block a straight-in approach, so it gets no ILS or PAPI.

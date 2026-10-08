@@ -26,13 +26,14 @@ A flight game built in Godot 4, starring a fully animated Su-27 Flanker.
 | C | Canopy |
 | R | Radar scan |
 | T | Radome |
-| V | Cycle camera (close, far, cockpit) |
+| V | Cycle camera (close, far, orbit, cockpit). Orbit is DCS-style: follows position only, horizon stays level |
 | Right mouse drag | Look around |
 | Mouse wheel | Zoom |
 | L | Exterior lights |
 | Z | Auto-throttle (holds current speed) |
 | P | Practice approach: 7 km final to runway 36, configured to land |
 | H | Show / hide the flight data panel |
+| K | AoA limiter off / on (allows the Cobra; you can stall and depart) |
 | Esc | Pause menu (settings, restart, main menu) |
 | Backspace | Reset |
 
@@ -48,6 +49,8 @@ Flare gently a few metres above the runway and close the throttle. Touchdowns ar
 Runway 36 (approach from the south over the sea) is the instrument runway; runway 18 is visual only because of the mountains to the north.
 
 ## Architecture
+- Aircraft are data: `scripts/aircraft/aircraft.gd` is one generic flight model; each aircraft is an `AircraftSpec` resource (`data/aircraft/su27.tres`, 57 parameters: mass, wing, lift curve, critical AoA, drag, engines, fly-by-wire limits, rates, gear, suspension, cockpit eye, model). A new jet is a new `.tres` plus a model that follows the node naming contract.
+- Aerodynamics run on air-relative velocity (wind-ready). The HUD shows IAS, TAS, ground speed, Mach and heading.
 - `Settings` autoload: every option, saved and applied live; scenes listen for changes
 - `Game` autoload: menu and flight flow, preloaded asset cache (multiplayer session state will live here)
 - `WorldData` autoload: authoritative heightmap and runways, loaded only when a flight starts

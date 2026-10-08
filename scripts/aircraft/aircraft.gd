@@ -1,61 +1,87 @@
 extends Node3D
-## Su-27 flight model for Flightout.
-## Single-body aerodynamic model in the style of vazgriz/FlightSim:
-## real velocity vector, angle of attack / sideslip, lift + induced drag + wave drag,
-## thrust with afterburner and altitude lapse, gravity, ISA-style air density,
-## and fly-by-wire style rate commands with an AoA / G limiter.
-## Units: SI (m, kg, s, N). Godot forward is -Z, right is +X, up is +Y.
-
-# ---------------- aircraft data (Su-27S, approximate) ----------------
-const MASS := 23000.0              # kg, typical combat weight
-const WING_AREA := 62.0            # m^2
-const ASPECT_RATIO := 3.5
-const OSWALD := 0.80
-const CL_ALPHA := 3.6              # lift slope, per radian
-const CL0 := 0.05
-const ALPHA_STALL := deg_to_rad(26.0)
-const CD0 := 0.024                 # clean parasite drag
-const THRUST_DRY := 2.0 * 79400.0  # N, two AL-31F at military power
-const THRUST_AB := 2.0 * 122600.0  # N, full afterburner
-const THRUST_IDLE := 2.0 * 2500.0
-const AB_THRESHOLD := 0.85         # throttle above this lights the afterburner
-const SPOOL_RATE := 0.45           # engine response, fraction per second
-const G_MAX := 9.0
-const G_MIN := -3.0
-const ALPHA_LIMIT := deg_to_rad(24.0)   # FBW AoA limit
-const MAX_RATES := Vector3(0.65, 0.35, 3.8)  # pitch, yaw, roll  (rad/s)
-const ANG_ACCEL := Vector3(2.5, 1.5, 9.0)    # rad/s^2
-const Q_REF := 9000.0               # dynamic pressure for full control authority
-const Q_REF_ROLL := 14000.0         # roll needs more airspeed for full rate (calmer on approach)
-
-# ---------------- ground / gear ----------------
-const GEAR_HEIGHT := 2.0            # origin height above ground, level, gear down
-const NOSE_CONTACT := Vector3(0.0, -2.0, -5.2)
-const MAIN_CONTACT := Vector3(0.0, -2.0, 1.8)
-const TAIL_PROBE := Vector3(0.0, 0.0, 10.9)
-const ROLL_FRICTION := 0.025
-const WHEELBASE := 7.0             # m, nose wheel to main wheels
-const MAX_STEER := deg_to_rad(55.0) # nose wheel angle at taxi speed
-const BRAKE_FRICTION := 0.45
-# suspension: one spring-damper per wheel; contact points are at full oleo extension (aircraft frame)
-const STATIC_STROKE := 0.12          # oleo compression sitting on the ground
-const MAX_STROKE := 0.32             # beyond this the gear bottoms out
-const GEAR_CONTACTS := [Vector3(0.0, -2.12, -5.2), Vector3(-2.22, -2.12, 1.8), Vector3(2.22, -2.12, 1.8)]
-const GEAR_K := [280000.0, 800000.0, 800000.0]    # N/m
-const GEAR_C := [40000.0, 110000.0, 110000.0]     # N/(m/s)
-const SINK_SMOOTH := 1.5            # m/s touchdown grades
-const SINK_GOOD := 3.0
-const SINK_FIRM := 4.5
-const SINK_HARD := 7.0              # above this the gear collapses
-const PRACTICE_DISTANCE := 7000.0   # m from the touchdown aim point
-const GLIDESLOPE := deg_to_rad(3.0)
-const GROUND_CLEARANCE := GEAR_HEIGHT
-const MAX_GROUND_PITCH := deg_to_rad(13.0)   # tail touches the runway beyond this
-const CRASH_PROBES := [Vector3(0.0, -0.2, -11.0), Vector3(7.4, -0.3, 1.0), Vector3(-7.4, -0.3, 1.0),
-		Vector3(2.15, 3.9, 3.9), Vector3(-2.15, 3.9, 3.9), Vector3(0.0, 0.0, 10.9)]
+## Generic FlightOut aircraft: the flight model, gear, systems and visuals for ANY aircraft.
+## Everything aircraft-specific comes from `spec` (an AircraftSpec resource, e.g. data/aircraft/su27.tres).
+## Model: single rigid body with a real air-relative velocity; lift from a CL(alpha) table scaled by Mach,
+## induced + wave + flat-plate drag, thrust with afterburner and altitude lapse, gravity, ISA-style density,
+## ground effect, a stall model (buffet, wing rock, nose-down moment), FBW rate command with AoA/G limiter,
+## and spring-damper landing gear. Units: SI. Godot forward is -Z, right is +X, up is +Y.
 
 const GRAVITY := 9.81
 const RHO0 := 1.225
+const PRACTICE_DISTANCE := 7000.0   # m from the touchdown aim point
+const GLIDESLOPE := deg_to_rad(3.0)
+
+const AircraftSpec = preload("res://scripts/aircraft/aircraft_spec.gd")
+@export var spec: AircraftSpec
+
+# working values copied from the spec (names kept short for the physics code below)
+var MASS: float
+var WING_AREA: float
+var ASPECT_RATIO: float
+var OSWALD: float
+var CL_ALPHA: float
+var CL0: float
+var CL_TABLE: Array
+var ALPHA_CRIT_LOW_MACH: float
+var ALPHA_BUFFET_FRAC: float
+var ALPHA_STALL: float
+var CD0: float
+var THRUST_DRY: float
+var THRUST_AB: float
+var THRUST_IDLE: float
+var AB_THRESHOLD: float
+var SPOOL_RATE: float
+var G_MAX: float
+var G_MIN: float
+var ALPHA_LIMIT: float
+var MAX_RATES: Vector3
+var ANG_ACCEL: Vector3
+var Q_REF: float
+var Q_REF_ROLL: float
+var ROTATE_IAS_START: float
+var ROTATE_IAS_FULL: float
+var GEAR_HEIGHT: float
+var GROUND_CLEARANCE: float
+var NOSE_CONTACT: Vector3
+var MAIN_CONTACT: Vector3
+var TAIL_PROBE: Vector3
+var ROLL_FRICTION: float
+var BRAKE_FRICTION: float
+var WHEELBASE: float
+var MAX_STEER: float
+var MAX_GROUND_PITCH: float
+var STATIC_STROKE: float
+var MAX_STROKE: float
+var GEAR_CONTACTS: Array
+var GEAR_K: Array
+var GEAR_C: Array
+var SINK_SMOOTH: float
+var SINK_GOOD: float
+var SINK_FIRM: float
+var SINK_HARD: float
+var CRASH_PROBES: Array
+
+
+func _apply_spec() -> void:
+	var sp: AircraftSpec = spec
+	MASS = sp.mass_kg; WING_AREA = sp.wing_area; ASPECT_RATIO = sp.aspect_ratio; OSWALD = sp.oswald
+	CL_ALPHA = sp.cl_alpha; CL0 = sp.cl0; CL_TABLE = sp.cl_table
+	ALPHA_CRIT_LOW_MACH = sp.alpha_crit_deg; ALPHA_BUFFET_FRAC = sp.alpha_buffet_frac; ALPHA_STALL = deg_to_rad(sp.alpha_crit_deg)
+	CD0 = sp.cd0
+	THRUST_DRY = sp.engine_count * sp.thrust_dry_n; THRUST_AB = sp.engine_count * sp.thrust_ab_n; THRUST_IDLE = sp.engine_count * sp.thrust_idle_n
+	AB_THRESHOLD = sp.ab_threshold; SPOOL_RATE = sp.spool_rate
+	G_MAX = sp.g_max; G_MIN = sp.g_min; ALPHA_LIMIT = deg_to_rad(sp.alpha_limit_deg)
+	MAX_RATES = sp.max_rates; ANG_ACCEL = sp.ang_accel; Q_REF = sp.q_ref; Q_REF_ROLL = sp.q_ref_roll
+	ROTATE_IAS_START = sp.rotate_ias_start; ROTATE_IAS_FULL = sp.rotate_ias_full
+	GEAR_HEIGHT = sp.gear_height; GROUND_CLEARANCE = GEAR_HEIGHT
+	NOSE_CONTACT = sp.nose_contact; MAIN_CONTACT = sp.main_contact; TAIL_PROBE = sp.tail_probe
+	ROLL_FRICTION = sp.roll_friction; BRAKE_FRICTION = sp.brake_friction; WHEELBASE = sp.wheelbase
+	MAX_STEER = deg_to_rad(sp.max_steer_deg); MAX_GROUND_PITCH = deg_to_rad(sp.max_ground_pitch_deg)
+	STATIC_STROKE = sp.static_stroke; MAX_STROKE = sp.max_stroke
+	GEAR_CONTACTS = sp.gear_contacts; GEAR_K = sp.gear_k; GEAR_C = sp.gear_c
+	SINK_SMOOTH = sp.sink_smooth; SINK_GOOD = sp.sink_good; SINK_FIRM = sp.sink_firm; SINK_HARD = sp.sink_hard
+	CRASH_PROBES = sp.crash_probes
+
 
 var spawn: Transform3D
 var model: Node3D
@@ -92,7 +118,10 @@ var at_target := 0.0
 var _airborne_time := 0.0
 
 # telemetry for HUD
-var speed := 0.0
+var speed := 0.0                    # true airspeed (TAS), m/s: speed of the air over the jet
+var ias := 0.0                      # indicated airspeed, m/s: what the pilot flies by (dynamic pressure)
+var ground_speed := 0.0             # horizontal speed over the ground, m/s
+var heading_deg := 0.0
 var mach := 0.0
 var aoa_deg := 0.0
 var g_load := 1.0
@@ -105,6 +134,12 @@ var pitch_in := 0.0
 var roll_in := 0.0
 var yaw_in := 0.0
 var flap_pos := 0.0
+var aoa_limiter := true             # FBW AoA / G limiter; K toggles it off (Cobra-capable, at your own risk)
+var stall_frac := 0.0               # 0 = attached flow, 1 = fully stalled
+var buffet := 0.0                   # 0..1 airframe buffet intensity (camera shake, warnings)
+var alpha_crit_deg := 33.0
+var _rock_t := 0.0
+var _drop := 0.0
 var brake_pos := 0.0
 
 var fx: Node
@@ -117,7 +152,10 @@ var _oleo_rest: Array[Vector3] = []
 
 
 func _ready() -> void:
-	model = load("res://assets/su27.glb").instantiate()
+	if spec == null:
+		spec = load("res://data/aircraft/su27.tres")
+	_apply_spec()
+	model = load(spec.model_scene).instantiate()
 	model.rotation.y = PI  # glTF model front is +Z, Godot forward is -Z
 	add_child(model)
 
@@ -136,7 +174,7 @@ func _ready() -> void:
 		var node := model.find_child(n, true, false) as Node3D
 		if node:
 			_surfaces[n] = [node, node.transform.basis]
-	fx = preload("res://scripts/aircraft/su27_effects.gd").new()
+	fx = preload("res://scripts/aircraft/aircraft_effects.gd").new()
 	fx.name = "Effects"
 	add_child(fx)
 	fx.setup(self, model)
@@ -176,17 +214,52 @@ func _speed_of_sound(h: float) -> float:
 
 
 # ---------------- aerodynamic coefficients ----------------
-func _cl(alpha: float) -> float:
-	var a := absf(alpha)
-	var s := signf(alpha) if alpha != 0.0 else 1.0
-	var linear := CL0 + CL_ALPHA * alpha
-	if a <= ALPHA_STALL:
-		return linear
-	# post-stall: blend from peak toward flat-plate lift
-	var peak := CL0 + CL_ALPHA * ALPHA_STALL * s
-	var plate := 1.1 * sin(2.0 * alpha)
-	var t := clampf((a - ALPHA_STALL) / deg_to_rad(15.0), 0.0, 1.0)
-	return lerpf(peak, plate, t)
+## Critical AoA shrinks through the transonic range (the reason a Flanker buffets at moderate AoA when fast).
+func _alpha_crit_scale(m: float) -> float:
+	if m < 0.55:
+		return 1.0
+	if m < 1.2:
+		return lerpf(1.0, 0.5, (m - 0.55) / 0.65)
+	return 0.5
+
+
+## Compressibility: subsonic lift slope rises (Prandtl-Glauert, capped), supersonic it falls.
+func _compressibility(m: float) -> float:
+	if m < 0.9:
+		return clampf(1.0 / sqrt(maxf(1.0 - m * m, 0.3)), 1.0, 1.3)
+	if m < 1.15:
+		return lerpf(1.3, 0.8, (m - 0.9) / 0.25)
+	return 0.8
+
+
+func _cl_table(a_deg: float) -> float:
+	var a := absf(a_deg)
+	var s := signf(a_deg) if a_deg != 0.0 else 1.0
+	if a >= 90.0:
+		return 0.0
+	for i in CL_TABLE.size() - 1:
+		var p0: Array = CL_TABLE[i]
+		var p1: Array = CL_TABLE[i + 1]
+		if a <= p1[0]:
+			var t: float = (a - p0[0]) / (p1[0] - p0[0])
+			var v: float = lerpf(p0[1], p1[1], t)
+			# negative AoA: no LERX vortex benefit, slightly weaker
+			return v * s if s > 0.0 else -v * 0.85
+	return 0.0
+
+
+func _cl(alpha: float, m: float, slats: float) -> float:
+	# the table is indexed by AoA relative to the current critical AoA (Mach and slats move the stall)
+	var crit := ALPHA_CRIT_LOW_MACH * _alpha_crit_scale(m) + slats * spec.slat_crit_bonus_deg
+	alpha_crit_deg = crit
+	var a_eff := rad_to_deg(alpha) * ALPHA_CRIT_LOW_MACH / crit
+	return _cl_table(a_eff) * _compressibility(m)
+
+
+## Ground effect (wing height h over span b): less induced drag, a little more lift close to the ground.
+func _ground_effect(h: float) -> float:
+	var x := 16.0 * maxf(h, 0.05) / spec.wing_span
+	return (x * x) / (1.0 + x * x)
 
 
 func _wave_drag(m: float) -> float:
@@ -194,8 +267,8 @@ func _wave_drag(m: float) -> float:
 	if m < 0.82:
 		return 0.0
 	if m < 1.1:
-		return 0.032 * smoothstep(0.82, 1.1, m)
-	return 0.032 - 0.010 * clampf((m - 1.1) / 1.0, 0.0, 1.0)
+		return spec.wave_drag_peak * smoothstep(0.82, 1.1, m)
+	return spec.wave_drag_peak * (1.0 - 0.31 * clampf((m - 1.1) / 1.0, 0.0, 1.0))
 
 
 func _thrust(h: float, m: float) -> float:
@@ -245,7 +318,7 @@ func _read_inputs(delta: float) -> void:
 			autothrottle = false
 		else:
 			# hold the captured airspeed without lighting the afterburner
-			var err := at_target - speed
+			var err := at_target - ias
 			throttle = clampf(throttle + clampf(err * 0.03, -0.4, 0.4) * delta, 0.0, AB_THRESHOLD)
 	wheel_brakes = Input.is_action_pressed("wheel_brake")
 	flap_pos = move_toward(flap_pos, 1.0 if flaps else 0.0, delta * 0.5)
@@ -257,12 +330,18 @@ func _simulate(dt: float) -> void:
 	var b := global_transform.basis
 	var h := global_position.y - GEAR_HEIGHT
 	var rho := _air_density(h)
-	speed = velocity.length()
+	# everything aerodynamic uses the AIR-relative velocity (ground velocity minus wind)
+	var air := velocity - WorldData.wind
+	speed = air.length()
 	mach = speed / _speed_of_sound(h)
 	var q := 0.5 * rho * speed * speed
+	ias = sqrt(2.0 * q / RHO0)
+	ground_speed = Vector2(velocity.x, velocity.z).length()
+	var fwd_h := -b.z
+	heading_deg = fposmod(rad_to_deg(atan2(fwd_h.x, -fwd_h.z)), 360.0)
 
 	# --- angles of attack / sideslip from velocity in body axes ---
-	var vl := b.inverse() * velocity
+	var vl := b.inverse() * air
 	var alpha := 0.0
 	var beta := 0.0
 	if speed > 1.0:
@@ -271,19 +350,26 @@ func _simulate(dt: float) -> void:
 	aoa_deg = rad_to_deg(alpha)
 
 	# --- coefficients ---
-	var cl := _cl(alpha) + flap_pos * 0.30
+	var slats := maxf(flap_pos, clampf((aoa_deg - 8.0) / 10.0, 0.0, 1.0))
+	var cl := _cl(alpha, mach, slats) + flap_pos * spec.flap_cl
+	var ge := _ground_effect(_height_above_ground(global_position) - spec.wing_height_offset)
+	cl *= 1.0 + 0.10 * (1.0 - ge)
+	var crit := deg_to_rad(alpha_crit_deg)
+	var a_abs := absf(alpha)
+	stall_frac = clampf((a_abs - crit * ALPHA_BUFFET_FRAC) / (crit * (1.0 - ALPHA_BUFFET_FRAC)), 0.0, 1.0)
+	buffet = clampf(stall_frac * 1.3, 0.0, 1.0) * clampf(speed / 40.0, 0.0, 1.0)
 	var k := 1.0 / (PI * ASPECT_RATIO * OSWALD)
-	var cd := CD0 + k * cl * cl + _wave_drag(mach) + 1.0 * pow(sin(alpha), 2)
-	cd += flap_pos * 0.03 + brake_pos * 0.07
+	var cd := CD0 + k * cl * cl * ge + _wave_drag(mach) + 1.1 * pow(sin(alpha), 2)
+	cd += flap_pos * spec.flap_cd + brake_pos * spec.airbrake_cd
 	if gear_down or gear_player.is_playing():
-		cd += 0.02
-	var cy := -0.6 * beta
+		cd += spec.gear_cd
+	var cy := -spec.side_force * beta
 
 	# --- forces (world) ---
 	var force := Vector3(0.0, -MASS * GRAVITY, 0.0)
 	var aero := Vector3.ZERO
 	if speed > 1.0:
-		var vdir := velocity / speed
+		var vdir := air / speed
 		var right := b.x
 		var lift_dir := right.cross(vdir).normalized()
 		aero += lift_dir * q * WING_AREA * cl
@@ -308,6 +394,11 @@ func _simulate(dt: float) -> void:
 				gear_force += maxf(GEAR_K[i] * minf(comp, MAX_STROKE) + GEAR_C[i] * rate, 0.0)
 	else:
 		gear_comp = [0.0, 0.0, 0.0]
+	if locked and not touching:
+		var near := INF
+		for i in 3:
+			near = minf(near, _height_above_ground(global_transform * GEAR_CONTACTS[i]))
+		touching = near < 0.04 and velocity.y < 1.0 and wow
 	if touching and not wow:
 		_on_touchdown()
 	wow = touching
@@ -327,22 +418,39 @@ func _simulate(dt: float) -> void:
 	velocity += accel * dt
 
 	# --- rotation: fly-by-wire rate command ---
-	var eff := clampf(q / Q_REF, 0.05, 1.0)
-	var eff_roll := clampf(q / Q_REF_ROLL, 0.05, 1.0)
-	var cmd := Vector3(pitch_in * MAX_RATES.x * eff, -yaw_in * MAX_RATES.y * eff, -roll_in * MAX_RATES.z * eff_roll)
-	# AoA / G limiter (pitch)
-	var cl_slope_q := maxf(q * WING_AREA * CL_ALPHA, 1.0)
-	var alpha_hi := minf(ALPHA_LIMIT, (G_MAX * MASS * GRAVITY) / cl_slope_q)
-	var alpha_lo := maxf(-deg_to_rad(10.0), (G_MIN * MASS * GRAVITY) / cl_slope_q)
-	if alpha > alpha_hi:
-		cmd.x = minf(cmd.x, (alpha_hi - alpha) * 3.0)
-	elif alpha < alpha_lo:
-		cmd.x = maxf(cmd.x, (alpha_lo - alpha) * 3.0)
+	# control authority comes from airflow over the surfaces: none at zero airspeed
+	var eff := clampf(q / Q_REF, 0.0, 1.0)
+	var eff_roll := clampf(q / Q_REF_ROLL, 0.0, 1.0)
+	var pitch_rate := MAX_RATES.x * (1.0 if aoa_limiter else 1.9)
+	var cmd := Vector3(pitch_in * pitch_rate * eff, -yaw_in * MAX_RATES.y * eff, -roll_in * MAX_RATES.z * eff_roll)
+	# FBW AoA / G limiter (pitch). Never past the Mach-dependent stall, never past 9 g.
+	if aoa_limiter:
+		var cl_slope_q := maxf(q * WING_AREA * CL_ALPHA * _compressibility(mach), 1.0)
+		var alpha_hi := minf(minf(ALPHA_LIMIT, crit - deg_to_rad(3.0)), (G_MAX * MASS * GRAVITY) / cl_slope_q)
+		var alpha_lo := maxf(-deg_to_rad(10.0), (G_MIN * MASS * GRAVITY) / cl_slope_q)
+		if alpha > alpha_hi:
+			cmd.x = minf(cmd.x, (alpha_hi - alpha) * 3.0)
+		elif alpha < alpha_lo:
+			cmd.x = maxf(cmd.x, (alpha_lo - alpha) * 3.0)
 	# directional stability: nose weathervanes into the airflow
 	cmd.y += -beta * 2.5 * eff
-	if absf(alpha) > ALPHA_STALL:
-		cmd.x += -(alpha - signf(alpha) * ALPHA_STALL) * 2.0
+	# past the critical AoA the airframe pitches nose-down on its own (stable post-stall pitching moment);
+	# the moment needs airflow, but a little remains even when slow so a stalled jet still falls nose-first
+	if a_abs > crit:
+		var hold := 0.0 if aoa_limiter else 0.8 * maxf(pitch_in, 0.0)
+		cmd.x += -(alpha - signf(alpha) * crit) * 1.6 * (1.0 - hold) * clampf(q / 3000.0, 0.25, 1.0)
+	# stall: roll authority fades, wing rock and an occasional wing drop
+	if stall_frac > 0.0:
+		cmd.z *= 1.0 - 0.7 * stall_frac
+		_rock_t += dt
+		var rock := sin(_rock_t * TAU * 0.55) * 0.9 * stall_frac * stall_frac
+		if randf() < 0.004 * stall_frac:
+			_drop = randf_range(-1.0, 1.0) * 1.6 * stall_frac
+		_drop = move_toward(_drop, 0.0, 0.8 * dt)
+		cmd.z += rock + _drop
+		cmd.y += (rock + _drop) * 0.25
 	# rate limits by angular acceleration
+	var omega_x_prev := omega.x
 	omega.x = move_toward(omega.x, cmd.x, ANG_ACCEL.x * dt)
 	omega.y = move_toward(omega.y, cmd.y, ANG_ACCEL.y * dt)
 	omega.z = move_toward(omega.z, cmd.z, ANG_ACCEL.z * dt)
@@ -350,6 +458,14 @@ func _simulate(dt: float) -> void:
 	if touching:
 		# on the wheels: nose-wheel steering, wings held level by the gear, nose can't go below level
 		omega.z = 0.0
+		# pitch on the wheels: the tailplane must overcome the weight on the nose gear, which needs airspeed.
+		# Below rotation speed the stick moves the surfaces but the nose stays down (and settles if lifted).
+		var rot_auth := clampf((ias - ROTATE_IAS_START) / (ROTATE_IAS_FULL - ROTATE_IAS_START), 0.0, 1.0)
+		var nose_up := b.get_euler().x
+		var pitch_target := pitch_in * 0.30 * rot_auth
+		if nose_up > 0.0:
+			pitch_target -= (1.0 - rot_auth) * 0.25
+		omega.x = move_toward(omega_x_prev, pitch_target, 1.2 * dt)   # the wheels decide pitch, not the airborne FBW
 		var fwd_speed := velocity.dot(-b.z)
 		var steer_angle := yaw_in * MAX_STEER * clampf(1.0 - absf(fwd_speed) / 60.0, 0.12, 1.0)
 		omega.y = -fwd_speed * tan(steer_angle) / WHEELBASE
@@ -544,9 +660,12 @@ func _handle_toggles() -> void:
 		flaps = not flaps
 	if Input.is_action_just_pressed("toggle_autothrottle") and not wow:
 		autothrottle = not autothrottle
-		at_target = speed
+		at_target = ias
 	if Input.is_action_just_pressed("practice_approach"):
 		practice_approach()
+	if Input.is_action_just_pressed("toggle_limiter"):
+		aoa_limiter = not aoa_limiter
+		_event("AOA LIMITER " + ("ON" if aoa_limiter else "OFF  ·  CAREFUL"))
 	if Input.is_action_just_pressed("toggle_radar"):
 		radar_on = not radar_on
 		if radar_on:
@@ -575,7 +694,7 @@ func practice_approach() -> void:
 	throttle = 0.2
 	engine = 0.2
 	autothrottle = true
-	at_target = 80.0
+	at_target = 78.0
 	if not gear_down or gear_player.is_playing():
 		gear_down = true
 	gear_player.play("gear_extend")

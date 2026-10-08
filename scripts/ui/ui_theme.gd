@@ -183,16 +183,13 @@ static func svg(path: String, px: int) -> TextureRect:
 	return tr
 
 
-## FlightOut lockup: small "YEMBERA" over the emblem + wordmark.
+## FlightOut lockup: the word "YEMBERA" (no mark) over the FlightOut emblem + wordmark.
 static func logo(scale: float = 1.0) -> VBoxContainer:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", int(-4 * scale))
 	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var top := HBoxContainer.new()
 	top.add_theme_constant_override("separation", int(8 * scale))
-	var ym := svg(YEMBERA, int(16 * scale))
-	ym.modulate = DIM
-	top.add_child(ym)
 	top.add_child(label("YEMBERA", int(16 * scale), "Bold", DIM, int(6 * scale)))
 	v.add_child(top)
 	var row := HBoxContainer.new()

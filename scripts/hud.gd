@@ -77,14 +77,15 @@ func _build_panel() -> void:
 	col.add_child(head)
 	var big := HBoxContainer.new()
 	big.add_theme_constant_override("separation", 18)
-	big.add_child(_readout("spd", "SPEED", 44, 4, 4))
+	big.add_child(_readout("spd", "IAS", 44, 4, 4))
 	big.add_child(_readout("alt", "ALTITUDE", 44, 5, 2))
 	col.add_child(big)
 	var grid := GridContainer.new()
 	grid.columns = 3
 	grid.add_theme_constant_override("h_separation", 16)
 	grid.add_theme_constant_override("v_separation", 2)
-	for k in [["mach", "MACH", 4, 0], ["vs", "V/S", 6, 6], ["agl", "RADAR ALT", 5, 2],
+	for k in [["tas", "TAS", 4, 4], ["gs", "GROUND SPD", 4, 4], ["mach", "MACH", 4, 0],
+			["vs", "V/S", 6, 6], ["agl", "RADAR ALT", 5, 2], ["hdg", "HEADING", 3, 1],
 			["g", "G", 4, 0], ["aoa", "AOA", 5, 3], ["thrust", "THRUST", 3, 2]]:
 		grid.add_child(_readout(k[0], k[1], 24, k[2], k[3]))
 	col.add_child(grid)
@@ -109,7 +110,7 @@ func _build_panel() -> void:
 	chips.columns = 3
 	chips.add_theme_constant_override("h_separation", 6)
 	chips.add_theme_constant_override("v_separation", 6)
-	for k in [["GEAR", "G"], ["FLAPS", "F"], ["A/BRK", "B"], ["BRAKE", "SPACE"], ["A/THR", "Z"], ["LIGHTS", "L"], ["RADAR", "R"], ["CANOPY", "C"], ["VIEW", "V"]]:
+	for k in [["GEAR", "G"], ["FLAPS", "F"], ["A/BRK", "B"], ["BRAKE", "SPACE"], ["A/THR", "Z"], ["LIGHTS", "L"], ["RADAR", "R"], ["CANOPY", "C"], ["VIEW", "V"], ["NO LIMIT", "K"]]:
 		chips.add_child(_chip_node(k[0], k[1]))
 	col.add_child(chips)
 
@@ -242,7 +243,10 @@ func _process(_delta: float) -> void:
 		return
 	var cam := get_viewport().get_camera_3d()
 	_vals["view"].text = ("VIEW  " + String(cam.view_name)) if cam and "view_name" in cam else ""
-	_show("spd", Settings.speed_text(a.speed))
+	_show("spd", Settings.speed_text(a.ias))
+	_show("tas", Settings.speed_text(a.speed))
+	_show("gs", Settings.speed_text(a.ground_speed))
+	_show("hdg", ["%03d" % (int(round(a.heading_deg)) % 360), "°"])
 	_show("alt", Settings.alt_text(a.global_position.y - 2.0))
 	_show("mach", ["%.2f" % a.mach, ""])
 	_show("vs", Settings.vs_text(a.vertical_speed))
@@ -250,7 +254,7 @@ func _process(_delta: float) -> void:
 	_show("g", ["%.1f" % a.g_load, ""])
 	_show("aoa", ["%.1f" % a.aoa_deg, "DEG"])
 	_show("thrust", ["%d" % int(a.thrust_now / 1000.0), "KN"])
-	_vals["aoa"].add_theme_color_override("font_color", T.BAD if a.aoa_deg > 21.0 else T.TEXT)
+	_vals["aoa"].add_theme_color_override("font_color", T.BAD if a.stall_frac > 0.5 else (T.WARN if a.stall_frac > 0.0 else T.TEXT))
 	_vals["g"].add_theme_color_override("font_color", T.WARN if a.g_load > 7.0 else T.TEXT)
 	_thr_bar.value = a.throttle * 100.0
 	var ab: bool = a.engine > 0.85
@@ -265,7 +269,8 @@ func _process(_delta: float) -> void:
 	_chip("LIGHTS", a.fx != null and a.fx.lights_on)
 	_chip("RADAR", a.radar_on)
 	_chip("CANOPY", a.canopy_open, T.WARN)
-	_chip("VIEW", cam != null and "view" in cam and int(cam.view) == 2, Color(0.4, 0.7, 1.0))
+	_chip("NO LIMIT", not a.aoa_limiter, T.BAD)
+	_chip("VIEW", cam != null and "view_name" in cam and String(cam.view_name) != "CLOSE", Color(0.4, 0.7, 1.0))
 
 
 func _unhandled_input(event: InputEvent) -> void:

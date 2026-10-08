@@ -101,7 +101,7 @@ func _build_environment() -> void:
 func _build_jet() -> void:
 	_jet = Node3D.new()
 	add_child(_jet)
-	_model = load("res://assets/su27.glb").instantiate()
+	_model = load(load("res://data/aircraft/su27.tres").model_scene).instantiate()
 	_model.rotation.y = PI
 	_jet.add_child(_model)
 	var ap := _model.find_child("AnimationPlayer", true, false) as AnimationPlayer
