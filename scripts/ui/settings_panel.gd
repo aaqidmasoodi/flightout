@@ -48,6 +48,7 @@ func _ready() -> void:
 	_toggle(p, "Vertical sync", "display/vsync")
 	_choice(p, "Frame rate limit", "display/max_fps", ["Unlimited", "30", "60", "120", "144", "240"], [0, 30, 60, 120, 144, 240])
 	_slider(p, "Render scale", "display/render_scale", 0.5, 1.0, 0.05, func(v): return "%d%%" % int(round(v * 100.0)))
+	_choice(p, "Upscaler", "display/upscaler", ["Bilinear", "AMD FSR 1.0", "AMD FSR 2.2"], [0, 1, 2])
 	_slider(p, "Field of view", "display/fov", 55.0, 95.0, 1.0, func(v): return "%d°" % int(v))
 	p.add_child(_gap(6))
 	p.add_child(T.label("IMAGE", 18, "Bold", T.DIM, 3))
@@ -58,10 +59,28 @@ func _ready() -> void:
 	_slider(p, "Saturation", "display/saturation", 0.0, 2.0, 0.01, pct2)
 
 	p = _page("GRAPHICS")
+	_choice(p, "Preset", "graphics/preset", ["Low", "Medium", "High", "Ultra", "Custom"], [0, 1, 2, 3, 4])
+	var preset_note := T.label("Low suits modest PCs, Ultra powerful GPUs. Presets also set render scale and upscaling; changing any option makes it Custom.", 18, "Medium", T.DIM)
+	preset_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	preset_note.custom_minimum_size = Vector2(10, 0)
+	preset_note.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	p.add_child(preset_note)
+	p.add_child(_gap(4))
 	_choice(p, "Anti-aliasing", "graphics/msaa", ["Off", "MSAA 2x", "MSAA 4x"], [0, 1, 2])
+	_choice(p, "Anisotropic filtering", "graphics/anisotropic", ["Off", "2x", "4x", "8x", "16x"], [0, 1, 2, 3, 4])
 	_toggle(p, "Shadows", "graphics/shadows")
+	_choice(p, "Shadow quality", "graphics/shadow_quality", ["Low", "Medium", "High", "Ultra"], [0, 1, 2, 3])
 	_toggle(p, "Forests", "graphics/trees")
+	_choice(p, "Forest detail", "graphics/tree_detail", ["Low", "Medium", "High", "Ultra"], [0, 1, 2, 3])
+	_choice(p, "Forest density", "graphics/forest_density", ["Sparse", "Medium", "Full", "Full (Ultra)"], [0, 1, 2, 3])
+	_toggle(p, "Ambient occlusion", "graphics/ssao")
+	_toggle(p, "Bloom", "graphics/glow")
 	_choice(p, "Draw distance", "graphics/draw_distance", ["Near", "Medium", "Far"], [0, 1, 2])
+	_choice(p, "Cloud quality", "graphics/clouds", ["Low", "Medium", "High", "Ultra"], [0, 1, 2, 3])
+	Settings.changed.connect(func(key, _v):
+		if String(key).begins_with("graphics/"):
+			for r in _refreshers:
+				r.call())
 
 	p = _page("HUD")
 	_toggle(p, "Flight data panel  (H)", "hud/telemetry")

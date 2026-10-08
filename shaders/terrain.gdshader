@@ -46,7 +46,17 @@ void fragment() {
 	grass = mix(grass, alpine, smoothstep(650.0, 1050.0, h + (macro - 0.5) * 200.0));
 	grass *= 0.85 + 0.3 * det;
 	vec3 floor_c = mix(vec3(0.035, 0.06, 0.025), vec3(0.055, 0.085, 0.035), det);
-	vec3 c = mix(grass, floor_c, smoothstep(0.2, 0.6, forest));
+	// canopy seen from afar: clumps of crowns (lit tops, dark gaps), taking over from individual trees with distance
+	float crowns = texture(detail_tex, p / 26.0 + 0.17).r * 0.65 + texture(detail_tex, p / 9.0 + 0.61).r * 0.35;
+	float clump = smoothstep(0.35, 0.75, crowns);
+	vec3 canopy = mix(vec3(0.03, 0.055, 0.025), vec3(0.075, 0.125, 0.05), clump);
+	canopy = mix(canopy, canopy * vec3(1.15, 1.05, 0.8), smoothstep(450.0, 900.0, h) * 0.6);   // drier conifers higher up
+	float far_canopy = smoothstep(700.0, 2600.0, dist);
+	floor_c = mix(floor_c, canopy, far_canopy);
+	float forest_amt = smoothstep(0.2, 0.6, forest);
+	// sparse groves and lone trees also darken the ground slightly once individual trees are culled
+	forest_amt = max(forest_amt, smoothstep(0.02, 0.2, forest) * 0.35 * far_canopy);
+	vec3 c = mix(grass, floor_c, forest_amt);
 
 	vec3 rock = mix(vec3(0.21, 0.2, 0.19), vec3(0.34, 0.32, 0.3), rock_det);
 	rock = mix(rock, rock * vec3(1.05, 0.95, 0.85), macro2 * 0.5);

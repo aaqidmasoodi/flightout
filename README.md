@@ -90,3 +90,11 @@ Runway 36 (approach from the south over the sea) is the instrument runway; runwa
 
 ## Running
 Open the folder in Godot 4.7 (Import in the Project Manager) and press Play.
+
+## Graphics presets
+Settings → Graphics → Preset: Low, Medium, High, Ultra, or Custom. A preset sets every option at once (render scale and FSR upscaling, anti-aliasing, anisotropic filtering, shadows and shadow quality, ambient occlusion, bloom, forest detail and density, draw distance, cloud quality); changing any option switches to Custom. Measured while flying on the development PC: Low about 310 fps, Medium 167, High 103, Ultra 71.
+
+## Runway and forests at a distance
+- The runway markings are procedural (`shaders/runway.gdshader`): ICAO-style edge lines, centreline, threshold stripes, designators "36" and "18", aiming points and touchdown zones, analytically anti-aliased so they stay sharp at any distance.
+- Trees smaller than a few pixels on screen are thinned out and the terrain draws a forest canopy texture instead, so forests read correctly from altitude without speckle.
+- The sky's lighting cubemap is only re-rendered when the sky actually changes.

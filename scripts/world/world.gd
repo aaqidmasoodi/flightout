@@ -18,6 +18,7 @@ var _tree_grid := {}        # species -> {Vector2i cell: PackedInt32Array of ind
 var _near_pool := {}        # species -> MultiMeshInstance3D (detailed, shadow-casting)
 var _near_center := Vector2(INF, INF)
 const GRID := 250.0
+var _tree_near := TREE_NEAR
 const TREE_RANGES := [4000.0, 7000.0, 11000.0]
 const TREE_NEAR := 1100.0           # detailed (shadow-casting) trees inside this distance, simple ones beyond
 const DENSITY_RES := 512            # forest density map resolution (80 m texels)
@@ -28,6 +29,8 @@ func _ready() -> void:
 	var world: Node3D = load(WORLD_SCENE).instantiate()
 	world.name = "Map"
 	add_child(world)
+	_sharpen_textures(world)
+	_procedural_runway(world, preload("res://scripts/world/surface_materials.gd").terrain_textures())
 
 	forest_mask = _make_forest_density()
 	var tex: Dictionary = preload("res://scripts/world/surface_materials.gd").terrain_textures()
@@ -60,6 +63,13 @@ func _apply_settings() -> void:
 	for f in _forests_far:
 		f.visible = on
 		f.visibility_range_end = r
+	var q: Dictionary = Settings.tree_level()
+	_tree_near = float(q.near)
+	for m in _tree_mats:
+		(m as ShaderMaterial).set_shader_parameter("near_radius", _tree_near)
+		(m as ShaderMaterial).set_shader_parameter("min_pixels", float(q.px))
+		(m as ShaderMaterial).set_shader_parameter("density", float(Settings.FOREST_DENSITY[clampi(int(Settings.get_value("graphics/forest_density")), 0, 3)]))
+	_near_center = Vector2(INF, INF)
 
 
 func _process(_delta: float) -> void:
@@ -236,7 +246,7 @@ func _update_near_trees(force: bool = false) -> void:
 	if not force and Vector2(cp.x, cp.z).distance_to(_near_center) < 150.0:
 		return
 	_near_center = Vector2(cp.x, cp.z)
-	var r := TREE_NEAR + 250.0
+	var r := _tree_near + 250.0
 	var g0 := Vector2i(int(floor((cp.x - r) / GRID)), int(floor((cp.z - r) / GRID)))
 	var g1 := Vector2i(int(floor((cp.x + r) / GRID)), int(floor((cp.z + r) / GRID)))
 	for sp in _near_pool:
@@ -359,3 +369,29 @@ func _soft_tri(st: SurfaceTool, pts: Array, cols: Array, centre: Vector3, flat :
 		st.set_color(cols[k])
 		st.set_normal(nrm)
 		st.add_vertex(p)
+
+
+## Textured surfaces from the map (the runway and its markings) use anisotropic filtering, so lines stay sharp when
+## seen at the shallow angles typical of a runway; plain mipmapping blurs them within a few hundred metres.
+func _sharpen_textures(root_node: Node) -> void:
+	for n in root_node.find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		if mi.mesh == null:
+			continue
+		for s in mi.mesh.get_surface_count():
+			var m := mi.get_active_material(s) as BaseMaterial3D
+			if m and m.albedo_texture:
+				m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+
+
+## The runway markings are drawn procedurally (see runway.gdshader): sharp at every distance, unlike a texture.
+func _procedural_runway(root_node: Node, tex: Dictionary) -> void:
+	for n in root_node.find_children("Runway", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		var aabb := mi.get_aabb()
+		var m := ShaderMaterial.new()
+		m.shader = preload("res://shaders/runway.gdshader")
+		m.set_shader_parameter("detail_tex", tex.detail)
+		m.set_shader_parameter("width_m", aabb.size.x)
+		m.set_shader_parameter("length_m", aabb.size.z)
+		mi.material_override = m

@@ -16,6 +16,15 @@ const DEFAULTS := {
 	"display/gamma": 1.0,
 	"display/saturation": 1.0,
 	"graphics/msaa": 1,              # 0 off, 1 2x, 2 4x
+	"graphics/preset": 2,            # 0 low, 1 medium, 2 high, 3 ultra, 4 custom (sets every option below)
+	"graphics/shadow_quality": 2,    # 0 low .. 3 ultra: shadow distance, shadow map resolution, softness
+	"graphics/tree_detail": 2,       # 0 low .. 3 ultra: detailed-tree radius and how small a distant tree may get
+	"graphics/clouds": 2,            # 0 low .. 3 ultra: volumetric cloud ray steps and lighting samples
+	"graphics/ssao": true,           # screen-space ambient occlusion
+	"graphics/glow": true,           # bloom
+	"graphics/forest_density": 2,    # 0 sparse .. 3 full
+	"display/upscaler": 0,           # 0 bilinear, 1 AMD FSR 1.0, 2 AMD FSR 2.2 (used when render scale is below 100%)
+	"graphics/anisotropic": 4,       # 0 off, 1 2x, 2 4x, 3 8x, 4 16x (keeps runway markings sharp at shallow angles)
 	"graphics/shadows": true,
 	"graphics/trees": true,
 	"graphics/draw_distance": 1,     # 0 near, 1 medium, 2 far
@@ -50,6 +59,10 @@ func _enter_tree() -> void:
 			var parts: PackedStringArray = String(k).split("/")
 			if cfg.has_section_key(parts[0], parts[1]):
 				_values[k] = cfg.get_value(parts[0], parts[1])
+		if not cfg.has_section_key("graphics", "preset"):
+			# first run with presets: start from High so every new option has a sensible value
+			for pk in PRESETS[2]:
+				_values[pk] = PRESETS[2][pk]
 
 
 func _ready() -> void:
@@ -69,6 +82,16 @@ func set_value(key: String, value) -> void:
 	_apply(key)
 	save()
 	changed.emit(key, value)
+	if key == "graphics/preset" and int(value) < PRESETS.size():
+		_applying_preset = true
+		var p: Dictionary = PRESETS[int(value)]
+		for k in p:
+			set_value(k, p[k])
+		_applying_preset = false
+	elif not _applying_preset and int(get_value("graphics/preset")) < PRESETS.size():
+		var p2: Dictionary = PRESETS[int(get_value("graphics/preset"))]
+		if p2.has(key) and p2[key] != value:
+			set_value("graphics/preset", 4)
 
 
 func reset_defaults() -> void:
@@ -125,15 +148,64 @@ func _apply(key: String) -> void:
 			Engine.max_fps = int(v)
 		"display/render_scale":
 			get_viewport().scaling_3d_scale = clampf(float(v), 0.5, 1.0)
+		"display/upscaler":
+			var modes := [Viewport.SCALING_3D_MODE_BILINEAR, Viewport.SCALING_3D_MODE_FSR, Viewport.SCALING_3D_MODE_FSR2]
+			get_viewport().scaling_3d_mode = modes[clampi(int(v), 0, 2)]
 		"graphics/msaa":
 			var aa := [Viewport.MSAA_DISABLED, Viewport.MSAA_2X, Viewport.MSAA_4X]
 			get_viewport().msaa_3d = aa[clampi(int(v), 0, 2)]
+		"graphics/anisotropic":
+			get_viewport().anisotropic_filtering_level = clampi(int(v), 0, 4) as Viewport.AnisotropicFiltering
+		"graphics/shadow_quality":
+			var sl: Dictionary = SHADOW_LEVELS[clampi(int(v), 0, 3)]
+			RenderingServer.directional_shadow_atlas_set_size(int(sl.atlas), true)
+			RenderingServer.directional_soft_shadow_filter_set_quality(int(sl.soft) as RenderingServer.ShadowQuality)
 		"audio/master":
 			AudioServer.set_bus_volume_db(0, linear_to_db(maxf(float(v), 0.0001)))
 
 
 # ---------------- input map: rebindable keys ----------------
 ## Every rebindable action with up to two keys (primary, secondary). Saved in the [bindings] section.
+## Graphics presets: each one sets every graphics option. Changing any option by hand switches the preset to Custom.
+const PRESETS := [
+	# Low: runs on modest hardware. Lower internal resolution with FSR upscaling; demanding effects off.
+	{"display/render_scale": 0.7, "display/upscaler": 1, "graphics/msaa": 0, "graphics/anisotropic": 2,
+		"graphics/shadows": false, "graphics/shadow_quality": 0, "graphics/ssao": false, "graphics/glow": false,
+		"graphics/trees": true, "graphics/tree_detail": 0, "graphics/forest_density": 0, "graphics/draw_distance": 0, "graphics/clouds": 0},
+	# Medium: mainstream hardware.
+	{"display/render_scale": 0.85, "display/upscaler": 1, "graphics/msaa": 1, "graphics/anisotropic": 3,
+		"graphics/shadows": true, "graphics/shadow_quality": 1, "graphics/ssao": false, "graphics/glow": true,
+		"graphics/trees": true, "graphics/tree_detail": 1, "graphics/forest_density": 1, "graphics/draw_distance": 1, "graphics/clouds": 1},
+	# High: the intended look at native resolution.
+	{"display/render_scale": 1.0, "display/upscaler": 0, "graphics/msaa": 1, "graphics/anisotropic": 4,
+		"graphics/shadows": true, "graphics/shadow_quality": 2, "graphics/ssao": true, "graphics/glow": true,
+		"graphics/trees": true, "graphics/tree_detail": 2, "graphics/forest_density": 2, "graphics/draw_distance": 1, "graphics/clouds": 2},
+	# Ultra: everything at its best for powerful GPUs.
+	{"display/render_scale": 1.0, "display/upscaler": 0, "graphics/msaa": 2, "graphics/anisotropic": 4,
+		"graphics/shadows": true, "graphics/shadow_quality": 3, "graphics/ssao": true, "graphics/glow": true,
+		"graphics/trees": true, "graphics/tree_detail": 3, "graphics/forest_density": 3, "graphics/draw_distance": 2, "graphics/clouds": 3},
+]
+const CLOUD_LEVELS := [{"steps": 36, "light": 1, "radiance": 64}, {"steps": 56, "light": 2, "radiance": 128},
+	{"steps": 72, "light": 3, "radiance": 128}, {"steps": 110, "light": 5, "radiance": 256}]
+const TREE_LEVELS := [{"near": 600.0, "px": 4.0}, {"near": 850.0, "px": 3.0}, {"near": 1100.0, "px": 2.0}, {"near": 1500.0, "px": 1.2}]
+const FOREST_DENSITY := [0.45, 0.7, 1.0, 1.0]
+const SHADOW_LEVELS := [{"dist": 120.0, "atlas": 2048, "soft": 1}, {"dist": 220.0, "atlas": 2048, "soft": 2},
+	{"dist": 350.0, "atlas": 4096, "soft": 3}, {"dist": 600.0, "atlas": 8192, "soft": 4}]
+var _applying_preset := false
+
+
+func cloud_level() -> Dictionary:
+	return CLOUD_LEVELS[clampi(int(get_value("graphics/clouds")), 0, 3)]
+
+
+func tree_level() -> Dictionary:
+	return TREE_LEVELS[clampi(int(get_value("graphics/tree_detail")), 0, 3)]
+
+
+func shadow_level() -> Dictionary:
+	return SHADOW_LEVELS[clampi(int(get_value("graphics/shadow_quality")), 0, 3)]
+
+
 const DEFAULT_BINDINGS := {
 	"pitch_down": [KEY_W, KEY_UP], "pitch_up": [KEY_S, KEY_DOWN],
 	"roll_left": [KEY_A, KEY_LEFT], "roll_right": [KEY_D, KEY_RIGHT],

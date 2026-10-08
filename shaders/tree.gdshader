@@ -8,14 +8,24 @@ uniform float wind = 0.3;
 uniform bool far_set = false;
 uniform float near_radius = 1100.0;
 uniform float band = 220.0;
+uniform float density = 1.0;          // fraction of trees drawn (lower presets thin forests evenly)
+uniform float min_pixels = 2.5;      // trees shorter than this on screen are left to the canopy texture
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 
 void vertex() {
 	vec3 origin = MODEL_MATRIX[3].xyz;
 	float d = length(origin - CAMERA_POSITION_WORLD);
-	float edge = near_radius - band * hash(origin.xz * 0.013);
+	float h = hash(origin.xz * 0.013);
+	float edge = near_radius - band * h;
 	bool mine = far_set ? (d >= edge) : (d < edge);
+	// screen-size culling (as flight sims do): a tree only a few pixels tall adds speckle, not detail; thin those out
+	// gradually (each tree has its own threshold), and the terrain's canopy texture carries the forest from there
+	float tree_h = length(MODEL_MATRIX[1].xyz) * 14.0;
+	float px = tree_h * abs(PROJECTION_MATRIX[1][1]) * 0.5 * VIEWPORT_SIZE.y / max(d, 1.0);   // y scale is negative under Vulkan
+	if (px < mix(min_pixels, min_pixels * 2.5, h) || hash(origin.xz * 0.071 + 3.7) > density) {
+		mine = false;
+	}
 	if (!mine) {
 		VERTEX = vec3(0.0);
 	} else {

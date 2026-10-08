@@ -32,6 +32,10 @@ var clouds                      # VolumetricClouds compositor effect
 var _cloud_drift := Vector2.ZERO
 var _volumes := {}
 var _volumes_ready := false
+var _sky_timer := 1.0
+var _glow_on := true
+var _sky_sent := Vector4(INF, 0, 0, 0)
+var _drift_sent := Vector2(INF, INF)
 
 
 func _ready() -> void:
@@ -61,6 +65,10 @@ func _ready() -> void:
 	we.compositor = comp
 	add_child(we)
 	_volumes = preload("res://scripts/world/surface_materials.gd").cloud_volumes()
+	_apply_quality()
+	Settings.changed.connect(func(key, _v):
+		if key in ["graphics/clouds", "graphics/shadow_quality", "graphics/ssao", "graphics/glow"]:
+			_apply_quality())
 	Look.apply(env)
 	Settings.changed.connect(func(k, _v):
 		if String(k).begins_with("display/"):
@@ -79,6 +87,7 @@ func _ready() -> void:
 	_build_rain()
 	var c: Dictionary = CONDITIONS[WorldData.conditions]
 	_w = c.duplicate()
+	_apply_quality()
 
 
 func _build_rain() -> void:
@@ -226,14 +235,22 @@ func _process(delta: float) -> void:
 		(om as ShaderMaterial).set_shader_parameter("haze_density", maxf(env.fog_density * 1.9, 0.00003))
 
 	# ---- sky shader (high cirrus and the sky itself) ----
+	# Changing any sky uniform re-renders the sky's lighting cubemap, so update a few times a second at most, and
+	# only when something actually changed (Godot's recommended practice for dynamic skies).
 	_drift += Vector2(0.004, 0.0025) * delta * (1.0 + WorldData.atmosphere.wind_speed * 0.1)
-	sky_mat.set_shader_parameter("sun_dir", sd)
-	sky_mat.set_shader_parameter("moon_dir", md)
-	sky_mat.set_shader_parameter("sun_elev", e)
-	sky_mat.set_shader_parameter("cloud_coverage", clampf(float(_w.cov) * 0.3 + over * 0.2, 0.0, 1.0))   # high cirrus only
-	sky_mat.set_shader_parameter("overcast", over)
-	sky_mat.set_shader_parameter("haze", float(_w.haze) * below)
-	sky_mat.set_shader_parameter("cloud_drift", _drift)
+	_sky_timer += delta
+	var sky_state := Vector4(e, over, float(_w.haze) * below, float(_w.cov))
+	if _sky_timer >= 0.25 and (sky_state.distance_to(_sky_sent) > 0.002 or _drift.distance_to(_drift_sent) > 0.0005):
+		_sky_timer = 0.0
+		_sky_sent = sky_state
+		_drift_sent = _drift
+		sky_mat.set_shader_parameter("sun_dir", sd)
+		sky_mat.set_shader_parameter("moon_dir", md)
+		sky_mat.set_shader_parameter("sun_elev", e)
+		sky_mat.set_shader_parameter("cloud_coverage", clampf(float(_w.cov) * 0.3 + over * 0.2, 0.0, 1.0))   # high cirrus only
+		sky_mat.set_shader_parameter("overcast", over)
+		sky_mat.set_shader_parameter("haze", float(_w.haze) * below)
+		sky_mat.set_shader_parameter("cloud_drift", _drift)
 
 	# ---- rain: particles around the camera, slanted by the wind, plus its sound ----
 	var rain: float = _w.rain
@@ -255,3 +272,22 @@ static func _gradient(x: float, stops: Array) -> Color:
 		if x <= stops[i + 1][0]:
 			return (stops[i][1] as Color).lerp(stops[i + 1][1], (x - stops[i][0]) / (stops[i + 1][0] - stops[i][0]))
 	return stops[-1][1]
+
+
+func _apply_quality() -> void:
+	var cq: Dictionary = Settings.cloud_level()
+	clouds.primary_steps = int(cq.steps)
+	clouds.light_steps = int(cq.light)
+	var rs := {64: Sky.RADIANCE_SIZE_64, 128: Sky.RADIANCE_SIZE_128, 256: Sky.RADIANCE_SIZE_256}
+	if env and env.sky and env.sky.radiance_size != rs[int(cq.radiance)]:
+		env.sky.radiance_size = rs[int(cq.radiance)]
+	if env:
+		var ultra := int(Settings.get_value("graphics/shadow_quality")) >= 3
+		env.ssao_enabled = bool(Settings.get_value("graphics/ssao"))
+		env.ssao_radius = 1.2
+		env.ssao_intensity = 1.6
+		RenderingServer.environment_set_ssao_quality(RenderingServer.ENV_SSAO_QUALITY_HIGH if ultra else RenderingServer.ENV_SSAO_QUALITY_MEDIUM, not ultra, 0.5, 2, 50.0, 300.0)
+		_glow_on = bool(Settings.get_value("graphics/glow"))
+		env.glow_enabled = _glow_on
+	if sun:
+		sun.directional_shadow_max_distance = float(Settings.shadow_level().dist)
