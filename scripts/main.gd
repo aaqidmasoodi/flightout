@@ -28,6 +28,7 @@ func _ready() -> void:
 	add_child(aircraft)
 	aircraft.global_transform = WorldData.spawn_transform(0)
 	aircraft.spawn = aircraft.global_transform
+	aircraft.reset()
 
 	_cam = preload("res://scripts/chase_camera.gd").new()
 	_cam.name = "ChaseCamera"

@@ -86,7 +86,8 @@ func _build_panel() -> void:
 	grid.add_theme_constant_override("v_separation", 2)
 	for k in [["tas", "TAS", 4, 4], ["gs", "GROUND SPD", 4, 4], ["mach", "MACH", 4, 0],
 			["vs", "V/S", 6, 6], ["agl", "RADAR ALT", 5, 2], ["hdg", "HEADING", 3, 1],
-			["g", "G", 4, 0], ["aoa", "AOA", 5, 3], ["thrust", "THRUST", 3, 2]]:
+			["g", "G", 4, 0], ["aoa", "AOA", 5, 3], ["thrust", "THRUST", 3, 2],
+			["fuel", "FUEL", 5, 2], ["rpm", "RPM", 3, 1], ["wind", "WIND", 6, 2]]:
 		grid.add_child(_readout(k[0], k[1], 24, k[2], k[3]))
 	col.add_child(grid)
 	var thr := HBoxContainer.new()
@@ -246,6 +247,17 @@ func _process(_delta: float) -> void:
 	_show("spd", Settings.speed_text(a.ias))
 	_show("tas", Settings.speed_text(a.speed))
 	_show("gs", Settings.speed_text(a.ground_speed))
+	var aviation := int(Settings.get_value("hud/unit_system")) == 1
+	_show("fuel", ["%d" % int(a.fuel_kg * (2.20462 if aviation else 1.0)), "LB" if aviation else "KG"])
+	_show("rpm", ["%d" % int(a.rpm), "%"])
+	var w: Vector3 = a.wind
+	var wspd := Vector2(w.x, w.z).length()
+	if wspd < 0.5:
+		_show("wind", ["CALM", ""])
+	else:
+		var from := fposmod(rad_to_deg(atan2(-w.x, w.z)), 360.0)
+		_show("wind", ["%03d/%d" % [int(round(from / 10.0)) * 10 % 360, int(wspd * (1.94384 if aviation else 3.6))], "KT" if aviation else "KMH"])
+	_vals["fuel"].add_theme_color_override("font_color", T.BAD if a.fuel_kg < 800.0 else T.TEXT)
 	_show("hdg", ["%03d" % (int(round(a.heading_deg)) % 360), "°"])
 	_show("alt", Settings.alt_text(a.global_position.y - 2.0))
 	_show("mach", ["%.2f" % a.mach, ""])

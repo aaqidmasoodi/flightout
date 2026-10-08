@@ -19,6 +19,7 @@ boot_splash/use_filter=true
 
 Settings="*res://scripts/core/settings.gd"
 Game="*res://scripts/core/game.gd"
+Audio="*res://scripts/core/audio.gd"
 WorldData="*res://scripts/world/world_data.gd"
 
 [display]
@@ -31,3 +32,8 @@ window/stretch/aspect="expand"
 [rendering]
 
 anti_aliasing/quality/msaa_3d=2
+
+[physics]
+
+common/physics_ticks_per_second=120
+common/physics_interpolation=true

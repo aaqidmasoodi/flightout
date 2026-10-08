@@ -12,8 +12,8 @@ var cell_size := 40.0
 var half_extent := 20480.0
 var sea_level := 0.0
 var spawns: Array = []
-## Wind (m/s, world space, the direction the air moves). Aerodynamics use velocity minus wind.
-var wind := Vector3.ZERO
+## Shared atmosphere (ISA, wind, turbulence). Server-owned in multiplayer; driven by Settings for now.
+var atmosphere = preload("res://scripts/sim/atmosphere.gd").new()
 ## Runways: threshold = start of the landing direction, dir = landing direction (unit, flat).
 ## Runway 36 (from the south, over the sea) is the instrument runway. Runway 18 is visual only:
 ## the northern mountains block a straight-in approach, so it gets no ILS or PAPI.
@@ -118,3 +118,20 @@ func approach_guidance(pos: Vector3, heading: Vector3) -> Dictionary:
 			best_dist = along
 			best = {"name": r.name, "dist": along, "loc_dev": rad_to_deg(loc), "gs_dev": rad_to_deg(gs) - GLIDESLOPE_DEG, "height": height}
 	return best
+
+
+const WIND_SPEEDS := [0.0, 5.0, 10.0, 15.0]          # calm, light (10 kt), moderate (20 kt), strong (30 kt)
+const TURBULENCE := [0.0, 0.3, 0.6, 1.0]
+
+
+func _ready() -> void:
+	Settings.changed.connect(func(k, _v):
+		if String(k).begins_with("weather/"):
+			apply_weather())
+	apply_weather()
+
+
+func apply_weather() -> void:
+	atmosphere.wind_speed = WIND_SPEEDS[clampi(int(Settings.get_value("weather/wind")), 0, 3)]
+	atmosphere.wind_from_deg = float(Settings.get_value("weather/wind_from"))
+	atmosphere.turbulence = TURBULENCE[clampi(int(Settings.get_value("weather/turbulence")), 0, 3)]

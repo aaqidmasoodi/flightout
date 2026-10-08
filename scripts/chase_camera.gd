@@ -36,6 +36,7 @@ func _ready() -> void:
 	near = 0.05
 	far = 60000.0
 	current = true
+	doppler_tracking = Camera3D.DOPPLER_TRACKING_PHYSICS_STEP
 	process_physics_priority = 10
 
 

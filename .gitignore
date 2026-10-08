@@ -14,3 +14,6 @@ export_presets.cfg
 Thumbs.db
 *.log
 *_pre_*.blend
+
+# raw downloaded audio packs (the used files are copied into assets/audio)
+blender/audio_sources/

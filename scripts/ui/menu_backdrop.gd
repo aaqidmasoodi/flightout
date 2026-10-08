@@ -26,11 +26,13 @@ var _dist := 0.0
 var _surfaces := {}
 var _beacons: Array[StandardMaterial3D] = []
 var _strobes: Array[StandardMaterial3D] = []
+var _snd := {}
 
 
 func _ready() -> void:
 	_build_environment()
 	_build_jet()
+	_build_audio()
 	_cam = Camera3D.new()
 	_cam.current = true
 	_cam.far = 40000.0
@@ -41,6 +43,19 @@ func _ready() -> void:
 	attrs.dof_blur_amount = 0.06
 	_cam.attributes = attrs
 	add_child(_cam)
+
+
+func _build_audio() -> void:
+	const A = preload("res://scripts/core/audio.gd")
+	for pair in [["afterburner", -15.0, 0.92], ["ab_body", -17.0, 0.95], ["engine_whine", -26.0, 0.95], ["engine_low", -15.0, 0.9], ["wind", -20.0, 0.85]]:
+		var p := AudioStreamPlayer.new()
+		p.stream = A.looped("res://assets/audio/" + pair[0] + ".wav")
+		p.bus = "Engine"
+		p.volume_db = -80.0
+		p.pitch_scale = pair[2]
+		add_child(p)
+		p.play(randf() * 3.0)
+		_snd[pair[0]] = [p, pair[1]]
 
 
 func _build_environment() -> void:
@@ -156,6 +171,10 @@ func _surface(n: String, deg: float) -> void:
 func _process(delta: float) -> void:
 	_t += delta
 	_dist += SPEED * delta
+	for k in _snd:
+		var e: Array = _snd[k]
+		var breathe := 1.5 * sin(_t * 0.23 + float(k.length()))
+		(e[0] as AudioStreamPlayer).volume_db = move_toward((e[0] as AudioStreamPlayer).volume_db, float(e[1]) + breathe, 20.0 * delta)
 	var scroll := Vector2(0.0, -_dist)
 	_ocean_mat.set_shader_parameter("scroll", scroll * 1.0)
 	_cloud_mat.set_shader_parameter("scroll", scroll)

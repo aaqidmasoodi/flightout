@@ -22,6 +22,13 @@ const DEFAULTS := {
 	"controls/invert_pitch": false,
 	"controls/mouse_sensitivity": 1.0,
 	"audio/master": 0.8,
+	"audio/engine": 0.9,
+	"audio/effects": 0.9,
+	"audio/warnings": 0.9,
+	"audio/ui": 0.7,
+	"weather/wind": 1,                # 0 calm, 1 light, 2 moderate, 3 strong
+	"weather/wind_from": 0.0,         # degrees the wind blows from (0 = north, a headwind on runway 36)
+	"weather/turbulence": 1,          # 0 off, 1 light, 2 moderate, 3 severe
 }
 
 var _values := {}

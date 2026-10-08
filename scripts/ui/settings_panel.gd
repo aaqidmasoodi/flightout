@@ -71,9 +71,19 @@ func _ready() -> void:
 		row.add_child(T.label(b[1], 21, "Bold", T.ACCENT, 1))
 		p.add_child(row)
 
+	p = _page("WEATHER")
+	_choice(p, "Wind", "weather/wind", ["Calm", "Light  (10 kt)", "Moderate  (20 kt)", "Strong  (30 kt)"], [0, 1, 2, 3])
+	_choice(p, "Wind from", "weather/wind_from", ["North", "North-east", "East", "South-east", "South", "South-west", "West", "North-west"], [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0])
+	_choice(p, "Turbulence", "weather/turbulence", ["Off", "Light", "Moderate", "Severe"], [0, 1, 2, 3])
+	p.add_child(T.label("Runway 36 points north: a north wind is a headwind, east or west is a crosswind.", 18, "Medium", T.DIM))
+
 	p = _page("AUDIO")
-	_slider(p, "Master volume", "audio/master", 0.0, 1.0, 0.05, func(v): return "%d%%" % int(round(v * 100.0)))
-	p.add_child(T.label("Engine and cockpit sound arrive in a later update.", 18, "Medium", T.DIM))
+	var pct := func(v): return "%d%%" % int(round(v * 100.0))
+	_slider(p, "Master volume", "audio/master", 0.0, 1.0, 0.05, pct)
+	_slider(p, "Engines", "audio/engine", 0.0, 1.0, 0.05, pct)
+	_slider(p, "Effects  (wind, gear, impacts)", "audio/effects", 0.0, 1.0, 0.05, pct)
+	_slider(p, "Warnings", "audio/warnings", 0.0, 1.0, 0.05, pct)
+	_slider(p, "Interface", "audio/ui", 0.0, 1.0, 0.05, pct)
 
 	var foot := HBoxContainer.new()
 	var reset := Button.new(); reset.text = "RESET DEFAULTS"

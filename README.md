@@ -37,6 +37,9 @@ A flight game built in Godot 4, starring a fully animated Su-27 Flanker.
 | Esc | Pause menu (settings, restart, main menu) |
 | Backspace | Reset |
 
+## Weather
+Settings → Weather: wind strength and direction (runway 36 points north, so a north wind is a headwind) and turbulence.
+
 ## Menus
 The game starts on a lightweight main menu (live Su-27 backdrop, nothing else loaded). **Play** streams the island in on a loading screen.
 **Settings** (also in the Esc pause menu during flight) cover display, graphics, HUD, controls and audio; every change applies instantly and is saved to `user://settings.cfg`.
@@ -49,12 +52,18 @@ Flare gently a few metres above the runway and close the throttle. Touchdowns ar
 Runway 36 (approach from the south over the sea) is the instrument runway; runway 18 is visual only because of the mountains to the north.
 
 ## Architecture
-- Aircraft are data: `scripts/aircraft/aircraft.gd` is one generic flight model; each aircraft is an `AircraftSpec` resource (`data/aircraft/su27.tres`, 57 parameters: mass, wing, lift curve, critical AoA, drag, engines, fly-by-wire limits, rates, gear, suspension, cockpit eye, model). A new jet is a new `.tres` plus a model that follows the node naming contract.
-- Aerodynamics run on air-relative velocity (wind-ready). The HUD shows IAS, TAS, ground speed, Mach and heading.
-- `Settings` autoload: every option, saved and applied live; scenes listen for changes
-- `Game` autoload: menu and flight flow, preloaded asset cache (multiplayer session state will live here)
-- `WorldData` autoload: authoritative heightmap and runways, loaded only when a flight starts
-- UI built from one theme (`scripts/ui/ui_theme.gd`): Rajdhani type, frosted glass panels, afterburner-orange accent
+**Simulation (pure data, server-ready)** in `scripts/sim/`. No nodes, no rendering, seeded randomness, fixed tick (120 Hz physics, 2 substeps = 240 Hz), so the same code can run authoritatively on a server and predictively on clients.
+- `flight_model.gd`: 6-DOF rigid body with an inertia tensor. Forces and moments from aerodynamic coefficients: lift from a CL(alpha) table scaled by Mach (compressibility, Mach-dependent critical AoA), induced/wave/flat-plate drag, side force; pitching moment table with pitch damping and elevator power; roll (dihedral, damping, aileron, rudder) and yaw (weathercock stability, damping, rudder, adverse yaw). Post-stall: buffet, wing rock, wing drop, loss of directional stability.
+- Fly-by-wire by nonlinear dynamic inversion: stick commands g (pitch), roll rate about the velocity vector, and coordinated yaw; the inversion computes the surface deflections, which then move through rate-limited actuators with real travel limits. AoA and G protection; K overrides the AoA limiter while aft stick is held (Cobra). Neutral stick holds the flight path, including in turns.
+- Landing gear: a spring-damper per strut at its real contact point, tyre rolling resistance, braking and side friction, nose-wheel steering. Rotation, wheelies, crosswind behaviour and taxi turns all come from these forces.
+- `jet_engine.gd`: core spool (N2) dynamics, thrust curve, afterburner light-off delay and staging, fuel flow and flameout. Mass and inertia change as fuel burns.
+- `atmosphere.gd`: International Standard Atmosphere (temperature, pressure, density, speed of sound), wind with a boundary-layer profile, deterministic turbulence.
+
+**Aircraft are data**: `AircraftSpec` (`scripts/aircraft/aircraft_spec.gd`, 81 parameters) and one file per aircraft (`data/aircraft/su27.tres`). `scripts/aircraft/aircraft.gd` is a thin node that feeds controls in and drives visuals from the sim (actuator positions move the surfaces, gear transit drives the animation, strut compression moves the oleos).
+
+**Services (autoloads)**: `Settings` (saved, applied live), `Game` (menu and flight flow), `Audio` (mix buses, cockpit muffling, interface sounds), `WorldData` (heightmap, runways, shared atmosphere).
+
+**Sound**: `scripts/aircraft/aircraft_audio.gd` layers turbine whine, core roar, low rumble and afterburner (with a CC0 recording underneath) at the intakes and nozzles in 3D with distance, air absorption and Doppler; jet directivity makes the front whine and the rear roar. Wind follows dynamic pressure, buffet follows the stall model, tyre roll follows wheel speed, hydraulics follow the gear, canopy and airbrake. Touchdown, tyre chirp, gear locks, afterburner light-off, tail scrape and crash are event-driven. Cockpit warnings: pull up, stall, over-G, gear, low fuel. Credits in `assets/audio/CREDITS.md`.
 
 ## Project layout
 - `project.godot`, `scenes/`, `scripts/`, `shaders/` : Godot project

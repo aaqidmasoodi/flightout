@@ -1,89 +1,21 @@
 extends Node3D
-## Generic FlightOut aircraft: the flight model, gear, systems and visuals for ANY aircraft.
-## Everything aircraft-specific comes from `spec` (an AircraftSpec resource, e.g. data/aircraft/su27.tres).
-## Model: single rigid body with a real air-relative velocity; lift from a CL(alpha) table scaled by Mach,
-## induced + wave + flat-plate drag, thrust with afterburner and altitude lapse, gravity, ISA-style density,
-## ground effect, a stall model (buffet, wing rock, nose-down moment), FBW rate command with AoA/G limiter,
-## and spring-damper landing gear. Units: SI. Godot forward is -Z, right is +X, up is +Y.
+## Player aircraft node: a thin wrapper around the pure-data FlightModel (scripts/sim/flight_model.gd).
+## It reads the pilot's controls, steps the simulation on the fixed physics tick, and drives everything you
+## see from the simulation state: actuator positions move the surfaces, gear transit drives the animation,
+## strut compression moves the oleos. Events (touchdown, crash, gear, afterburner) are emitted for audio and HUD.
 
-const GRAVITY := 9.81
-const RHO0 := 1.225
-const PRACTICE_DISTANCE := 7000.0   # m from the touchdown aim point
+signal sim_event(type: String, value: float)
+
+const FlightModel = preload("res://scripts/sim/flight_model.gd")
+const AircraftSpec = preload("res://scripts/aircraft/aircraft_spec.gd")
+const SUBSTEPS := 2                  # 2 x 120 Hz physics ticks = 240 Hz simulation
+const PRACTICE_DISTANCE := 7000.0
 const GLIDESLOPE := deg_to_rad(3.0)
 
-const AircraftSpec = preload("res://scripts/aircraft/aircraft_spec.gd")
 @export var spec: AircraftSpec
-
-# working values copied from the spec (names kept short for the physics code below)
-var MASS: float
-var WING_AREA: float
-var ASPECT_RATIO: float
-var OSWALD: float
-var CL_ALPHA: float
-var CL0: float
-var CL_TABLE: Array
-var ALPHA_CRIT_LOW_MACH: float
-var ALPHA_BUFFET_FRAC: float
-var ALPHA_STALL: float
-var CD0: float
-var THRUST_DRY: float
-var THRUST_AB: float
-var THRUST_IDLE: float
-var AB_THRESHOLD: float
-var SPOOL_RATE: float
-var G_MAX: float
-var G_MIN: float
-var ALPHA_LIMIT: float
-var MAX_RATES: Vector3
-var ANG_ACCEL: Vector3
-var Q_REF: float
-var Q_REF_ROLL: float
-var ROTATE_IAS_START: float
-var ROTATE_IAS_FULL: float
-var GEAR_HEIGHT: float
-var GROUND_CLEARANCE: float
-var NOSE_CONTACT: Vector3
-var MAIN_CONTACT: Vector3
-var TAIL_PROBE: Vector3
-var ROLL_FRICTION: float
-var BRAKE_FRICTION: float
-var WHEELBASE: float
-var MAX_STEER: float
-var MAX_GROUND_PITCH: float
-var STATIC_STROKE: float
-var MAX_STROKE: float
-var GEAR_CONTACTS: Array
-var GEAR_K: Array
-var GEAR_C: Array
-var SINK_SMOOTH: float
-var SINK_GOOD: float
-var SINK_FIRM: float
-var SINK_HARD: float
-var CRASH_PROBES: Array
-
-
-func _apply_spec() -> void:
-	var sp: AircraftSpec = spec
-	MASS = sp.mass_kg; WING_AREA = sp.wing_area; ASPECT_RATIO = sp.aspect_ratio; OSWALD = sp.oswald
-	CL_ALPHA = sp.cl_alpha; CL0 = sp.cl0; CL_TABLE = sp.cl_table
-	ALPHA_CRIT_LOW_MACH = sp.alpha_crit_deg; ALPHA_BUFFET_FRAC = sp.alpha_buffet_frac; ALPHA_STALL = deg_to_rad(sp.alpha_crit_deg)
-	CD0 = sp.cd0
-	THRUST_DRY = sp.engine_count * sp.thrust_dry_n; THRUST_AB = sp.engine_count * sp.thrust_ab_n; THRUST_IDLE = sp.engine_count * sp.thrust_idle_n
-	AB_THRESHOLD = sp.ab_threshold; SPOOL_RATE = sp.spool_rate
-	G_MAX = sp.g_max; G_MIN = sp.g_min; ALPHA_LIMIT = deg_to_rad(sp.alpha_limit_deg)
-	MAX_RATES = sp.max_rates; ANG_ACCEL = sp.ang_accel; Q_REF = sp.q_ref; Q_REF_ROLL = sp.q_ref_roll
-	ROTATE_IAS_START = sp.rotate_ias_start; ROTATE_IAS_FULL = sp.rotate_ias_full
-	GEAR_HEIGHT = sp.gear_height; GROUND_CLEARANCE = GEAR_HEIGHT
-	NOSE_CONTACT = sp.nose_contact; MAIN_CONTACT = sp.main_contact; TAIL_PROBE = sp.tail_probe
-	ROLL_FRICTION = sp.roll_friction; BRAKE_FRICTION = sp.brake_friction; WHEELBASE = sp.wheelbase
-	MAX_STEER = deg_to_rad(sp.max_steer_deg); MAX_GROUND_PITCH = deg_to_rad(sp.max_ground_pitch_deg)
-	STATIC_STROKE = sp.static_stroke; MAX_STROKE = sp.max_stroke
-	GEAR_CONTACTS = sp.gear_contacts; GEAR_K = sp.gear_k; GEAR_C = sp.gear_c
-	SINK_SMOOTH = sp.sink_smooth; SINK_GOOD = sp.sink_good; SINK_FIRM = sp.sink_firm; SINK_HARD = sp.sink_hard
-	CRASH_PROBES = sp.crash_probes
-
-
+var fm: FlightModel
 var spawn: Transform3D
+
 var model: Node3D
 var gear_player: AnimationPlayer
 var canopy_player: AnimationPlayer
@@ -91,70 +23,107 @@ var brake_player: AnimationPlayer
 var radar_player: AnimationPlayer
 var radome_player: AnimationPlayer
 var radar_clip := "radar_scan"
+var fx: Node
 
-# state
-var velocity := Vector3.ZERO
-var omega := Vector3.ZERO           # body rates (local axes)
+# pilot / systems state that lives on the client
 var throttle := 0.0
-var engine := 0.0                   # spooled engine setting
-var on_ground := true
-var crashed := false
-var crash_reason := ""
-var gear_down := true
 var canopy_open := false
-var airbrake := false
-var flaps := false
 var radar_on := false
 var radome_open := false
 var wheel_brakes := false
-var wow := true                     # weight on wheels
-var nose_steer_deg := 0.0           # nose-wheel deflection, + = right
-var gear_comp := [0.0, 0.0, 0.0]    # current oleo compression per wheel (nose, main L, main R)
-var landing_event := ""             # last touchdown grade for the HUD
-var landing_event_time := -100.0
-var touchdown_sink := 0.0
 var autothrottle := false
 var at_target := 0.0
-var _airborne_time := 0.0
-
-# telemetry for HUD
-var speed := 0.0                    # true airspeed (TAS), m/s: speed of the air over the jet
-var ias := 0.0                      # indicated airspeed, m/s: what the pilot flies by (dynamic pressure)
-var ground_speed := 0.0             # horizontal speed over the ground, m/s
-var heading_deg := 0.0
-var mach := 0.0
-var aoa_deg := 0.0
-var g_load := 1.0
-var vertical_speed := 0.0
-var altitude_agl := 0.0
-var thrust_now := 0.0
-
-# smoothed pilot inputs (also drive control surface visuals)
+var landing_event := ""
+var landing_event_time := -100.0
 var pitch_in := 0.0
 var roll_in := 0.0
 var yaw_in := 0.0
-var flap_pos := 0.0
-var aoa_limiter := true             # FBW AoA / G limiter; K toggles it off (Cobra-capable, at your own risk)
-var stall_frac := 0.0               # 0 = attached flow, 1 = fully stalled
-var buffet := 0.0                   # 0..1 airframe buffet intensity (camera shake, warnings)
-var alpha_crit_deg := 33.0
-var _rock_t := 0.0
-var _drop := 0.0
-var brake_pos := 0.0
 
-var fx: Node
+# read-only views of the simulation (HUD, camera, effects, audio)
+var velocity: Vector3:
+	get: return fm.vel
+var speed: float:
+	get: return fm.tas
+var ias: float:
+	get: return fm.ias
+var mach: float:
+	get: return fm.mach
+var ground_speed: float:
+	get: return Vector2(fm.vel.x, fm.vel.z).length()
+var heading_deg: float:
+	get:
+		var f := -fm.rot.z
+		return fposmod(rad_to_deg(atan2(f.x, -f.z)), 360.0)
+var aoa_deg: float:
+	get: return rad_to_deg(fm.alpha)
+var g_load: float:
+	get: return fm.nz
+var vertical_speed: float:
+	get: return fm.vel.y
+var altitude_agl: float:
+	get: return global_position.y - spec.gear_height - WorldData.ground_height(global_position.x, global_position.z)
+var thrust_now: float:
+	get: return fm.thrust
+var stall_frac: float:
+	get: return fm.stall_frac
+var buffet: float:
+	get: return fm.buffet
+var wow: bool:
+	get: return fm.wow
+var on_ground: bool:
+	get: return fm.wow
+var crashed: bool:
+	get: return fm.crashed
+var crash_reason: String:
+	get: return fm.crash_reason
+var gear_down: bool:
+	get: return fm.gear_down
+var gear_comp: Array:
+	get: return fm.gear_comp
+var flaps: bool:
+	get: return fm.flaps
+var airbrake: bool:
+	get: return fm.airbrake
+var aoa_limiter: bool:
+	get: return fm.limiter
+var nose_steer_deg: float:
+	get: return rad_to_deg(fm.steer) if fm.wow else 0.0
+var fuel_kg: float:
+	get: return fm.fuel
+var fuel_flow: float:
+	get: return fm.fuel_flow
+var rpm: float:
+	get: return (fm.engines[0].n2 if fm.engines.size() > 0 else 0.0)
+var ab_stage: float:
+	get: return (fm.engines[0].ab if fm.engines.size() > 0 else 0.0)
+var wind: Vector3:
+	get: return fm.wind
+## 0..1 engine setting for the effects (afterburner glow above spec.ab_threshold)
+var engine: float:
+	get:
+		if ab_stage > 0.001:
+			return spec.ab_threshold + ab_stage * (1.0 - spec.ab_threshold)
+		return clampf((rpm - spec.engine_idle_n2) / (100.0 - spec.engine_idle_n2), 0.0, 1.0) * spec.ab_threshold
+var AB_THRESHOLD: float:
+	get: return spec.ab_threshold
+
 var _surfaces := {}
 var _tires: Array[Node3D] = []
 var _nose_gear: Node3D
 var _nose_rest: Basis
 var _oleos: Array[Node3D] = []
 var _oleo_rest: Array[Vector3] = []
+var _was_ab := false
+var _was_wow := true
+var _prev_ias := 0.0
+var _ias_rate := 0.0
 
 
 func _ready() -> void:
 	if spec == null:
 		spec = load("res://data/aircraft/su27.tres")
-	_apply_spec()
+	fm = FlightModel.new()
+	fm.setup(spec, WorldData.atmosphere, WorldData.ground_height, WorldData.is_water, 7)
 	model = load(spec.model_scene).instantiate()
 	model.rotation.y = PI  # glTF model front is +Z, Godot forward is -Z
 	add_child(model)
@@ -168,9 +137,7 @@ func _ready() -> void:
 		if clip.begins_with("radar_scan"):
 			radar_clip = clip
 			gear_player.get_animation(clip).loop_mode = Animation.LOOP_LINEAR
-
-	for n in ["Stabilator_L", "Stabilator_R", "Flaperon_L", "Flaperon_R",
-			"Slat_L", "Slat_R", "Rudder_L", "Rudder_R"]:
+	for n in ["Stabilator_L", "Stabilator_R", "Flaperon_L", "Flaperon_R", "Slat_L", "Slat_R", "Rudder_L", "Rudder_R"]:
 		var node := model.find_child(n, true, false) as Node3D
 		if node:
 			_surfaces[n] = [node, node.transform.basis]
@@ -178,9 +145,11 @@ func _ready() -> void:
 	fx.name = "Effects"
 	add_child(fx)
 	fx.setup(self, model)
-
 	add_to_group("player_aircraft")
-	# steering turns only the lower fork (oleo), the upper strut stays fixed
+	var snd: Node3D = preload("res://scripts/aircraft/aircraft_audio.gd").new()
+	snd.name = "Audio"
+	snd.setup(self)
+	add_child(snd)
 	_nose_gear = model.find_child("NoseGear_Oleo", true, false) as Node3D
 	if _nose_gear:
 		_nose_rest = _nose_gear.transform.basis
@@ -192,6 +161,7 @@ func _ready() -> void:
 		var t := model.find_child(n, true, false) as Node3D
 		if t:
 			_tires.append(t)
+	fm.reset(global_transform, 0.0, true)
 
 
 func _clone_player(player_name: String) -> AnimationPlayer:
@@ -204,100 +174,42 @@ func _clone_player(player_name: String) -> AnimationPlayer:
 	return p
 
 
-# ---------------- atmosphere ----------------
-func _air_density(h: float) -> float:
-	return RHO0 * exp(-maxf(h, 0.0) / 8500.0)
-
-
-func _speed_of_sound(h: float) -> float:
-	return clampf(340.3 - 0.0039 * h, 295.0, 340.3)
-
-
-# ---------------- aerodynamic coefficients ----------------
-## Critical AoA shrinks through the transonic range (the reason a Flanker buffets at moderate AoA when fast).
-func _alpha_crit_scale(m: float) -> float:
-	if m < 0.55:
-		return 1.0
-	if m < 1.2:
-		return lerpf(1.0, 0.5, (m - 0.55) / 0.65)
-	return 0.5
-
-
-## Compressibility: subsonic lift slope rises (Prandtl-Glauert, capped), supersonic it falls.
-func _compressibility(m: float) -> float:
-	if m < 0.9:
-		return clampf(1.0 / sqrt(maxf(1.0 - m * m, 0.3)), 1.0, 1.3)
-	if m < 1.15:
-		return lerpf(1.3, 0.8, (m - 0.9) / 0.25)
-	return 0.8
-
-
-func _cl_table(a_deg: float) -> float:
-	var a := absf(a_deg)
-	var s := signf(a_deg) if a_deg != 0.0 else 1.0
-	if a >= 90.0:
-		return 0.0
-	for i in CL_TABLE.size() - 1:
-		var p0: Array = CL_TABLE[i]
-		var p1: Array = CL_TABLE[i + 1]
-		if a <= p1[0]:
-			var t: float = (a - p0[0]) / (p1[0] - p0[0])
-			var v: float = lerpf(p0[1], p1[1], t)
-			# negative AoA: no LERX vortex benefit, slightly weaker
-			return v * s if s > 0.0 else -v * 0.85
-	return 0.0
-
-
-func _cl(alpha: float, m: float, slats: float) -> float:
-	# the table is indexed by AoA relative to the current critical AoA (Mach and slats move the stall)
-	var crit := ALPHA_CRIT_LOW_MACH * _alpha_crit_scale(m) + slats * spec.slat_crit_bonus_deg
-	alpha_crit_deg = crit
-	var a_eff := rad_to_deg(alpha) * ALPHA_CRIT_LOW_MACH / crit
-	return _cl_table(a_eff) * _compressibility(m)
-
-
-## Ground effect (wing height h over span b): less induced drag, a little more lift close to the ground.
-func _ground_effect(h: float) -> float:
-	var x := 16.0 * maxf(h, 0.05) / spec.wing_span
-	return (x * x) / (1.0 + x * x)
-
-
-func _wave_drag(m: float) -> float:
-	# transonic drag rise, peaks just above Mach 1 then eases off
-	if m < 0.82:
-		return 0.0
-	if m < 1.1:
-		return spec.wave_drag_peak * smoothstep(0.82, 1.1, m)
-	return spec.wave_drag_peak * (1.0 - 0.31 * clampf((m - 1.1) / 1.0, 0.0, 1.0))
-
-
-func _thrust(h: float, m: float) -> float:
-	var lapse := pow(_air_density(h) / RHO0, 0.7) * (1.0 + 0.12 * clampf(m, 0.0, 1.5))
-	var t: float
-	if engine <= AB_THRESHOLD:
-		t = lerpf(THRUST_IDLE, THRUST_DRY, engine / AB_THRESHOLD)
-	else:
-		t = lerpf(THRUST_DRY, THRUST_AB, (engine - AB_THRESHOLD) / (1.0 - AB_THRESHOLD))
-	return t * lapse
-
-
-# ---------------- main loop ----------------
 func _physics_process(delta: float) -> void:
 	_handle_toggles()
-	if crashed:
-		return
 	_read_inputs(delta)
-	var steps := 2
-	var dt := delta / steps
-	for i in steps:
-		_simulate(dt)
-		if crashed:
-			break
+	fm.in_pitch = pitch_in
+	fm.in_roll = roll_in
+	fm.in_yaw = yaw_in
+	fm.in_throttle = throttle
+	fm.in_brake = 1.0 if wheel_brakes else 0.0
+	var dt := delta / SUBSTEPS
+	for i in SUBSTEPS:
+		fm.step(dt)
+	global_transform = Transform3D(fm.rot, fm.pos)
+	_process_events()
 	_update_surfaces()
-	_update_nose_wheel(delta)
-	if on_ground and gear_down and not gear_player.is_playing():
-		for t in _tires:
-			t.rotate_object_local(Vector3.RIGHT, speed / 0.45 * delta)
+	_update_gear_visuals(delta)
+
+
+func _process_events() -> void:
+	for e in fm.events:
+		var type: String = e[0]
+		match type:
+			"touchdown":
+				_event(e[1])
+			"crash":
+				_event("CRASHED  ·  " + String(e[1]))
+			"tailstrike":
+				_event("TAIL STRIKE")
+		sim_event.emit(type, float(e[2]))
+	fm.events.clear()
+	var ab_now := ab_stage > 0.01
+	if ab_now and not _was_ab:
+		sim_event.emit("ab_light", 0.0)
+	_was_ab = ab_now
+	if fm.wow != _was_wow:
+		sim_event.emit("wheels_down" if fm.wow else "wheels_up", 0.0)
+	_was_wow = fm.wow
 
 
 func _read_inputs(delta: float) -> void:
@@ -313,222 +225,17 @@ func _read_inputs(delta: float) -> void:
 	if Input.is_action_pressed("throttle_down"):
 		throttle = maxf(throttle - delta * 0.4, 0.0)
 		autothrottle = false
+	_ias_rate = lerpf(_ias_rate, (fm.ias - _prev_ias) / maxf(delta, 1e-3), clampf(delta * 3.0, 0.0, 1.0))
+	_prev_ias = fm.ias
 	if autothrottle:
-		if wow:
+		if fm.wow:
 			autothrottle = false
 		else:
-			# hold the captured airspeed without lighting the afterburner
-			var err := at_target - ias
-			throttle = clampf(throttle + clampf(err * 0.03, -0.4, 0.4) * delta, 0.0, AB_THRESHOLD)
+			# speed hold that anticipates engine spool lag: proportional on error, damped by acceleration
+			var err := at_target - fm.ias
+			var want := clampf(0.62 + err * 0.05 - _ias_rate * 0.35, 0.0, spec.ab_threshold - 0.01)
+			throttle = move_toward(throttle, want, 0.6 * delta)
 	wheel_brakes = Input.is_action_pressed("wheel_brake")
-	flap_pos = move_toward(flap_pos, 1.0 if flaps else 0.0, delta * 0.5)
-	brake_pos = move_toward(brake_pos, 1.0 if airbrake else 0.0, delta * 1.5)
-	engine = move_toward(engine, throttle, delta * SPOOL_RATE)
-
-
-func _simulate(dt: float) -> void:
-	var b := global_transform.basis
-	var h := global_position.y - GEAR_HEIGHT
-	var rho := _air_density(h)
-	# everything aerodynamic uses the AIR-relative velocity (ground velocity minus wind)
-	var air := velocity - WorldData.wind
-	speed = air.length()
-	mach = speed / _speed_of_sound(h)
-	var q := 0.5 * rho * speed * speed
-	ias = sqrt(2.0 * q / RHO0)
-	ground_speed = Vector2(velocity.x, velocity.z).length()
-	var fwd_h := -b.z
-	heading_deg = fposmod(rad_to_deg(atan2(fwd_h.x, -fwd_h.z)), 360.0)
-
-	# --- angles of attack / sideslip from velocity in body axes ---
-	var vl := b.inverse() * air
-	var alpha := 0.0
-	var beta := 0.0
-	if speed > 1.0:
-		alpha = atan2(-vl.y, -vl.z)
-		beta = atan2(vl.x, -vl.z)
-	aoa_deg = rad_to_deg(alpha)
-
-	# --- coefficients ---
-	var slats := maxf(flap_pos, clampf((aoa_deg - 8.0) / 10.0, 0.0, 1.0))
-	var cl := _cl(alpha, mach, slats) + flap_pos * spec.flap_cl
-	var ge := _ground_effect(_height_above_ground(global_position) - spec.wing_height_offset)
-	cl *= 1.0 + 0.10 * (1.0 - ge)
-	var crit := deg_to_rad(alpha_crit_deg)
-	var a_abs := absf(alpha)
-	stall_frac = clampf((a_abs - crit * ALPHA_BUFFET_FRAC) / (crit * (1.0 - ALPHA_BUFFET_FRAC)), 0.0, 1.0)
-	buffet = clampf(stall_frac * 1.3, 0.0, 1.0) * clampf(speed / 40.0, 0.0, 1.0)
-	var k := 1.0 / (PI * ASPECT_RATIO * OSWALD)
-	var cd := CD0 + k * cl * cl * ge + _wave_drag(mach) + 1.1 * pow(sin(alpha), 2)
-	cd += flap_pos * spec.flap_cd + brake_pos * spec.airbrake_cd
-	if gear_down or gear_player.is_playing():
-		cd += spec.gear_cd
-	var cy := -spec.side_force * beta
-
-	# --- forces (world) ---
-	var force := Vector3(0.0, -MASS * GRAVITY, 0.0)
-	var aero := Vector3.ZERO
-	if speed > 1.0:
-		var vdir := air / speed
-		var right := b.x
-		var lift_dir := right.cross(vdir).normalized()
-		aero += lift_dir * q * WING_AREA * cl
-		aero += -vdir * q * WING_AREA * cd
-		aero += right * q * WING_AREA * cy * 0.5
-	thrust_now = _thrust(h, mach)
-	force += aero + (-b.z) * thrust_now
-	g_load = aero.dot(b.y) / (MASS * GRAVITY)
-
-	# --- landing gear: spring-damper per wheel (only when the gear is down and locked) ---
-	var touching := false
-	var gear_force := 0.0
-	var locked := gear_down and not gear_player.is_playing()
-	if locked:
-		for i in 3:
-			var cp: Vector3 = global_transform * GEAR_CONTACTS[i]
-			var comp := maxf(-_height_above_ground(cp), 0.0)
-			var rate := (comp - float(gear_comp[i])) / dt
-			gear_comp[i] = comp
-			if comp > 0.0:
-				touching = true
-				gear_force += maxf(GEAR_K[i] * minf(comp, MAX_STROKE) + GEAR_C[i] * rate, 0.0)
-	else:
-		gear_comp = [0.0, 0.0, 0.0]
-	if locked and not touching:
-		var near := INF
-		for i in 3:
-			near = minf(near, _height_above_ground(global_transform * GEAR_CONTACTS[i]))
-		touching = near < 0.04 and velocity.y < 1.0 and wow
-	if touching and not wow:
-		_on_touchdown()
-	wow = touching
-	if touching:
-		force.y += gear_force
-		var flat_v := Vector3(velocity.x, 0.0, velocity.z)
-		var mu := BRAKE_FRICTION if wheel_brakes else ROLL_FRICTION
-		if flat_v.length() > 0.05:
-			force += -flat_v.normalized() * mu * gear_force
-		elif thrust_now < mu * gear_force:
-			velocity.x = 0.0
-			velocity.z = 0.0
-			force.x = 0.0
-			force.z = 0.0
-
-	var accel := force / MASS
-	velocity += accel * dt
-
-	# --- rotation: fly-by-wire rate command ---
-	# control authority comes from airflow over the surfaces: none at zero airspeed
-	var eff := clampf(q / Q_REF, 0.0, 1.0)
-	var eff_roll := clampf(q / Q_REF_ROLL, 0.0, 1.0)
-	var pitch_rate := MAX_RATES.x * (1.0 if aoa_limiter else 1.9)
-	var cmd := Vector3(pitch_in * pitch_rate * eff, -yaw_in * MAX_RATES.y * eff, -roll_in * MAX_RATES.z * eff_roll)
-	# FBW AoA / G limiter (pitch). Never past the Mach-dependent stall, never past 9 g.
-	if aoa_limiter:
-		var cl_slope_q := maxf(q * WING_AREA * CL_ALPHA * _compressibility(mach), 1.0)
-		var alpha_hi := minf(minf(ALPHA_LIMIT, crit - deg_to_rad(3.0)), (G_MAX * MASS * GRAVITY) / cl_slope_q)
-		var alpha_lo := maxf(-deg_to_rad(10.0), (G_MIN * MASS * GRAVITY) / cl_slope_q)
-		if alpha > alpha_hi:
-			cmd.x = minf(cmd.x, (alpha_hi - alpha) * 3.0)
-		elif alpha < alpha_lo:
-			cmd.x = maxf(cmd.x, (alpha_lo - alpha) * 3.0)
-	# directional stability: nose weathervanes into the airflow
-	cmd.y += -beta * 2.5 * eff
-	# past the critical AoA the airframe pitches nose-down on its own (stable post-stall pitching moment);
-	# the moment needs airflow, but a little remains even when slow so a stalled jet still falls nose-first
-	if a_abs > crit:
-		var hold := 0.0 if aoa_limiter else 0.8 * maxf(pitch_in, 0.0)
-		cmd.x += -(alpha - signf(alpha) * crit) * 1.6 * (1.0 - hold) * clampf(q / 3000.0, 0.25, 1.0)
-	# stall: roll authority fades, wing rock and an occasional wing drop
-	if stall_frac > 0.0:
-		cmd.z *= 1.0 - 0.7 * stall_frac
-		_rock_t += dt
-		var rock := sin(_rock_t * TAU * 0.55) * 0.9 * stall_frac * stall_frac
-		if randf() < 0.004 * stall_frac:
-			_drop = randf_range(-1.0, 1.0) * 1.6 * stall_frac
-		_drop = move_toward(_drop, 0.0, 0.8 * dt)
-		cmd.z += rock + _drop
-		cmd.y += (rock + _drop) * 0.25
-	# rate limits by angular acceleration
-	var omega_x_prev := omega.x
-	omega.x = move_toward(omega.x, cmd.x, ANG_ACCEL.x * dt)
-	omega.y = move_toward(omega.y, cmd.y, ANG_ACCEL.y * dt)
-	omega.z = move_toward(omega.z, cmd.z, ANG_ACCEL.z * dt)
-
-	if touching:
-		# on the wheels: nose-wheel steering, wings held level by the gear, nose can't go below level
-		omega.z = 0.0
-		# pitch on the wheels: the tailplane must overcome the weight on the nose gear, which needs airspeed.
-		# Below rotation speed the stick moves the surfaces but the nose stays down (and settles if lifted).
-		var rot_auth := clampf((ias - ROTATE_IAS_START) / (ROTATE_IAS_FULL - ROTATE_IAS_START), 0.0, 1.0)
-		var nose_up := b.get_euler().x
-		var pitch_target := pitch_in * 0.30 * rot_auth
-		if nose_up > 0.0:
-			pitch_target -= (1.0 - rot_auth) * 0.25
-		omega.x = move_toward(omega_x_prev, pitch_target, 1.2 * dt)   # the wheels decide pitch, not the airborne FBW
-		var fwd_speed := velocity.dot(-b.z)
-		var steer_angle := yaw_in * MAX_STEER * clampf(1.0 - absf(fwd_speed) / 60.0, 0.12, 1.0)
-		omega.y = -fwd_speed * tan(steer_angle) / WHEELBASE
-
-	var w := omega.length()
-	if w > 1e-6:
-		b = b * Basis(omega / w, w * dt)
-	b = b.orthonormalized()
-
-	if touching:
-		var e := b.get_euler()
-		e.z = lerp_angle(e.z, 0.0, clampf(dt * 8.0, 0.0, 1.0))
-		if e.x < 0.0:
-			e.x = 0.0
-			omega.x = maxf(omega.x, 0.0)
-		if e.x > MAX_GROUND_PITCH:
-			e.x = MAX_GROUND_PITCH
-			omega.x = minf(omega.x, 0.0)
-		b = Basis.from_euler(e)
-		var side := b.x
-		velocity -= side * velocity.dot(side) * clampf(dt * 12.0, 0.0, 1.0)
-
-	global_transform.basis = b
-	global_position += velocity * dt
-	vertical_speed = velocity.y
-
-	# --- hard limits: gear bottoming, tail bumper, belly / sea / terrain ---
-	if locked:
-		var worst := 0.0
-		for i in 3:
-			var cp2: Vector3 = global_transform * GEAR_CONTACTS[i]
-			worst = maxf(worst, -_height_above_ground(cp2) - MAX_STROKE)
-		if worst > 0.0:
-			global_position.y += worst
-			if velocity.y < -SINK_HARD:
-				_crash("Landing gear collapsed (%.1f m/s)" % -velocity.y)
-			velocity.y = maxf(velocity.y, 0.0)
-		var mp := global_transform * MAIN_CONTACT
-		if not crashed and touching and WorldData.is_water(mp.x, mp.z):
-			_crash("Ditched in the sea")
-	else:
-		var belly := _height_above_ground(global_transform * Vector3(0.0, -1.3, 0.0))
-		if belly < 0.0:
-			var bp := global_transform * Vector3(0.0, -1.3, 0.0)
-			_crash("Ditched in the sea" if WorldData.is_water(bp.x, bp.z) else "Belly landing, gear was up")
-	# tail stinger: scrapes and rests on the runway instead of digging in
-	var tail_h := _height_above_ground(global_transform * TAIL_PROBE)
-	if tail_h < 0.0 and not crashed:
-		if velocity.y < -5.0:
-			_crash("Tail strike")
-		else:
-			global_position.y -= tail_h
-			velocity.y = maxf(velocity.y, 0.0)
-			if Time.get_ticks_msec() / 1000.0 - landing_event_time > 2.0:
-				_event("TAIL STRIKE")
-	on_ground = touching
-	if on_ground:
-		_airborne_time = 0.0
-	else:
-		_airborne_time += dt
-	if not crashed and _airframe_hit_terrain():
-		_crash("Hit the terrain")
-	altitude_agl = maxf(_height_above_ground(global_position) - GEAR_HEIGHT, 0.0)
 
 
 func _event(text: String) -> void:
@@ -536,100 +243,43 @@ func _event(text: String) -> void:
 	landing_event_time = Time.get_ticks_msec() / 1000.0
 
 
-func _on_touchdown() -> void:
-	# grade the landing from the sink rate at first contact (ignore taxi bumps)
-	if _airborne_time < 1.0:
-		return
-	touchdown_sink = -velocity.y
-	var bank := rad_to_deg(absf(global_transform.basis.get_euler().z))
-	var grade := ""
-	if touchdown_sink < SINK_SMOOTH:
-		grade = "SMOOTH LANDING"
-	elif touchdown_sink < SINK_GOOD:
-		grade = "GOOD LANDING"
-	elif touchdown_sink < SINK_FIRM:
-		grade = "FIRM LANDING"
-	elif touchdown_sink < SINK_HARD:
-		grade = "HARD LANDING, gear overstressed"
-	else:
-		grade = "GEAR COLLAPSED"
-	if bank > 8.0 and touchdown_sink < SINK_HARD:
-		grade += ", one wheel first"
-	_event("%s  (%.1f m/s)" % [grade, touchdown_sink])
-	if touchdown_sink >= SINK_HARD:
-		_crash("Landing gear collapsed (%.1f m/s)" % touchdown_sink)
-
-
-func _height_above_ground(p: Vector3) -> float:
-	return p.y - WorldData.ground_height(p.x, p.z)
-
-
-func _ground_contact_height() -> float:
-	# lowest gear contact point height above the terrain / sea surface
-	var t := global_transform
-	if not gear_down:
-		return _height_above_ground(t * Vector3(0.0, -1.3, 0.0))
-	return minf(_height_above_ground(t * NOSE_CONTACT), _height_above_ground(t * MAIN_CONTACT))
-
-
-func _airframe_hit_terrain() -> bool:
-	# nose, wingtips, fin tips and tail: any of them in the ground = crash
-	var t := global_transform
-	for lp in CRASH_PROBES:
-		if lp.z > 9.0:
-			continue
-		if _height_above_ground(t * lp) < -0.3:
-			return true
-	return false
-
-
-func _crash(reason: String) -> void:
-	crashed = true
-	crash_reason = reason
-	velocity = Vector3.ZERO
-	omega = Vector3.ZERO
-
-
-# ---------------- visuals ----------------
+# ---------------- visuals from simulation state ----------------
 func _set_surface(n: String, deg: float) -> void:
 	if _surfaces.has(n):
 		var e: Array = _surfaces[n]
-		var node: Node3D = e[0]
-		var rest: Basis = e[1]
-		node.transform.basis = rest * Basis(Vector3.RIGHT, deg_to_rad(deg))
+		(e[0] as Node3D).transform.basis = (e[1] as Basis) * Basis(Vector3.RIGHT, deg_to_rad(deg))
 
 
 func _update_surfaces() -> void:
-	# + angle = trailing edge up (stabs, flaperons), leading edge down (slats), trailing edge right (rudders)
-	_set_surface("Stabilator_L", pitch_in * 15.0 - roll_in * 8.0)
-	_set_surface("Stabilator_R", pitch_in * 15.0 + roll_in * 8.0)
-	_set_surface("Flaperon_L", -roll_in * 20.0 - flap_pos * 30.0)
-	_set_surface("Flaperon_R", roll_in * 20.0 - flap_pos * 30.0)
-	var slat := maxf(flap_pos, clampf((aoa_deg - 8.0) / 10.0, 0.0, 1.0)) * 28.0
+	# the surfaces show the real actuator positions the fly-by-wire is commanding
+	var e := rad_to_deg(fm.elev)
+	var a := rad_to_deg(fm.ail)
+	var r := rad_to_deg(fm.rud)
+	_set_surface("Stabilator_L", e - a * 0.4)
+	_set_surface("Stabilator_R", e + a * 0.4)
+	_set_surface("Flaperon_L", -a - fm.flap_pos * 30.0)
+	_set_surface("Flaperon_R", a - fm.flap_pos * 30.0)
+	var slat := maxf(fm.flap_pos, clampf((aoa_deg - 8.0) / 10.0, 0.0, 1.0)) * 28.0
 	_set_surface("Slat_L", slat)
 	_set_surface("Slat_R", slat)
-	_set_surface("Rudder_L", yaw_in * 25.0)
-	_set_surface("Rudder_R", yaw_in * 25.0)
+	_set_surface("Rudder_L", r)
+	_set_surface("Rudder_R", r)
 
 
-func _update_nose_wheel(delta: float) -> void:
-	# tiller steering: the nose wheel follows Q/E whenever the wheels are on the ground,
-	# even when stopped; it centres itself in the air
-	var target := 0.0
-	if wow:
-		target = yaw_in * rad_to_deg(MAX_STEER) * clampf(1.0 - speed / 60.0, 0.12, 1.0)
-	nose_steer_deg = move_toward(nose_steer_deg, target, 90.0 * delta)
+func _update_gear_visuals(delta: float) -> void:
+	var locked := fm.gear_pos > 0.98 and not gear_player.is_playing()
 	if _nose_gear:
-		var steer := nose_steer_deg if (gear_down and not gear_player.is_playing()) else 0.0
-		# model nose is +Z and model-left is +X, so a right turn is a negative rotation about +Y
-		_nose_gear.transform.basis = _nose_rest * Basis(Vector3.UP, deg_to_rad(-steer))
-	# oleo pistons: the model is built at static compression; extend in the air, compress on impact
+		var st := rad_to_deg(fm.steer) if locked else 0.0
+		_nose_gear.transform.basis = _nose_rest * Basis(Vector3.UP, deg_to_rad(-st))
 	for i in _oleos.size():
 		if _oleos[i] == null:
 			continue
-		var comp: float = gear_comp[i] if gear_down else STATIC_STROKE
-		var offset := clampf(comp - STATIC_STROKE, -STATIC_STROKE, MAX_STROKE - STATIC_STROKE)
+		var comp: float = fm.gear_comp[i] if locked else 0.0
+		var offset := clampf(comp - spec.static_stroke, -spec.static_stroke, spec.max_stroke - spec.static_stroke)
 		_oleos[i].position = _oleos[i].position.lerp(_oleo_rest[i] + Vector3(0.0, offset, 0.0), clampf(delta * 25.0, 0.0, 1.0))
+	if fm.wow and locked:
+		for t in _tires:
+			t.rotate_object_local(Vector3.RIGHT, fm.wheel_speed / 0.45 * delta)
 
 
 func _toggle_clip(p: AnimationPlayer, clip: String, open: bool) -> void:
@@ -639,82 +289,91 @@ func _toggle_clip(p: AnimationPlayer, clip: String, open: bool) -> void:
 		p.play_backwards(clip)
 
 
+func _set_gear(down: bool) -> void:
+	fm.gear_down = down
+	gear_player.speed_scale = gear_player.get_animation("gear_extend").length / spec.gear_transit_time
+	gear_player.play("gear_extend" if down else "gear_retract")
+	sim_event.emit("gear_motion", 1.0 if down else 0.0)
+
+
 func _handle_toggles() -> void:
 	if Input.is_action_just_pressed("reset"):
 		reset()
-	if crashed:
+	if fm.crashed:
 		return
-	if Input.is_action_just_pressed("toggle_gear") and not on_ground and not gear_player.is_playing():
-		gear_down = not gear_down
-		gear_player.play("gear_extend" if gear_down else "gear_retract")
+	if Input.is_action_just_pressed("toggle_gear") and not fm.wow and not gear_player.is_playing():
+		_set_gear(not fm.gear_down)
 	if Input.is_action_just_pressed("toggle_canopy"):
 		canopy_open = not canopy_open
 		_toggle_clip(canopy_player, "canopy_open", canopy_open)
+		sim_event.emit("canopy", 1.0 if canopy_open else 0.0)
 	if Input.is_action_just_pressed("toggle_airbrake"):
-		airbrake = not airbrake
-		_toggle_clip(brake_player, "airbrake_open", airbrake)
+		fm.airbrake = not fm.airbrake
+		_toggle_clip(brake_player, "airbrake_open", fm.airbrake)
+		sim_event.emit("airbrake", 1.0 if fm.airbrake else 0.0)
 	if Input.is_action_just_pressed("toggle_radome"):
 		radome_open = not radome_open
 		_toggle_clip(radome_player, "radome_open", radome_open)
 	if Input.is_action_just_pressed("toggle_flaps"):
-		flaps = not flaps
-	if Input.is_action_just_pressed("toggle_autothrottle") and not wow:
+		fm.flaps = not fm.flaps
+		sim_event.emit("flaps", 1.0 if fm.flaps else 0.0)
+	if Input.is_action_just_pressed("toggle_autothrottle") and not fm.wow:
 		autothrottle = not autothrottle
-		at_target = ias
+		at_target = fm.ias
+		sim_event.emit("switch", 0.0)
 	if Input.is_action_just_pressed("practice_approach"):
 		practice_approach()
 	if Input.is_action_just_pressed("toggle_limiter"):
-		aoa_limiter = not aoa_limiter
-		_event("AOA LIMITER " + ("ON" if aoa_limiter else "OFF  ·  CAREFUL"))
+		fm.limiter = not fm.limiter
+		_event("AOA LIMITER " + ("ON" if fm.limiter else "OFF  ·  CAREFUL"))
+		sim_event.emit("switch", 0.0)
 	if Input.is_action_just_pressed("toggle_radar"):
 		radar_on = not radar_on
+		sim_event.emit("switch", 0.0)
 		if radar_on:
 			radar_player.play(radar_clip)
 		else:
 			radar_player.pause()
+	if Input.is_action_just_pressed("toggle_lights"):
+		sim_event.emit("switch", 0.0)
+
+
+func _snap_gear_down() -> void:
+	fm.gear_down = true
+	fm.gear_pos = 1.0
+	gear_player.speed_scale = 1.0
+	gear_player.play("gear_extend")
+	gear_player.seek(gear_player.current_animation_length, true)
 
 
 ## Puts the jet on a 3 degree final approach to runway 36, 7 km out, configured to land.
 func practice_approach() -> void:
 	var aim := Vector3(0.0, 40.0, 7200.0)
-	var start := aim + Vector3(0.0, PRACTICE_DISTANCE * tan(GLIDESLOPE) + GEAR_HEIGHT, PRACTICE_DISTANCE)
+	var start := aim + Vector3(0.0, PRACTICE_DISTANCE * tan(GLIDESLOPE) + spec.gear_height, PRACTICE_DISTANCE)
 	var path := Vector3(0.0, -sin(GLIDESLOPE), -cos(GLIDESLOPE))
-	global_transform = Transform3D(Basis.from_euler(Vector3(deg_to_rad(6.0), 0.0, 0.0)), start)
-	velocity = path * 80.0
-	omega = Vector3.ZERO
-	crashed = false
-	crash_reason = ""
-	on_ground = false
-	wow = false
-	_airborne_time = 10.0
-	gear_comp = [0.0, 0.0, 0.0]
-	flaps = true
-	flap_pos = 1.0
-	airbrake = false
-	throttle = 0.2
-	engine = 0.2
+	fm.reset(Transform3D(Basis.from_euler(Vector3(deg_to_rad(5.0), 0.0, 0.0)), start), 0.0, false)
+	sim_event.emit("reset", 0.0)
+	fm.vel = path * 78.0
+	fm.flaps = true
+	fm.flap_pos = 1.0
+	fm.airbrake = false
+	fm.set_engines_n2(88.0)
+	_snap_gear_down()
+	throttle = 0.6
 	autothrottle = true
 	at_target = 78.0
-	if not gear_down or gear_player.is_playing():
-		gear_down = true
-	gear_player.play("gear_extend")
-	gear_player.seek(gear_player.current_animation_length, true)
+	global_transform = Transform3D(fm.rot, fm.pos)
+	reset_physics_interpolation()
 	_event("PRACTICE APPROACH  RWY 36")
 
 
 func reset() -> void:
-	global_transform = spawn
-	velocity = Vector3.ZERO
-	omega = Vector3.ZERO
+	fm.reset(spawn, 0.0, true)
+	sim_event.emit("reset", 0.0)
 	throttle = 0.0
-	engine = 0.0
-	on_ground = true
-	crashed = false
-	crash_reason = ""
 	autothrottle = false
-	gear_comp = [STATIC_STROKE, STATIC_STROKE, STATIC_STROKE]
-	_airborne_time = 0.0
-	if not gear_down:
-		gear_down = true
-		gear_player.play("gear_extend")
-		gear_player.seek(gear_player.current_animation_length, true)
+	fm.flaps = false
+	fm.flap_pos = 0.0
+	_snap_gear_down()
+	global_transform = spawn
+	reset_physics_interpolation()
