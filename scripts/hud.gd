@@ -244,10 +244,8 @@ func _process(_delta: float) -> void:
 		return
 	var cam := get_viewport().get_camera_3d()
 	_vals["view"].text = ("VIEW  " + String(cam.view_name)) if cam and "view_name" in cam else ""
-	# airspeed indicators read nothing below ~30 kt, and AoA is invalid at such low airspeed
-	var spd_valid: bool = a.ias > 15.4
-	_show("spd", Settings.speed_text(a.ias) if spd_valid else ["--", Settings.speed_text(0.0)[1]])
-	_show("tas", Settings.speed_text(a.speed) if a.speed > 15.4 else ["--", Settings.speed_text(0.0)[1]])
+	_show("spd", Settings.speed_text(a.ias))
+	_show("tas", Settings.speed_text(a.speed))
 	_show("gs", Settings.speed_text(a.ground_speed))
 	var aviation := int(Settings.get_value("hud/unit_system")) == 1
 	_show("fuel", ["%d" % int(a.fuel_kg * (2.20462 if aviation else 1.0)), "LB" if aviation else "KG"])
@@ -266,7 +264,7 @@ func _process(_delta: float) -> void:
 	_show("vs", Settings.vs_text(a.vertical_speed))
 	_show("agl", Settings.alt_text(a.altitude_agl))
 	_show("g", ["%.1f" % a.g_load, ""])
-	_show("aoa", ["%.1f" % a.aoa_deg, "DEG"] if spd_valid else ["--", "DEG"])
+	_show("aoa", ["%.1f" % a.aoa_deg, "DEG"])
 	_show("thrust", ["%d" % int(a.thrust_now / 1000.0), "KN"])
 	_vals["aoa"].add_theme_color_override("font_color", T.BAD if a.stall_frac > 0.5 else (T.WARN if a.stall_frac > 0.0 else T.TEXT))
 	_vals["g"].add_theme_color_override("font_color", T.WARN if a.g_load > 7.0 else T.TEXT)
