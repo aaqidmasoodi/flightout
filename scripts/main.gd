@@ -15,6 +15,7 @@ var _cam: Camera3D
 
 func _ready() -> void:
 	get_tree().paused = false
+	get_viewport().disable_3d = false
 	WorldData.load_world()
 	_build_environment()
 

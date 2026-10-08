@@ -26,9 +26,10 @@ var _dist := 0.0
 var _surfaces := {}
 var _beacons: Array[StandardMaterial3D] = []
 var _strobes: Array[StandardMaterial3D] = []
-var _xf_view: SubViewport
-var _xf_cam: Camera3D
-var _xf_rect: TextureRect
+var _layer: CanvasLayer
+var _views: Array[SubViewport] = []
+var _cams: Array[Camera3D] = []
+var _rects: Array[TextureRect] = []
 const CROSSFADE := 1.6       # seconds the outgoing and incoming shots overlap
 const PREROLL := 0.2         # seconds the incoming view renders invisibly before its dissolve begins
 var _snd := {}
@@ -38,39 +39,40 @@ func _ready() -> void:
 	_build_environment()
 	_build_jet()
 	_build_audio()
-	_cam = Camera3D.new()
-	_cam.current = true
-	_cam.far = 40000.0
+	# Two identical views (ping-pong). Shot k plays on view k % 2. The next shot pre-rolls invisibly on the other
+	# view, dissolves in on top, and then simply keeps playing: nothing ever hands over, so nothing can flicker.
+	get_viewport().disable_3d = true
 	var attrs := CameraAttributesPractical.new()
 	attrs.dof_blur_far_enabled = true
 	attrs.dof_blur_far_distance = 90.0
 	attrs.dof_blur_far_transition = 400.0
 	attrs.dof_blur_amount = 0.06
-	_cam.attributes = attrs
-	add_child(_cam)
-	# crossfade: the incoming shot renders into its own view (same world) and fades in over the outgoing one
-	_xf_view = SubViewport.new()
-	_xf_view.render_target_update_mode = SubViewport.UPDATE_DISABLED
-	_xf_view.msaa_3d = get_viewport().msaa_3d
-	add_child(_xf_view)
-	_xf_cam = Camera3D.new()
-	_xf_cam.far = _cam.far
-	_xf_cam.attributes = attrs
-	_xf_view.add_child(_xf_cam)
-	_xf_cam.current = true
-	var layer := CanvasLayer.new()
-	layer.layer = -5                     # above the 3D scene, below the menu
-	add_child(layer)
-	_xf_rect = TextureRect.new()
-	_xf_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_xf_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_xf_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_xf_rect.stretch_mode = TextureRect.STRETCH_SCALE
-	_xf_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST   # 1:1 pixels, no resampling blur
-	_xf_rect.texture = _xf_view.get_texture()
-	_xf_rect.modulate.a = 0.0
-	_xf_rect.visible = false
-	layer.add_child(_xf_rect)
+	_layer = CanvasLayer.new()
+	_layer.layer = -5                     # under the menu
+	add_child(_layer)
+	for i in 2:
+		var v := SubViewport.new()
+		v.render_target_update_mode = SubViewport.UPDATE_DISABLED
+		add_child(v)
+		var c := Camera3D.new()
+		c.far = 40000.0
+		c.attributes = attrs
+		v.add_child(c)
+		c.current = true
+		var r := TextureRect.new()
+		r.set_anchors_preset(Control.PRESET_FULL_RECT)
+		r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		r.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		r.stretch_mode = TextureRect.STRETCH_SCALE
+		r.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		r.texture = v.get_texture()
+		r.modulate.a = 0.0
+		r.visible = false
+		_layer.add_child(r)
+		_views.append(v)
+		_cams.append(c)
+		_rects.append(r)
+	_cam = _cams[0]
 
 
 func _build_audio() -> void:
@@ -227,48 +229,61 @@ func _process(delta: float) -> void:
 	for s in _strobes:
 		s.emission_energy_multiplier = 18.0 if (sp < 0.05 or (sp > 0.14 and sp < 0.19)) else 0.0
 
-	# cinematic shots with crossfades: shot k starts every (SHOT_TIME - CROSSFADE) seconds, so during the last
-	# CROSSFADE seconds of a shot the next one is already rolling in its own view and dissolves in on top.
+	# cinematic shots with crossfades: shot k starts every (SHOT_TIME - CROSSFADE) seconds on view k % 2
 	var period := SHOT_TIME - CROSSFADE
 	var k := int(_t / period)
 	var tau := _t - k * period
+	var cur := k % 2
+	var other := 1 - cur
+	_sync_views()
 	if tau < CROSSFADE and k > 0:
-		_apply_shot(_cam, k - 1, tau + period)
-		_apply_shot(_xf_cam, k, tau)
-		_xf_live(true)
+		# outgoing shot underneath, incoming shot on top dissolving in
+		_apply_shot(_cams[other], k - 1, tau + period)
+		_apply_shot(_cams[cur], k, tau)
+		_show(other, 1.0, false)
 		var a := tau / CROSSFADE
-		_xf_rect.modulate.a = a * a * (3.0 - 2.0 * a)
+		_show(cur, a * a * (3.0 - 2.0 * a), true)
 	elif period - tau < PREROLL:
-		# pre-roll: render the incoming shot (invisible) a few frames early, so its first visible frame is live
-		_apply_shot(_cam, k, tau)
-		_apply_shot(_xf_cam, k + 1, 0.0)
-		_xf_live(true)
-		_xf_rect.modulate.a = 0.0
+		# the next shot starts rendering, invisible, on top: its first visible frame is already live
+		_apply_shot(_cams[cur], k, tau)
+		_apply_shot(_cams[other], k + 1, 0.0)
+		_show(cur, 1.0, false)
+		_show(other, 0.0, true)
 	else:
-		_apply_shot(_cam, k, tau)
-		_xf_live(false)
+		_apply_shot(_cams[cur], k, tau)
+		_show(cur, 1.0, true)
+		_hide(other)
+	_cam = _cams[cur]
 
 
-## Turns the crossfade view on or off. When on, it matches the window's real pixel size and the main view's
-## render settings exactly, so the hand-over at the end of a dissolve is invisible.
-func _xf_live(on: bool) -> void:
-	if not on:
-		if _xf_rect.visible:
-			_xf_rect.visible = false
-			_xf_view.render_target_update_mode = SubViewport.UPDATE_DISABLED
-		return
+func _show(i: int, alpha: float, on_top: bool) -> void:
+	var r := _rects[i]
+	if on_top and r.get_index() != _layer.get_child_count() - 1:
+		_layer.move_child(r, -1)
+	r.modulate.a = alpha
+	r.visible = true
+	_views[i].render_target_update_mode = SubViewport.UPDATE_ALWAYS
+
+
+func _hide(i: int) -> void:
+	if _rects[i].visible:
+		_rects[i].visible = false
+		_rects[i].modulate.a = 0.0
+		_views[i].render_target_update_mode = SubViewport.UPDATE_DISABLED
+
+
+## Both views render at the window's real pixel size with the game's render settings.
+func _sync_views() -> void:
 	var main_vp := get_viewport()
 	var px: Vector2i = get_window().size
-	if _xf_view.size != px:
-		_xf_view.size = px
-	_xf_view.msaa_3d = main_vp.msaa_3d
-	_xf_view.screen_space_aa = main_vp.screen_space_aa
-	_xf_view.use_taa = main_vp.use_taa
-	_xf_view.use_debanding = main_vp.use_debanding
-	_xf_view.scaling_3d_mode = main_vp.scaling_3d_mode
-	_xf_view.scaling_3d_scale = main_vp.scaling_3d_scale
-	_xf_view.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	_xf_rect.visible = true
+	for v in _views:
+		if v.size != px:
+			v.size = px
+		v.msaa_3d = main_vp.msaa_3d
+		v.screen_space_aa = main_vp.screen_space_aa
+		v.use_taa = main_vp.use_taa
+		v.use_debanding = main_vp.use_debanding
+		v.scaling_3d_scale = main_vp.scaling_3d_scale
 
 
 ## Places a camera on shot `idx` at `local` seconds into it: a steady dolly between the shot's two offsets.

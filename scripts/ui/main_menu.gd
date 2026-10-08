@@ -186,4 +186,5 @@ func _process(_delta: float) -> void:
 				Game.keep(p, r)
 		await get_tree().process_frame
 		await get_tree().process_frame
+		get_viewport().disable_3d = false
 		get_tree().change_scene_to_packed(Game._cache["res://scenes/main.tscn"])
