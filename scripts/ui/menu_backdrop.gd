@@ -1,0 +1,194 @@
+extends Node3D
+## Main menu backdrop: the Su-27 in afterburner over a sunset cloud deck, filmed with slow camera moves.
+## Light on purpose: only the jet, a sky, a cloud layer and the ocean shader. No world, no physics.
+
+const OCEAN_SHADER := preload("res://shaders/ocean.gdshader")
+const CLOUD_SHADER := preload("res://shaders/menu_clouds.gdshader")
+const FLAME_SHADER := preload("res://shaders/afterburner_flame.gdshader")
+const SPEED := 260.0          # apparent airspeed, m/s
+const SHOT_TIME := 9.0
+
+# camera shots in the jet's frame (-Z forward, +X right, +Y up): [start offset, end offset, look offset, fov]
+const SHOTS := [
+	[Vector3(-25.0, 3.0, 33.0), Vector3(-19.0, 2.0, 27.0), Vector3(0.0, 0.4, -2.0), 34.0],
+	[Vector3(-44.0, -3.0, 5.0), Vector3(-42.0, -5.0, -9.0), Vector3(0.0, 0.0, 0.0), 30.0],
+	[Vector3(-9.0, 14.0, 52.0), Vector3(3.0, 10.0, 44.0), Vector3(0.0, 0.0, -4.0), 28.0],
+	[Vector3(-21.0, 4.0, -48.0), Vector3(-14.0, 2.0, -38.0), Vector3(0.0, 0.3, 2.0), 30.0],
+]
+
+var _jet: Node3D
+var _model: Node3D
+var _cam: Camera3D
+var _ocean_mat: ShaderMaterial
+var _cloud_mat: ShaderMaterial
+var _t := 0.0
+var _dist := 0.0
+var _surfaces := {}
+var _beacons: Array[StandardMaterial3D] = []
+var _strobes: Array[StandardMaterial3D] = []
+
+
+func _ready() -> void:
+	_build_environment()
+	_build_jet()
+	_cam = Camera3D.new()
+	_cam.current = true
+	_cam.far = 40000.0
+	var attrs := CameraAttributesPractical.new()
+	attrs.dof_blur_far_enabled = true
+	attrs.dof_blur_far_distance = 90.0
+	attrs.dof_blur_far_transition = 400.0
+	attrs.dof_blur_amount = 0.06
+	_cam.attributes = attrs
+	add_child(_cam)
+
+
+func _build_environment() -> void:
+	var sky_mat := ProceduralSkyMaterial.new()
+	sky_mat.sky_top_color = Color(0.07, 0.13, 0.27)
+	sky_mat.sky_horizon_color = Color(0.93, 0.60, 0.38)
+	sky_mat.sky_curve = 0.12
+	sky_mat.ground_horizon_color = Color(0.70, 0.48, 0.36)
+	sky_mat.ground_bottom_color = Color(0.05, 0.06, 0.09)
+	sky_mat.sun_angle_max = 18.0
+	var sky := Sky.new()
+	sky.sky_material = sky_mat
+	var env := Environment.new()
+	env.background_mode = Environment.BG_SKY
+	env.sky = sky
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.tonemap_mode = Environment.TONE_MAPPER_ACES
+	env.tonemap_exposure = 1.05
+	env.glow_enabled = true
+	env.glow_intensity = 0.7
+	env.glow_bloom = 0.08
+	env.fog_enabled = true
+	env.fog_light_color = Color(0.86, 0.64, 0.50)
+	env.fog_density = 0.00004
+	env.fog_sky_affect = 0.0
+	env.adjustment_enabled = true
+	env.adjustment_saturation = 1.08
+	env.adjustment_contrast = 1.04
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-11.0, -38.0, 0.0)   # low sun behind the cameras: lights the jet, warm sky ahead
+	sun.light_color = Color(1.0, 0.80, 0.62)
+	sun.light_energy = 1.7
+	sun.shadow_enabled = true
+	sun.directional_shadow_max_distance = 120.0
+	add_child(sun)
+
+	var ocean := MeshInstance3D.new()
+	var pm := PlaneMesh.new(); pm.size = Vector2(90000.0, 90000.0)
+	ocean.mesh = pm
+	_ocean_mat = ShaderMaterial.new(); _ocean_mat.shader = OCEAN_SHADER
+	ocean.material_override = _ocean_mat
+	ocean.position.y = -1600.0
+	add_child(ocean)
+
+	var clouds := MeshInstance3D.new()
+	var cm := PlaneMesh.new(); cm.size = Vector2(70000.0, 70000.0)
+	clouds.mesh = cm
+	_cloud_mat = ShaderMaterial.new(); _cloud_mat.shader = CLOUD_SHADER
+	clouds.material_override = _cloud_mat
+	clouds.position.y = -420.0
+	clouds.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(clouds)
+
+
+func _build_jet() -> void:
+	_jet = Node3D.new()
+	add_child(_jet)
+	_model = load("res://assets/su27.glb").instantiate()
+	_model.rotation.y = PI
+	_jet.add_child(_model)
+	var ap := _model.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	if ap and ap.has_animation("gear_retract"):
+		ap.play("gear_retract")
+		ap.seek(ap.get_animation("gear_retract").length, true)
+		ap.pause()
+	var flame := ShaderMaterial.new(); flame.shader = FLAME_SHADER
+	flame.set_shader_parameter("intensity", 0.75)
+	for n in ["AfterburnerFlame_L", "AfterburnerFlame_R"]:
+		var f := _model.find_child(n, true, false) as MeshInstance3D
+		if f:
+			f.material_override = flame
+			f.visible = true
+			f.scale = Vector3(0.95, 0.95, 0.8)
+	for n in ["Afterburner_L", "Afterburner_R"]:
+		var g := _model.find_child(n, true, false) as MeshInstance3D
+		if g:
+			var m := StandardMaterial3D.new()
+			m.albedo_color = Color(0.02, 0.02, 0.02)
+			m.emission_enabled = true; m.emission = Color(1.0, 0.45, 0.12); m.emission_energy_multiplier = 5.0
+			g.material_override = m
+	_lamp("Light_Nav_L", Color(1.0, 0.1, 0.06), 5.0)
+	_lamp("Light_Nav_R", Color(0.15, 1.0, 0.35), 5.0)
+	_lamp("Light_Tail_L", Color(1, 0.97, 0.9), 4.0)
+	_lamp("Light_Tail_R", Color(1, 0.97, 0.9), 4.0)
+	_beacons.append(_lamp("Light_Beacon_Top", Color(1.0, 0.1, 0.06), 0.0))
+	_beacons.append(_lamp("Light_Beacon_Bottom", Color(1.0, 0.1, 0.06), 0.0))
+	_strobes.append(_lamp("Light_Strobe_L", Color(1, 1, 1), 0.0))
+	_strobes.append(_lamp("Light_Strobe_R", Color(1, 1, 1), 0.0))
+	for n in ["Flaperon_L", "Flaperon_R", "Stabilator_L", "Stabilator_R", "Rudder_L", "Rudder_R"]:
+		var node := _model.find_child(n, true, false) as Node3D
+		if node:
+			_surfaces[n] = [node, node.transform.basis]
+
+
+func _lamp(n: String, c: Color, e: float) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = c.darkened(0.5); m.emission_enabled = true; m.emission = c; m.emission_energy_multiplier = e
+	var mi := _model.find_child(n, true, false) as MeshInstance3D
+	if mi:
+		mi.material_override = m
+	return m
+
+
+func _surface(n: String, deg: float) -> void:
+	if _surfaces.has(n):
+		var e: Array = _surfaces[n]
+		(e[0] as Node3D).transform.basis = (e[1] as Basis) * Basis(Vector3.RIGHT, deg_to_rad(deg))
+
+
+func _process(delta: float) -> void:
+	_t += delta
+	_dist += SPEED * delta
+	var scroll := Vector2(0.0, -_dist)
+	_ocean_mat.set_shader_parameter("scroll", scroll * 1.0)
+	_cloud_mat.set_shader_parameter("scroll", scroll)
+
+	# gentle flight: slow banks and small pitch changes, with matching control surface motion
+	var bank := sin(_t * 0.23) * 0.22 + sin(_t * 0.61) * 0.04
+	var roll_rate := cos(_t * 0.23) * 0.23 * 0.22
+	var pitch := sin(_t * 0.17) * 0.035
+	_jet.basis = Basis.from_euler(Vector3(pitch, sin(_t * 0.11) * 0.05, -bank))
+	_jet.position = Vector3(0.0, sin(_t * 0.5) * 0.4, 0.0)
+	_surface("Flaperon_L", -roll_rate * 300.0)
+	_surface("Flaperon_R", roll_rate * 300.0)
+	_surface("Stabilator_L", pitch * 120.0 - roll_rate * 120.0)
+	_surface("Stabilator_R", pitch * 120.0 + roll_rate * 120.0)
+	_surface("Rudder_L", sin(_t * 0.3) * 2.0)
+	_surface("Rudder_R", sin(_t * 0.3) * 2.0)
+
+	var bp := fmod(_t, 1.0)
+	_beacons[0].emission_energy_multiplier = 10.0 if bp < 0.12 else 0.0
+	_beacons[1].emission_energy_multiplier = 10.0 if fmod(_t + 0.5, 1.0) < 0.12 else 0.0
+	var sp := fmod(_t, 1.3)
+	for s in _strobes:
+		s.emission_energy_multiplier = 18.0 if (sp < 0.05 or (sp > 0.14 and sp < 0.19)) else 0.0
+
+	# cinematic shots: slow dolly inside each shot, hard cut between them
+	var idx := int(_t / SHOT_TIME) % SHOTS.size()
+	var u := fmod(_t, SHOT_TIME) / SHOT_TIME
+	var shot: Array = SHOTS[idx]
+	var e := u * u * (3.0 - 2.0 * u)
+	var off: Vector3 = (shot[0] as Vector3).lerp(shot[1], e)
+	var look: Vector3 = _jet.position + (shot[2] as Vector3)
+	_cam.fov = shot[3]
+	_cam.global_position = _jet.position + off
+	_cam.look_at(look, Vector3.UP)
+	# keep the jet to the right of the menu panel
+	_cam.h_offset = -off.length() * 0.085

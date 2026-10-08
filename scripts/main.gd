@@ -1,10 +1,20 @@
 extends Node3D
-## Builds the Flightout test world: sky, sun, ground, runway, hills, jet, camera, HUD.
+## Flight scene: world, jet, camera, HUD and pause menu. Entered from the main menu's loading screen.
 
+const DRAW := [
+	{"far": 22000.0, "fog": 0.00007},
+	{"far": 40000.0, "fog": 0.000035},
+	{"far": 60000.0, "fog": 0.00002},
+]
+
+var _env: Environment
+var _sun: DirectionalLight3D
+var _cam: Camera3D
 
 
 func _ready() -> void:
-	_setup_input()
+	get_tree().paused = false
+	WorldData.load_world()
 	_build_environment()
 
 	var world: Node3D = preload("res://scripts/world/world.gd").new()
@@ -17,46 +27,27 @@ func _ready() -> void:
 	aircraft.global_transform = WorldData.spawn_transform(0)
 	aircraft.spawn = aircraft.global_transform
 
-	var cam: Camera3D = preload("res://scripts/chase_camera.gd").new()
-	cam.name = "ChaseCamera"
-	cam.target = aircraft
-	add_child(cam)
+	_cam = preload("res://scripts/chase_camera.gd").new()
+	_cam.name = "ChaseCamera"
+	_cam.target = aircraft
+	add_child(_cam)
 
 	var hud: CanvasLayer = preload("res://scripts/hud.gd").new()
 	hud.aircraft = aircraft
 	add_child(hud)
 
+	add_child(preload("res://scripts/ui/pause_menu.gd").new())
 
-func _add_keys(action: String, keys: Array) -> void:
-	if not InputMap.has_action(action):
-		InputMap.add_action(action)
-	for k in keys:
-		var ev := InputEventKey.new()
-		ev.physical_keycode = k
-		InputMap.action_add_event(action, ev)
+	Settings.changed.connect(func(_k, _v): _apply_settings())
+	_apply_settings()
+	Game.release_cache()
 
 
-func _setup_input() -> void:
-	_add_keys("pitch_up", [KEY_S, KEY_DOWN])
-	_add_keys("pitch_down", [KEY_W, KEY_UP])
-	_add_keys("roll_left", [KEY_A, KEY_LEFT])
-	_add_keys("roll_right", [KEY_D, KEY_RIGHT])
-	_add_keys("yaw_left", [KEY_Q])
-	_add_keys("yaw_right", [KEY_E])
-	_add_keys("throttle_up", [KEY_SHIFT])
-	_add_keys("throttle_down", [KEY_CTRL])
-	_add_keys("toggle_gear", [KEY_G])
-	_add_keys("toggle_canopy", [KEY_C])
-	_add_keys("toggle_airbrake", [KEY_B])
-	_add_keys("toggle_flaps", [KEY_F])
-	_add_keys("toggle_radar", [KEY_R])
-	_add_keys("toggle_radome", [KEY_T])
-	_add_keys("toggle_view", [KEY_V])
-	_add_keys("reset", [KEY_BACKSPACE])
-	_add_keys("wheel_brake", [KEY_SPACE])
-	_add_keys("toggle_lights", [KEY_L])
-	_add_keys("toggle_autothrottle", [KEY_Z])
-	_add_keys("practice_approach", [KEY_P])
+func _apply_settings() -> void:
+	_sun.shadow_enabled = bool(Settings.get_value("graphics/shadows"))
+	var d: Dictionary = DRAW[clampi(int(Settings.get_value("graphics/draw_distance")), 0, 2)]
+	_cam.far = d.far
+	_env.fog_density = d.fog
 
 
 func _build_environment() -> void:
@@ -68,23 +59,23 @@ func _build_environment() -> void:
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 
-	var env := Environment.new()
-	env.background_mode = Environment.BG_SKY
-	env.sky = sky
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.fog_enabled = true
-	env.fog_light_color = Color(0.68, 0.76, 0.86)
-	env.fog_density = 0.000035
-	env.fog_sky_affect = 0.15
-	env.fog_aerial_perspective = 0.6
+	_env = Environment.new()
+	_env.background_mode = Environment.BG_SKY
+	_env.sky = sky
+	_env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	_env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	_env.fog_enabled = true
+	_env.fog_light_color = Color(0.68, 0.76, 0.86)
+	_env.fog_density = 0.000035
+	_env.fog_sky_affect = 0.15
+	_env.fog_aerial_perspective = 0.6
 
 	var world_env := WorldEnvironment.new()
-	world_env.environment = env
+	world_env.environment = _env
 	add_child(world_env)
 
-	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-50.0, -30.0, 0.0)
-	sun.shadow_enabled = true
-	sun.directional_shadow_max_distance = 300.0
-	add_child(sun)
+	_sun = DirectionalLight3D.new()
+	_sun.rotation_degrees = Vector3(-50.0, -30.0, 0.0)
+	_sun.shadow_enabled = true
+	_sun.directional_shadow_max_distance = 300.0
+	add_child(_sun)

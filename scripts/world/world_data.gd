@@ -26,7 +26,10 @@ var loaded := false
 var _h := PackedFloat32Array()
 
 
-func _enter_tree() -> void:
+## Loads the heightmap. Called when a flight starts, so the main menu stays fast.
+func load_world() -> void:
+	if loaded:
+		return
 	var meta_text := FileAccess.get_file_as_string(META_PATH)
 	var meta = JSON.parse_string(meta_text)
 	if meta is Dictionary:

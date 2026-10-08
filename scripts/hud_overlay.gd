@@ -26,9 +26,11 @@ func _draw() -> void:
 	var vs := get_viewport_rect().size
 	var cam := get_viewport().get_camera_3d()
 
-	# --- flight path marker: where the jet is actually going ---
+	var cockpit: bool = cam != null and "view" in cam and int(cam.view) == 2
+
+	# --- flight path marker: where the jet is actually going (cockpit view only) ---
 	var vel: Vector3 = a.velocity
-	if cam and vel.length() > 15.0:
+	if cockpit and vel.length() > 15.0:
 		var p3: Vector3 = a.global_position + vel.normalized() * 600.0
 		if not cam.is_position_behind(p3):
 			var c := cam.unproject_position(p3)
@@ -39,10 +41,12 @@ func _draw() -> void:
 
 	# --- approach guidance (ILS style) ---
 	var g: Dictionary = WorldData.approach_guidance(a.global_position, -a.global_transform.basis.z)
-	if not g.is_empty() and not a.wow:
-		var box := Rect2(Vector2(vs.x - 250.0, vs.y - 290.0), Vector2(220.0, 220.0))
-		draw_rect(box, Color(0, 0, 0, 0.35), true)
-		draw_rect(box, Color(1, 1, 1, 0.5), false, 1.0)
+	if cockpit and not g.is_empty() and not a.wow:
+		var box := Rect2(Vector2(vs.x - 300.0, vs.y - 300.0), Vector2(250.0, 250.0))
+		var frame := Rect2(box.position - Vector2(14, 92), box.size + Vector2(28, 106))
+		draw_rect(frame, Color(0.03, 0.035, 0.045, 0.55), true)
+		draw_rect(frame, Color(1, 1, 1, 0.08), false, 1.0)
+		draw_rect(box, Color(1, 1, 1, 0.12), false, 1.0)
 		var cc := box.get_center()
 		for k in range(-2, 3):
 			draw_circle(cc + Vector2(k * 35.0, 0), 3.0, Color(1, 1, 1, 0.7))
@@ -56,9 +60,10 @@ func _draw() -> void:
 		draw_rect(Rect2(cc - Vector2(6, 6), Vector2(12, 12)), Color(1, 1, 1, 0.9), false, 2.0)
 		var kmh := int(a.speed * 3.6)
 		var spd_col := GREEN if (kmh >= 260 and kmh <= 310) else AMBER
-		draw_string(font, box.position + Vector2(8, -54), "ILS RWY %s   %.1f km" % [g.name, float(g.dist) / 1000.0], HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.WHITE)
-		draw_string(font, box.position + Vector2(8, -34), "Glide %s   Centre %s" % [_dev_text(g.gs_dev, "HIGH", "LOW", 0.2), _dev_text(g.loc_dev, "RIGHT", "LEFT", 0.5)], HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color.WHITE)
-		draw_string(font, box.position + Vector2(8, -14), "Speed %d km/h (target 270-300)" % kmh, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, spd_col)
+		draw_string(font, box.position + Vector2(0, -64), "ILS  RWY %s" % g.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, AMBER)
+		draw_string(font, box.position + Vector2(box.size.x, -64), "%.1f KM" % (float(g.dist) / 1000.0), HORIZONTAL_ALIGNMENT_RIGHT, -1, 18, Color.WHITE)
+		draw_string(font, box.position + Vector2(0, -38), "GLIDE %s    CENTRE %s" % [_dev_text(g.gs_dev, "HIGH", "LOW", 0.2), _dev_text(g.loc_dev, "RIGHT", "LEFT", 0.5)], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.WHITE)
+		draw_string(font, box.position + Vector2(0, -12), "SPEED %d  ·  TARGET 270-300 KM/H" % kmh, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, spd_col)
 
 	# --- warnings ---
 	var warns: Array[String] = []

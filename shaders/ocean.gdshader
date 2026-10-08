@@ -5,6 +5,7 @@ render_mode blend_mix, depth_draw_always, cull_back, diffuse_burley, specular_sc
 uniform vec3 deep_color : source_color = vec3(0.015, 0.08, 0.15);
 uniform vec3 shallow_color : source_color = vec3(0.09, 0.38, 0.42);
 uniform float shallow_depth = 14.0;
+uniform vec2 scroll = vec2(0.0);   // world-space offset (menu backdrop fakes forward flight with it)
 uniform sampler2D depth_tex : hint_depth_texture, filter_linear_mipmap;
 
 varying vec3 wpos;
@@ -27,7 +28,7 @@ void vertex() {
 }
 
 void fragment() {
-	vec2 p = wpos.xz;
+	vec2 p = wpos.xz + scroll;
 	float t = TIME;
 	float e = 0.6;
 	float dist = length(CAMERA_POSITION_WORLD - wpos);

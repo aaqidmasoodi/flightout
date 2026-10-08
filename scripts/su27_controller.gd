@@ -228,7 +228,10 @@ func _physics_process(delta: float) -> void:
 
 
 func _read_inputs(delta: float) -> void:
-	pitch_in = move_toward(pitch_in, Input.get_axis("pitch_down", "pitch_up"), delta * 4.0)
+	var pitch_axis := Input.get_axis("pitch_down", "pitch_up")
+	if bool(Settings.get_value("controls/invert_pitch")):
+		pitch_axis = -pitch_axis
+	pitch_in = move_toward(pitch_in, pitch_axis, delta * 4.0)
 	roll_in = move_toward(roll_in, Input.get_axis("roll_left", "roll_right"), delta * 5.0)
 	yaw_in = move_toward(yaw_in, Input.get_axis("yaw_left", "yaw_right"), delta * 3.0)
 	if Input.is_action_pressed("throttle_up"):

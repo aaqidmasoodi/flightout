@@ -10,6 +10,8 @@ const AIRBASE_EXCLUSION := Rect2(-200.0, 4100.0, 1000.0, 3800.0)   # x, z, w, d
 
 var forest_mask: Image
 var _ocean: MeshInstance3D
+var _forests: Array[MultiMeshInstance3D] = []
+const TREE_RANGES := [3500.0, 6500.0, 10000.0]
 
 
 func _ready() -> void:
@@ -32,6 +34,16 @@ func _ready() -> void:
 	var lights: Node3D = preload("res://scripts/world/airfield_lights.gd").new()
 	lights.name = "AirfieldLights"
 	add_child(lights)
+	Settings.changed.connect(func(_k, _v): _apply_settings())
+	_apply_settings()
+
+
+func _apply_settings() -> void:
+	var on := bool(Settings.get_value("graphics/trees"))
+	var r: float = TREE_RANGES[clampi(int(Settings.get_value("graphics/draw_distance")), 0, 2)]
+	for f in _forests:
+		f.visible = on
+		f.visibility_range_end = r
 
 
 func _process(_delta: float) -> void:
@@ -116,6 +128,7 @@ func _build_forests() -> void:
 			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			add_child(mmi)
+			_forests.append(mmi)
 			total += xforms.size()
 	print("World: %d trees" % total)
 

@@ -27,7 +27,10 @@ var _first := true
 
 
 func _ready() -> void:
-	fov = 70.0
+	fov = float(Settings.get_value("display/fov"))
+	Settings.changed.connect(func(k, v):
+		if k == "display/fov":
+			fov = float(v))
 	near = 0.05
 	far = 60000.0
 	current = true
@@ -46,8 +49,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			_zoom = clampf(_zoom * 1.1, 0.4, 3.0)
 	elif event is InputEventMouseMotion and _dragging:
 		var mm := event as InputEventMouseMotion
-		_yaw -= mm.relative.x * SENSITIVITY
-		_pitch -= mm.relative.y * SENSITIVITY
+		var sens := SENSITIVITY * float(Settings.get_value("controls/mouse_sensitivity"))
+		_yaw -= mm.relative.x * sens
+		_pitch -= mm.relative.y * sens
 		_idle = 0.0
 		if view == View.COCKPIT:
 			_yaw = clampf(_yaw, deg_to_rad(-160.0), deg_to_rad(160.0))
