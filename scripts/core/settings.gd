@@ -67,6 +67,7 @@ func set_value(key: String, value) -> void:
 func reset_defaults() -> void:
 	for k in DEFAULTS.keys():
 		set_value(k, DEFAULTS[k])
+	reset_bindings()
 
 
 func save() -> void:
@@ -74,6 +75,8 @@ func save() -> void:
 	for k in _values.keys():
 		var parts: PackedStringArray = String(k).split("/")
 		cfg.set_value(parts[0], parts[1], _values[k])
+	for a in bindings:
+		cfg.set_value("bindings", a, bindings[a])
 	cfg.save(PATH)
 
 
@@ -122,48 +125,130 @@ func _apply(key: String) -> void:
 			AudioServer.set_bus_volume_db(0, linear_to_db(maxf(float(v), 0.0001)))
 
 
-# ---------------- input map (one place for every binding) ----------------
-func _add_keys(action: String, keys: Array) -> void:
-	if not InputMap.has_action(action):
-		InputMap.add_action(action)
-	for k in keys:
-		var ev := InputEventKey.new()
-		ev.physical_keycode = k
-		InputMap.action_add_event(action, ev)
+# ---------------- input map: rebindable keys ----------------
+## Every rebindable action with up to two keys (primary, secondary). Saved in the [bindings] section.
+const DEFAULT_BINDINGS := {
+	"pitch_down": [KEY_W, KEY_UP], "pitch_up": [KEY_S, KEY_DOWN],
+	"roll_left": [KEY_A, KEY_LEFT], "roll_right": [KEY_D, KEY_RIGHT],
+	"yaw_left": [KEY_Q], "yaw_right": [KEY_E],
+	"throttle_up": [KEY_SHIFT], "throttle_down": [KEY_CTRL],
+	"toggle_gear": [KEY_G], "toggle_flaps": [KEY_F], "toggle_airbrake": [KEY_B], "wheel_brake": [KEY_SPACE],
+	"toggle_autothrottle": [KEY_Z], "toggle_limiter": [KEY_K], "toggle_canopy": [KEY_C], "toggle_lights": [KEY_L],
+	"toggle_radar": [KEY_R], "toggle_radome": [KEY_T], "toggle_view": [KEY_V], "toggle_hud": [KEY_H],
+	"practice_approach": [KEY_P], "reset": [KEY_BACKSPACE],
+}
+## Settings screen layout: [section] or [action, label].
+const BINDABLE := [
+	["FLIGHT CONTROLS"], ["pitch_down", "Pitch down (nose down)"], ["pitch_up", "Pitch up (nose up)"],
+	["roll_left", "Roll left"], ["roll_right", "Roll right"], ["yaw_left", "Yaw left / steer left"], ["yaw_right", "Yaw right / steer right"],
+	["throttle_up", "Throttle up"], ["throttle_down", "Throttle down"],
+	["SYSTEMS"], ["toggle_gear", "Landing gear"], ["toggle_flaps", "Flaps"], ["toggle_airbrake", "Airbrake"], ["wheel_brake", "Wheel brakes (hold)"],
+	["toggle_autothrottle", "Auto-throttle"], ["toggle_limiter", "AoA limiter override (Cobra)"], ["toggle_canopy", "Canopy"],
+	["toggle_lights", "Exterior lights"], ["toggle_radar", "Radar scan"], ["toggle_radome", "Radome"],
+	["CAMERA AND GAME"], ["toggle_view", "Camera view"], ["toggle_hud", "Flight data panel"], ["practice_approach", "Practice approach"],
+	["reset", "Reset to runway"],
+]
+const FIXED_BINDINGS := [["Look around", "RIGHT MOUSE"], ["Zoom", "MOUSE WHEEL"], ["Pause menu", "ESC"]]
+const SHORT_NAMES := {"Space": "SPACE", "Shift": "SHIFT", "Ctrl": "CTRL", "Alt": "ALT", "BackSpace": "BKSP", "Backspace": "BKSP",
+	"Escape": "ESC", "Enter": "ENTER", "Tab": "TAB", "Up": "UP", "Down": "DOWN", "Left": "LEFT", "Right": "RIGHT",
+	"CapsLock": "CAPS", "Delete": "DEL", "Insert": "INS", "PageUp": "PGUP", "PageDown": "PGDN", "Home": "HOME", "End": "END"}
+
+var bindings := {}
 
 
 func _register_input() -> void:
-	_add_keys("pitch_up", [KEY_S, KEY_DOWN])
-	_add_keys("pitch_down", [KEY_W, KEY_UP])
-	_add_keys("roll_left", [KEY_A, KEY_LEFT])
-	_add_keys("roll_right", [KEY_D, KEY_RIGHT])
-	_add_keys("yaw_left", [KEY_Q])
-	_add_keys("yaw_right", [KEY_E])
-	_add_keys("throttle_up", [KEY_SHIFT])
-	_add_keys("throttle_down", [KEY_CTRL])
-	_add_keys("toggle_gear", [KEY_G])
-	_add_keys("toggle_canopy", [KEY_C])
-	_add_keys("toggle_airbrake", [KEY_B])
-	_add_keys("toggle_flaps", [KEY_F])
-	_add_keys("toggle_radar", [KEY_R])
-	_add_keys("toggle_radome", [KEY_T])
-	_add_keys("toggle_view", [KEY_V])
-	_add_keys("reset", [KEY_BACKSPACE])
-	_add_keys("wheel_brake", [KEY_SPACE])
-	_add_keys("toggle_lights", [KEY_L])
-	_add_keys("toggle_autothrottle", [KEY_Z])
-	_add_keys("practice_approach", [KEY_P])
-	_add_keys("toggle_hud", [KEY_H])
-	_add_keys("pause_menu", [KEY_ESCAPE])
-	_add_keys("toggle_limiter", [KEY_K])
+	bindings = {}
+	for a in DEFAULT_BINDINGS:
+		bindings[a] = (DEFAULT_BINDINGS[a] as Array).duplicate()
+	var cfg := ConfigFile.new()
+	if cfg.load(PATH) == OK and cfg.has_section("bindings"):
+		for a in DEFAULT_BINDINGS:
+			if cfg.has_section_key("bindings", a):
+				bindings[a] = Array(cfg.get_value("bindings", a))
+	if not InputMap.has_action("pause_menu"):
+		InputMap.add_action("pause_menu")
+		var esc := InputEventKey.new()
+		esc.physical_keycode = KEY_ESCAPE
+		InputMap.action_add_event("pause_menu", esc)
+	_apply_bindings()
 
 
-## Human-readable bindings for the settings screen.
-const BINDINGS := [
-	["Pitch down / up", "W / S"], ["Roll", "A / D"], ["Yaw / nose-wheel steering", "Q / E"],
-	["Throttle up / down", "Shift / Ctrl"], ["Landing gear", "G"], ["Flaps", "F"], ["Airbrake", "B"],
-	["Wheel brakes", "Space"], ["Auto-throttle", "Z"], ["Canopy", "C"], ["Exterior lights", "L"],
-	["AoA limiter on / off (Cobra)", "K"], ["Radar scan", "R"], ["Radome", "T"], ["Camera view (close, far, orbit, cockpit)", "V"], ["Look around", "Right mouse drag"],
-	["Zoom", "Mouse wheel"], ["Flight data panel", "H"], ["Practice approach", "P"],
-	["Reset to runway", "Backspace"], ["Pause menu", "Esc"],
-]
+func _apply_bindings() -> void:
+	for a in bindings:
+		if not InputMap.has_action(a):
+			InputMap.add_action(a)
+		InputMap.action_erase_events(a)
+		for k in bindings[a]:
+			if int(k) == 0:
+				continue
+			var ev := InputEventKey.new()
+			ev.physical_keycode = int(k)
+			InputMap.action_add_event(a, ev)
+
+
+## Binds a key to an action slot (0 primary, 1 secondary). A key used elsewhere is moved, as games do.
+## Returns the label of the action the key was taken from ("" if none).
+func bind_key(action: String, slot: int, keycode: int) -> String:
+	var taken_from := ""
+	for a in bindings:
+		var arr: Array = bindings[a]
+		for i in arr.size():
+			if int(arr[i]) == keycode and not (a == action and i == slot):
+				arr[i] = 0
+				taken_from = action_label(a)
+	var mine: Array = bindings[action]
+	while mine.size() <= slot:
+		mine.append(0)
+	mine[slot] = keycode
+	_apply_bindings()
+	save()
+	changed.emit("bindings", action)
+	return taken_from
+
+
+func clear_key(action: String, slot: int) -> void:
+	var mine: Array = bindings[action]
+	if slot < mine.size():
+		mine[slot] = 0
+	_apply_bindings()
+	save()
+	changed.emit("bindings", action)
+
+
+func reset_bindings() -> void:
+	for a in DEFAULT_BINDINGS:
+		bindings[a] = (DEFAULT_BINDINGS[a] as Array).duplicate()
+	_apply_bindings()
+	save()
+	changed.emit("bindings", "")
+
+
+func key_name(keycode: int) -> String:
+	if keycode == 0:
+		return ""
+	# map to the user's keyboard layout where the display server supports it (not on headless servers)
+	var k := keycode
+	if DisplayServer.get_name() != "headless":
+		var mapped := DisplayServer.keyboard_get_keycode_from_physical(keycode)
+		if mapped != KEY_NONE:
+			k = mapped
+	var s := OS.get_keycode_string(k)
+	return SHORT_NAMES.get(s, s.to_upper())
+
+
+## Label for an action's key(s): primary only by default, e.g. "G"; with both=true "W / UP".
+func key_label(action: String, both: bool = false) -> String:
+	var names := []
+	for k in bindings.get(action, []):
+		if int(k) != 0:
+			names.append(key_name(int(k)))
+	if names.is_empty():
+		return "--"
+	return " / ".join(names) if both else names[0]
+
+
+func action_label(action: String) -> String:
+	for b in BINDABLE:
+		if b.size() == 2 and b[0] == action:
+			return b[1]
+	return action

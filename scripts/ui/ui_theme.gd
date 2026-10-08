@@ -83,8 +83,9 @@ static func get_theme() -> Theme:
 	t.default_font_size = 22
 	# buttons: text only, accent bar on hover/focus
 	var bn := flat(Color(0, 0, 0, 0), Color(0, 0, 0, 0), [4, 0, 0, 0], [22, 6, 22, 6])
-	var bh := flat(Color(1, 1, 1, 0.06), ACCENT, [4, 0, 0, 0], [30, 6, 22, 6])
-	var bp := flat(Color(1.0, 0.6, 0.18, 0.16), ACCENT, [4, 0, 0, 0], [30, 6, 22, 6])
+	# hover slides the text right but keeps the same total padding, so the button never changes width
+	var bh := flat(Color(1, 1, 1, 0.06), ACCENT, [4, 0, 0, 0], [30, 6, 14, 6])
+	var bp := flat(Color(1.0, 0.6, 0.18, 0.16), ACCENT, [4, 0, 0, 0], [30, 6, 14, 6])
 	t.set_stylebox("normal", "Button", bn)
 	t.set_stylebox("hover", "Button", bh)
 	t.set_stylebox("focus", "Button", bh)

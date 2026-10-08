@@ -13,6 +13,7 @@ A flight game built in Godot 4, starring a fully animated Su-27 Flanker.
 - Close, far and cockpit cameras with free look
 
 ## Controls
+All keys can be rebound in Settings → Controls (two keys per action; conflicts move the key, Delete clears). The HUD key caps and hints always show your current bindings. Defaults:
 | Key | Action |
 |---|---|
 | Shift / Ctrl | Throttle up / down (above 85% = afterburner) |

@@ -16,6 +16,7 @@ var _thr_txt: Label
 var _status: Label
 var _status_box: PanelContainer
 var _hints: Control
+var _hint_grid: GridContainer
 var _fps: Label
 
 
@@ -42,7 +43,9 @@ func _ready() -> void:
 	_apply_settings()
 
 
-func _on_setting(_k: String, _v) -> void:
+func _on_setting(k: String, _v) -> void:
+	if k == "bindings":
+		_refresh_keys()
 	_apply_settings()
 
 
@@ -111,12 +114,18 @@ func _build_panel() -> void:
 	chips.columns = 3
 	chips.add_theme_constant_override("h_separation", 6)
 	chips.add_theme_constant_override("v_separation", 6)
-	for k in [["GEAR", "G"], ["FLAPS", "F"], ["A/BRK", "B"], ["BRAKE", "SPACE"], ["A/THR", "Z"], ["LIGHTS", "L"], ["RADAR", "R"], ["CANOPY", "C"], ["VIEW", "V"], ["NO LIMIT", "K"]]:
-		chips.add_child(_chip_node(k[0], k[1]))
+	for k in CHIP_ACTIONS:
+		chips.add_child(_chip_node(k[0], Settings.key_label(k[1])))
 	col.add_child(chips)
 
 
 const PANEL_W := 392.0
+const CHIP_ACTIONS := [["GEAR", "toggle_gear"], ["FLAPS", "toggle_flaps"], ["A/BRK", "toggle_airbrake"], ["BRAKE", "wheel_brake"],
+	["A/THR", "toggle_autothrottle"], ["LIGHTS", "toggle_lights"], ["RADAR", "toggle_radar"], ["CANOPY", "toggle_canopy"],
+	["VIEW", "toggle_view"], ["NO LIMIT", "toggle_limiter"]]
+const HINT_ACTIONS := [[["pitch_down", "pitch_up"], "Pitch"], [["roll_left", "roll_right"], "Roll"], [["yaw_left", "yaw_right"], "Yaw"],
+	[["throttle_up", "throttle_down"], "Throttle"], [["toggle_gear"], "Gear"], [["toggle_flaps"], "Flaps"], [["toggle_airbrake"], "Airbrake"],
+	[["wheel_brake"], "Brakes"], [["toggle_view"], "View"], [["practice_approach"], "Approach"], [["toggle_hud"], "Flight data"]]
 
 
 ## A readout with fixed-width slots: value (right-aligned, tabular digits) and unit.
@@ -199,15 +208,31 @@ func _build_hints() -> void:
 	for s in ["left", "right", "top", "bottom"]:
 		m.add_theme_constant_override("margin_" + s, 14)
 	_hints.add_child(m)
-	var g := GridContainer.new()
-	g.columns = 4
-	g.add_theme_constant_override("h_separation", 14)
-	g.add_theme_constant_override("v_separation", 0)
-	m.add_child(g)
-	for b in [["W/S", "Pitch"], ["A/D", "Roll"], ["Q/E", "Yaw"], ["SHIFT/CTRL", "Throttle"], ["G", "Gear"], ["F", "Flaps"],
-			["B", "Airbrake"], ["SPACE", "Brakes"], ["V", "View"], ["P", "Approach"], ["H", "Flight data"], ["ESC", "Menu"]]:
-		g.add_child(T.label(b[0], 17, "Bold", T.ACCENT, 1))
-		g.add_child(T.label(b[1], 17, "Medium", T.TEXT))
+	_hint_grid = GridContainer.new()
+	_hint_grid.columns = 4
+	_hint_grid.add_theme_constant_override("h_separation", 14)
+	_hint_grid.add_theme_constant_override("v_separation", 0)
+	m.add_child(_hint_grid)
+	_fill_hints()
+
+
+func _fill_hints() -> void:
+	for c in _hint_grid.get_children():
+		c.queue_free()
+	for b in HINT_ACTIONS:
+		var keys := []
+		for act in b[0]:
+			keys.append(Settings.key_label(act))
+		_hint_grid.add_child(T.label("/".join(keys), 17, "Bold", T.ACCENT, 1))
+		_hint_grid.add_child(T.label(b[1], 17, "Medium", T.TEXT))
+	_hint_grid.add_child(T.label("ESC", 17, "Bold", T.ACCENT, 1))
+	_hint_grid.add_child(T.label("Menu", 17, "Medium", T.TEXT))
+
+
+func _refresh_keys() -> void:
+	for k in CHIP_ACTIONS:
+		(_chips[k[0]][2] as Label).text = Settings.key_label(k[1])
+	_fill_hints()
 
 
 func _show(key: String, pair: Array) -> void:

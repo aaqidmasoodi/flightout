@@ -73,6 +73,19 @@ func play_ui(n: String, vol_db: float = 0.0) -> void:
 
 
 func _on_node_added(node: Node) -> void:
+	if node is TabBar:
+		var tb := node as TabBar
+		tb.tab_hovered.connect(func(_i): play_ui("ui_hover", -6.0))
+		tb.tab_clicked.connect(func(_i): play_ui("ui_click"))
+		return
+	if node is Slider:
+		var sl := node as Slider
+		sl.mouse_entered.connect(func(): play_ui("ui_hover", -8.0))
+		sl.drag_ended.connect(func(_c): play_ui("ui_click", -4.0))
+		return
+	if node is PopupMenu:
+		(node as PopupMenu).id_focused.connect(func(_i): play_ui("ui_hover", -8.0))
+		return
 	if node is BaseButton:
 		var b := node as BaseButton
 		b.mouse_entered.connect(func():

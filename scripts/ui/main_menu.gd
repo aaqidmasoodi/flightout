@@ -156,7 +156,7 @@ func _on_play() -> void:
 	_bar.custom_minimum_size = Vector2(0, 6)
 	_bar.show_percentage = false
 	col.add_child(_bar)
-	col.add_child(T.label("Tip: press P in flight for a practice approach, and Esc for this menu.", 19, "Medium", Color(1, 1, 1, 0.4)))
+	col.add_child(T.label("Tip: press %s in flight for a practice approach, and Esc for the menu." % Settings.key_label("practice_approach"), 19, "Medium", Color(1, 1, 1, 0.4)))
 	_loading.modulate.a = 0.0
 	create_tween().tween_property(_loading, "modulate:a", 1.0, 0.35)
 

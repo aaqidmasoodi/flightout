@@ -6,6 +6,9 @@ signal closed
 const T = preload("res://scripts/ui/ui_theme.gd")
 var _tabs: TabContainer
 var _refreshers: Array[Callable] = []
+var _key_buttons: Array = []       # [button, action, slot]
+var _capture = null                # [button, action, slot] while waiting for a key
+var _bind_note: Label
 
 
 func _ready() -> void:
@@ -58,18 +61,30 @@ func _ready() -> void:
 	p = _page("CONTROLS")
 	_toggle(p, "Invert pitch", "controls/invert_pitch")
 	_slider(p, "Mouse look sensitivity", "controls/mouse_sensitivity", 0.3, 2.0, 0.05, func(v): return "%.2fx" % v)
-	var keys_head := T.label("KEY BINDINGS", 20, "Bold", T.DIM, 3)
-	keys_head.add_theme_constant_override("line_spacing", 0)
-	p.add_child(_gap(10))
-	p.add_child(keys_head)
-	var settings_node = get_node("/root/Settings")
-	for b in settings_node.BINDINGS:
-		var row := HBoxContainer.new()
-		var a := T.label(b[0], 21, "Medium", T.TEXT)
-		a.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(a)
-		row.add_child(T.label(b[1], 21, "Bold", T.ACCENT, 1))
-		p.add_child(row)
+	_bind_note = T.label("Click a key to change it.  Esc cancels, Delete clears.", 18, "Medium", T.DIM)
+	p.add_child(_gap(4))
+	p.add_child(_bind_note)
+	for entry in Settings.BINDABLE:
+		if entry.size() == 1:
+			p.add_child(_gap(8))
+			p.add_child(T.label(entry[0], 18, "Bold", T.DIM, 3))
+			continue
+		var row := _row(p, entry[1])
+		row.custom_minimum_size.y = 42
+		for slot in 2:
+			row.add_child(_key_button(entry[0], slot))
+	p.add_child(_gap(8))
+	p.add_child(T.label("FIXED", 18, "Bold", T.DIM, 3))
+	for f in Settings.FIXED_BINDINGS:
+		var row := _row(p, f[0])
+		row.custom_minimum_size.y = 40
+		var l := T.label(f[1], 18, "Bold", T.DIM, 1)
+		l.custom_minimum_size = Vector2(246, 0)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		row.add_child(l)
+	Settings.changed.connect(func(k, _v):
+		if k == "bindings":
+			_refresh_keys())
 
 	p = _page("WEATHER")
 	_choice(p, "Wind", "weather/wind", ["Calm", "Light  (10 kt)", "Moderate  (20 kt)", "Strong  (30 kt)"], [0, 1, 2, 3])
@@ -101,6 +116,59 @@ func _ready() -> void:
 	back.call_deferred("grab_focus")
 
 
+func _input(event: InputEvent) -> void:
+	if _capture == null or not (event is InputEventKey) or not event.pressed or event.echo:
+		return
+	get_viewport().set_input_as_handled()
+	var ek := event as InputEventKey
+	var code := ek.physical_keycode if ek.physical_keycode != KEY_NONE else ek.keycode
+	var cap: Array = _capture
+	_capture = null
+	if code == KEY_ESCAPE:
+		_bind_note.text = "Cancelled."
+	elif code == KEY_DELETE:
+		Settings.clear_key(cap[1], cap[2])
+		_bind_note.text = "Cleared %s." % Settings.action_label(cap[1])
+	else:
+		var from := Settings.bind_key(cap[1], cap[2], code)
+		_bind_note.text = "%s → %s" % [Settings.key_name(code), Settings.action_label(cap[1])] + ("   (moved from %s)" % from if from != "" else "")
+	_refresh_keys()
+
+
+func _key_button(action: String, slot: int) -> Button:
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(120, 34)
+	b.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.add_theme_font_override("font", T.spaced("Bold", 1))
+	b.add_theme_font_size_override("font_size", 18)
+	b.add_theme_stylebox_override("normal", T.flat(Color(1, 1, 1, 0.05), Color(1, 1, 1, 0.16), [1, 1, 1, 2], [10, 2, 10, 2]))
+	b.add_theme_stylebox_override("hover", T.flat(Color(1, 1, 1, 0.09), T.ACCENT, [1, 1, 1, 2], [10, 2, 10, 2]))
+	b.add_theme_stylebox_override("focus", T.flat(Color(1, 1, 1, 0.09), T.ACCENT, [1, 1, 1, 2], [10, 2, 10, 2]))
+	b.add_theme_stylebox_override("pressed", T.flat(Color(1.0, 0.6, 0.18, 0.2), T.ACCENT, [1, 1, 1, 2], [10, 2, 10, 2]))
+	b.pressed.connect(func():
+		_refresh_keys()
+		_capture = [b, action, slot]
+		b.text = "PRESS A KEY"
+		b.add_theme_color_override("font_color", T.ACCENT)
+		_bind_note.text = "Press a key for %s  (Esc cancels, Delete clears)" % Settings.action_label(action))
+	_key_buttons.append([b, action, slot])
+	_set_key_text(b, action, slot)
+	return b
+
+
+func _set_key_text(b: Button, action: String, slot: int) -> void:
+	var arr: Array = Settings.bindings.get(action, [])
+	var code: int = int(arr[slot]) if slot < arr.size() else 0
+	b.text = Settings.key_name(code) if code != 0 else "--"
+	b.add_theme_color_override("font_color", T.TEXT if code != 0 else T.DIM)
+
+
+func _refresh_keys() -> void:
+	for e in _key_buttons:
+		if is_instance_valid(e[0]):
+			_set_key_text(e[0], e[1], e[2])
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if visible and event.is_action_pressed("pause_menu"):
 		get_viewport().set_input_as_handled()
@@ -116,10 +184,15 @@ func _page(title: String) -> VBoxContainer:
 	sc.name = title
 	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_tabs.add_child(sc)
+	var gutter := MarginContainer.new()
+	gutter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	gutter.add_theme_constant_override("margin_right", 34)
+	gutter.add_theme_constant_override("margin_bottom", 8)
+	sc.add_child(gutter)
 	var v := VBoxContainer.new()
 	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	v.add_theme_constant_override("separation", 12)
-	sc.add_child(v)
+	gutter.add_child(v)
 	return v
 
 
@@ -185,3 +258,4 @@ func _on_reset() -> void:
 	Settings.reset_defaults()
 	for r in _refreshers:
 		r.call()
+	_refresh_keys()
