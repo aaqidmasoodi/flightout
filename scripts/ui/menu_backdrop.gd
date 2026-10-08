@@ -26,6 +26,10 @@ var _dist := 0.0
 var _surfaces := {}
 var _beacons: Array[StandardMaterial3D] = []
 var _strobes: Array[StandardMaterial3D] = []
+var _xf_view: SubViewport
+var _xf_cam: Camera3D
+var _xf_rect: TextureRect
+const CROSSFADE := 1.6       # seconds the outgoing and incoming shots overlap
 var _snd := {}
 
 
@@ -43,6 +47,28 @@ func _ready() -> void:
 	attrs.dof_blur_amount = 0.06
 	_cam.attributes = attrs
 	add_child(_cam)
+	# crossfade: the incoming shot renders into its own view (same world) and fades in over the outgoing one
+	_xf_view = SubViewport.new()
+	_xf_view.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	_xf_view.msaa_3d = get_viewport().msaa_3d
+	add_child(_xf_view)
+	_xf_cam = Camera3D.new()
+	_xf_cam.far = _cam.far
+	_xf_cam.attributes = attrs
+	_xf_view.add_child(_xf_cam)
+	_xf_cam.current = true
+	var layer := CanvasLayer.new()
+	layer.layer = -5                     # above the 3D scene, below the menu
+	add_child(layer)
+	_xf_rect = TextureRect.new()
+	_xf_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_xf_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_xf_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_xf_rect.stretch_mode = TextureRect.STRETCH_SCALE
+	_xf_rect.texture = _xf_view.get_texture()
+	_xf_rect.modulate.a = 0.0
+	_xf_rect.visible = false
+	layer.add_child(_xf_rect)
 
 
 func _build_audio() -> void:
@@ -199,15 +225,34 @@ func _process(delta: float) -> void:
 	for s in _strobes:
 		s.emission_energy_multiplier = 18.0 if (sp < 0.05 or (sp > 0.14 and sp < 0.19)) else 0.0
 
-	# cinematic shots: slow dolly inside each shot, hard cut between them
-	var idx := int(_t / SHOT_TIME) % SHOTS.size()
-	var u := fmod(_t, SHOT_TIME) / SHOT_TIME
-	var shot: Array = SHOTS[idx]
-	var e := u * u * (3.0 - 2.0 * u)
+	# cinematic shots with crossfades: shot k starts every (SHOT_TIME - CROSSFADE) seconds, so during the last
+	# CROSSFADE seconds of a shot the next one is already rolling in its own view and dissolves in on top.
+	var period := SHOT_TIME - CROSSFADE
+	var k := int(_t / period)
+	var tau := _t - k * period
+	if tau < CROSSFADE and k > 0:
+		_apply_shot(_cam, k - 1, tau + period)
+		_apply_shot(_xf_cam, k, tau)
+		var vs := get_viewport().get_visible_rect().size
+		if Vector2(_xf_view.size) != vs:
+			_xf_view.size = Vector2i(vs)
+		_xf_view.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		var a := tau / CROSSFADE
+		_xf_rect.visible = true
+		_xf_rect.modulate.a = a * a * (3.0 - 2.0 * a)
+	else:
+		_apply_shot(_cam, k, tau)
+		_xf_rect.visible = false
+		_xf_view.render_target_update_mode = SubViewport.UPDATE_DISABLED
+
+
+## Places a camera on shot `idx` at `local` seconds into it: a steady dolly between the shot's two offsets.
+func _apply_shot(cam: Camera3D, idx: int, local: float) -> void:
+	var shot: Array = SHOTS[idx % SHOTS.size()]
+	var u := clampf(local / SHOT_TIME, 0.0, 1.0)
+	var e := lerpf(u, u * u * (3.0 - 2.0 * u), 0.25)     # near-constant motion, so dissolves never stall
 	var off: Vector3 = (shot[0] as Vector3).lerp(shot[1], e)
-	var look: Vector3 = _jet.position + (shot[2] as Vector3)
-	_cam.fov = shot[3]
-	_cam.global_position = _jet.position + off
-	_cam.look_at(look, Vector3.UP)
-	# keep the jet to the right of the menu panel
-	_cam.h_offset = -off.length() * 0.085
+	cam.fov = shot[3]
+	cam.global_position = _jet.position + off
+	cam.look_at(_jet.position + (shot[2] as Vector3), Vector3.UP)
+	cam.h_offset = -off.length() * 0.085     # keep the jet to the right of the menu panel
