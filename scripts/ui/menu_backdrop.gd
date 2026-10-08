@@ -127,18 +127,29 @@ func _build_environment() -> void:
 	sun.directional_shadow_max_distance = 120.0
 	add_child(sun)
 
-	var ocean := MeshInstance3D.new()
+	# ground below the cloud deck: land, coastlines and sea in sunset haze
+	var ground := MeshInstance3D.new()
 	var pm := PlaneMesh.new(); pm.size = Vector2(90000.0, 90000.0)
-	ocean.mesh = pm
-	_ocean_mat = preload("res://scripts/world/surface_materials.gd").ocean()
-	ocean.material_override = _ocean_mat
-	ocean.position.y = -1600.0
-	add_child(ocean)
+	ground.mesh = pm
+	const SM = preload("res://scripts/world/surface_materials.gd")
+	var tex: Dictionary = SM.terrain_textures()
+	_ocean_mat = ShaderMaterial.new()
+	_ocean_mat.shader = preload("res://shaders/menu_ground.gdshader")
+	_ocean_mat.set_shader_parameter("macro_tex", tex.macro)
+	_ocean_mat.set_shader_parameter("detail_tex", tex.detail)
+	_ocean_mat.set_shader_parameter("wave_nrm", tex.normal)
+	_ocean_mat.set_shader_parameter("haze_color", Color(0.86, 0.62, 0.48))
+	_ocean_mat.set_shader_parameter("haze_density", 0.00007)
+	ground.material_override = _ocean_mat
+	ground.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	ground.position.y = -1300.0
+	add_child(ground)
 
 	var clouds := MeshInstance3D.new()
 	var cm := PlaneMesh.new(); cm.size = Vector2(70000.0, 70000.0)
 	clouds.mesh = cm
 	_cloud_mat = preload("res://scripts/world/surface_materials.gd").clouds()
+	_cloud_mat.set_shader_parameter("coverage", 0.55)      # broken deck: the ground shows through the gaps
 	clouds.material_override = _cloud_mat
 	clouds.position.y = -420.0
 	clouds.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF

@@ -41,9 +41,12 @@ func load_world() -> void:
 		sea_level = float(meta.get("sea_level_m", sea_level))
 		spawns = meta.get("spawns", [])
 	_h = FileAccess.get_file_as_bytes(HEIGHTMAP_PATH).to_float32_array()
-	loaded = _h.size() == resolution * resolution
+	loaded = _h.size() == resolution * resolution and meta is Dictionary
 	if not loaded:
-		push_error("WorldData: heightmap missing or wrong size (%d values)" % _h.size())
+		# Never fly in a broken world (flat ground, no forests, falling through runways): stop with a clear message.
+		push_error("WorldData: world data missing or damaged (meta %s, %d height values)" % [str(meta is Dictionary), _h.size()])
+		OS.alert("FlightOut's world data is missing or damaged.\n\nPlease reinstall FlightOut.", "FlightOut")
+		get_tree().quit(1)
 
 
 ## Terrain elevation (can be below sea level), bilinear between grid samples.
@@ -137,7 +140,29 @@ func _ready() -> void:
 	apply_weather()
 
 
+## Online, the server owns weather and time; local weather settings are ignored until you leave.
+var server_weather := false
+
+func set_server_weather(w: Dictionary) -> void:
+	server_weather = true
+	atmosphere.wind_from_deg = w.wind_from
+	atmosphere.wind_speed = w.wind_speed
+	atmosphere.turbulence = w.turbulence
+	atmosphere.seed = w.seed
+	time_of_day = w.time
+	time_scale = w.time_scale
+	conditions = clampi(w.conditions, 0, 5)
+
+
+func clear_server_weather() -> void:
+	if server_weather:
+		server_weather = false
+		apply_weather()
+
+
 func apply_weather() -> void:
+	if server_weather:
+		return
 	atmosphere.wind_speed = WIND_SPEEDS[clampi(int(Settings.get_value("weather/wind")), 0, 3)]
 	atmosphere.wind_from_deg = float(Settings.get_value("weather/wind_from"))
 	atmosphere.turbulence = TURBULENCE[clampi(int(Settings.get_value("weather/turbulence")), 0, 3)]

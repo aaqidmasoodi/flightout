@@ -1,0 +1,116 @@
+; FlightOut Windows installer (Inno Setup 6)
+; Build: run installer\build_windows.bat, or ISCC installer\flightout.iss after exporting the game to build\windows.
+
+#define AppName "FlightOut"
+#define AppVersion "0.1.0"
+#define AppVersionLabel "0.1.0 Alpha"
+#define AppPublisher "Yembera"
+#define AppURL "https://flightout.app"
+#define AppExe "FlightOut.exe"
+
+[Setup]
+AppId={{6E3F2A4C-8B1D-4C7E-9A52-F10D7B3E8C21}
+AppName={#AppName}
+AppVersion={#AppVersion}
+AppVerName={#AppName} {#AppVersionLabel}
+AppPublisher={#AppPublisher}
+AppPublisherURL={#AppURL}
+AppSupportURL={#AppURL}
+AppUpdatesURL={#AppURL}
+AppCopyright=Copyright (C) 2026 Yembera
+DefaultDirName={autopf}\Yembera\FlightOut
+DefaultGroupName={#AppName}
+DisableProgramGroupPage=yes
+LicenseFile=license.txt
+OutputDir=..\build\installer
+OutputBaseFilename=FlightOut-{#AppVersion}-Windows-Setup
+SetupIconFile=art\flightout.ico
+UninstallDisplayIcon={app}\{#AppExe}
+UninstallDisplayName={#AppName}
+WizardStyle=modern __STYLE__
+WizardSizePercent=110
+WizardImageFile=art\wizard_100.bmp,art\wizard_125.bmp,art\wizard_150.bmp,art\wizard_175.bmp,art\wizard_200.bmp,art\wizard_250.bmp
+WizardSmallImageFile=art\small_100.bmp,art\small_125.bmp,art\small_150.bmp,art\small_175.bmp,art\small_200.bmp,art\small_250.bmp
+WizardImageStretch=yes
+DisableWelcomePage=no
+WizardImageBackColor=$0B0907
+Compression=lzma2/ultra64
+SolidCompression=yes
+LZMAUseSeparateProcess=yes
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+MinVersion=10.0.17763
+CloseApplications=yes
+RestartApplications=no
+ShowLanguageDialog=no
+VersionInfoVersion={#AppVersion}.0
+VersionInfoCompany={#AppPublisher}
+VersionInfoDescription={#AppName} Setup
+VersionInfoProductName={#AppName}
+VersionInfoProductVersion={#AppVersion}
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Messages]
+WelcomeLabel1=Welcome to [name]
+WelcomeLabel2=This will install [name/ver] on your computer.%n%nFlightOut is a multiplayer combat flight simulator by Yembera. Strap in: the Su-27 is fuelled and waiting on the runway.%n%nIt is recommended that you close all other applications before continuing.
+FinishedHeadingLabel=Ready for take-off
+FinishedLabel=[name] has been installed on your computer.%n%nLaunch it from the Start menu or the desktop shortcut. Press Esc in flight for settings and controls.
+ClickFinish=Click Finish to exit Setup.
+
+[CustomMessages]
+LaunchGame=Launch FlightOut now
+GraphicsNote=Graphics check
+
+[Tasks]
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+
+[Files]
+Source: "..\build\windows\FlightOut.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\build\windows\FlightOut.pck"; DestDir: "{app}"; Flags: ignoreversion
+Source: "license.txt"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
+Source: "THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
+
+[Icons]
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Comment: "Multiplayer combat flight simulator"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon; Comment: "Multiplayer combat flight simulator"
+
+[Run]
+Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchGame}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+const
+  SettingsDir = '{userappdata}\Godot\app_userdata\Yembera FlightOut';
+
+// FlightOut renders with Vulkan, falling back to Direct3D 12. Warn (without blocking) if neither looks available.
+function InitializeSetup(): Boolean;
+var
+  HasVulkan, HasD3D12: Boolean;
+begin
+  HasVulkan := FileExists(ExpandConstant('{sys}\vulkan-1.dll'));
+  HasD3D12 := FileExists(ExpandConstant('{sys}\d3d12.dll'));
+  if (not HasVulkan) and (not HasD3D12) then
+    MsgBox('FlightOut needs a graphics card with Vulkan or DirectX 12 support.' + #13#10#13#10 +
+      'Setup could not find either on this computer. Updating your graphics driver usually fixes this. ' +
+      'You can continue installing now and update the driver afterwards.', mbInformation, MB_OK);
+  Result := True;
+end;
+
+// Offer to remove saved settings and key bindings on uninstall.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Dir: String;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    Dir := ExpandConstant(SettingsDir);
+    // Only ever on an interactive uninstall, and only on an explicit Yes. Silent uninstalls (updates, scripts)
+    // always keep the player's settings.
+    if DirExists(Dir) and (not UninstallSilent) then
+      if SuppressibleMsgBox('Also remove your FlightOut settings and key bindings?', mbConfirmation, MB_YESNO or MB_DEFBUTTON2, IDNO) = IDYES then
+        DelTree(Dir, True, True, True);
+  end;
+end;
