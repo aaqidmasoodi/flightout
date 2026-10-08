@@ -4,17 +4,18 @@ extends Node3D
 
 const Look = preload("res://scripts/core/look.gd")
 const SKY_SHADER := preload("res://shaders/sky.gdshader")
-const DECK_ALT := 1900.0      # overcast stratus deck altitude
 const LATITUDE := 34.0        # degrees north (a Kashmir-like latitude)
 const DECLINATION := 10.0     # spring sun
 # conditions: cloud coverage, overcast grey, haze, fog density, light dimming, rain
+# per condition: cirrus/sky (cov, over, haze), fog density, light dimming, rain, and the volumetric cloud layer
+# (base and top altitude, coverage, density, stratus shape 0..1, darkness)
 const CONDITIONS := [
-	{"cov": 0.04, "over": 0.0, "haze": 0.0, "fog": 0.000016, "dim": 1.0, "rain": 0.0},
-	{"cov": 0.34, "over": 0.0, "haze": 0.0, "fog": 0.000022, "dim": 0.96, "rain": 0.0},
-	{"cov": 0.62, "over": 0.25, "haze": 0.05, "fog": 0.00003, "dim": 0.72, "rain": 0.0},
-	{"cov": 0.93, "over": 0.82, "haze": 0.2, "fog": 0.00005, "dim": 0.32, "rain": 0.0},
-	{"cov": 0.7, "over": 0.55, "haze": 0.85, "fog": 0.00042, "dim": 0.45, "rain": 0.0},
-	{"cov": 1.0, "over": 0.95, "haze": 0.45, "fog": 0.00016, "dim": 0.22, "rain": 1.0},
+	{"cov": 0.04, "over": 0.0, "haze": 0.0, "fog": 0.000022, "dim": 1.0, "rain": 0.0, "base": 1400.0, "top": 2900.0, "ccov": 0.0, "cdens": 1.0, "strat": 0.0, "cdark": 0.0},
+	{"cov": 0.34, "over": 0.0, "haze": 0.0, "fog": 0.000026, "dim": 0.96, "rain": 0.0, "base": 1400.0, "top": 2900.0, "ccov": 0.42, "cdens": 1.0, "strat": 0.0, "cdark": 0.0},
+	{"cov": 0.62, "over": 0.25, "haze": 0.05, "fog": 0.00003, "dim": 0.72, "rain": 0.0, "base": 1300.0, "top": 3200.0, "ccov": 0.62, "cdens": 1.1, "strat": 0.15, "cdark": 0.1},
+	{"cov": 0.93, "over": 0.82, "haze": 0.2, "fog": 0.00005, "dim": 0.32, "rain": 0.0, "base": 900.0, "top": 2400.0, "ccov": 0.82, "cdens": 1.0, "strat": 0.55, "cdark": 0.25},
+	{"cov": 0.7, "over": 0.55, "haze": 0.85, "fog": 0.00042, "dim": 0.45, "rain": 0.0, "base": 120.0, "top": 900.0, "ccov": 0.85, "cdens": 0.55, "strat": 1.0, "cdark": 0.1},
+	{"cov": 1.0, "over": 0.95, "haze": 0.45, "fog": 0.00016, "dim": 0.22, "rain": 1.0, "base": 600.0, "top": 3800.0, "ccov": 1.0, "cdens": 1.35, "strat": 0.6, "cdark": 0.55},
 ]
 
 var env: Environment
@@ -27,8 +28,10 @@ var _w := {}
 var _rain: GPUParticles3D
 var _rain_snd: AudioStreamPlayer
 var _drift := Vector2.ZERO
-var clouds: Node3D
+var clouds                      # VolumetricClouds compositor effect
 var _cloud_drift := Vector2.ZERO
+var _volumes := {}
+var _volumes_ready := false
 
 
 func _ready() -> void:
@@ -52,7 +55,12 @@ func _ready() -> void:
 	env.fog_aerial_perspective = 0.55
 	var we := WorldEnvironment.new()
 	we.environment = env
+	clouds = preload("res://scripts/world/volumetric_clouds.gd").new()
+	var comp := Compositor.new()
+	comp.compositor_effects = [clouds]
+	we.compositor = comp
 	add_child(we)
+	_volumes = preload("res://scripts/world/surface_materials.gd").cloud_volumes()
 	Look.apply(env)
 	Settings.changed.connect(func(k, _v):
 		if String(k).begins_with("display/"):
@@ -69,9 +77,6 @@ func _ready() -> void:
 	moon.shadow_enabled = false
 	add_child(moon)
 	_build_rain()
-	clouds = preload("res://scripts/world/cloud_field.gd").new()
-	clouds.name = "Clouds"
-	add_child(clouds)
 	var c: Dictionary = CONDITIONS[WorldData.conditions]
 	_w = c.duplicate()
 
@@ -141,7 +146,8 @@ func _process(delta: float) -> void:
 	var cam_now := get_viewport().get_camera_3d()
 	if cam_now:
 		cam_y = cam_now.global_position.y
-	var below := 1.0 - smoothstep(DECK_ALT - 80.0, DECK_ALT + 250.0, cam_y) * clampf((float(_w.over) - 0.5) * 2.0, 0.0, 1.0)
+	var deck_top := float(_w.top)
+	var below := 1.0 - smoothstep(deck_top - 50.0, deck_top + 300.0, cam_y) * clampf((float(_w.over) - 0.5) * 2.0, 0.0, 1.0)
 	var over: float = float(_w.over) * below
 	var dim: float = lerpf(1.0, float(_w.dim), below)
 
@@ -180,56 +186,61 @@ func _process(delta: float) -> void:
 	env.fog_height = 260.0
 	env.fog_height_density = 0.004 * float(_w.haze) * (1.0 if WorldData.conditions == 4 else 0.3)
 
-	# ---- 3D clouds ----
+	# ---- volumetric clouds ----
+	if not _volumes_ready:
+		_volumes_ready = true
+		for vk in _volumes:
+			var tx = _volumes[vk]
+			if tx is NoiseTexture3D and (tx as NoiseTexture3D).get_data().is_empty():
+				_volumes_ready = false
+			elif tx is NoiseTexture2D and (tx as NoiseTexture2D).get_image() == null:
+				_volumes_ready = false
+		if _volumes_ready:
+			clouds.set_noise_textures(_volumes)
 	var wind_hi: Vector3 = WorldData.atmosphere.wind_at(Vector3(0.0, 2500.0, 0.0), 0.0, 0.0)
 	var flow := Vector2(wind_hi.x, wind_hi.z)
 	if flow.length() < 3.0:
 		flow = Vector2(3.0, 1.2)
-	_cloud_drift += flow * delta
-	var cam0 := get_viewport().get_camera_3d()
-	var inside := 0.0
-	if cam0:
-		inside = clouds.inside_amount(cam0.global_position, float(_w.cov), _cloud_drift)
-	var light_dir := sd if e > -4.0 else md
-	var key_col := Color(1, 1, 1).lerp(warm, 0.55 + 0.45 * golden).lerp(Color(0.6, 0.68, 0.85), night)
-	var lit_c := Color(0.06, 0.07, 0.1).lerp(Color(0.95, 0.96, 0.98), day)
-	lit_c = lit_c.lerp(Color(1.0, 0.86, 0.66), golden * 0.55)
-	var shade_c := Color(0.03, 0.035, 0.05).lerp(Color(0.46, 0.5, 0.58), day)
-	shade_c = shade_c.lerp(Color(0.3, 0.29, 0.38), golden * 0.75).lerp(Color(0.24, 0.26, 0.3), float(_w.rain) * day)
-	var pm: ShaderMaterial = clouds.puff_mat
-	pm.set_shader_parameter("sun_dir", light_dir)
-	pm.set_shader_parameter("sun_color", key_col)
-	pm.set_shader_parameter("lit_color", lit_c * lerpf(1.0, 0.75, over))
-	pm.set_shader_parameter("shade_color", shade_c)
-	pm.set_shader_parameter("darkness", clampf(over * 0.55 + float(_w.rain) * 0.3, 0.0, 0.85))
-	pm.set_shader_parameter("drift", _cloud_drift)
-	pm.set_shader_parameter("coverage", _w.cov)
-	pm.set_shader_parameter("far_fade", lerpf(30000.0, 9000.0, float(_w.haze)))
-	var dm: ShaderMaterial = clouds.deck_mat
-	dm.set_shader_parameter("amount", clampf((float(_w.over) - 0.3) * 2.6, 0.0, 1.0))
-	dm.set_shader_parameter("top_color", lit_c * key_col * 0.85)
-	dm.set_shader_parameter("bottom_color", shade_c * lerpf(1.0, 0.7, float(_w.rain)))
-	dm.set_shader_parameter("drift", _cloud_drift)
-	# inside a cloud: whiteout
-	env.fog_density = maxf(env.fog_density, inside * 0.02)
-	env.fog_light_color = env.fog_light_color.lerp(Color(lit_c.r, lit_c.g, lit_c.b) * 0.9, inside)
+	_cloud_drift -= flow * delta          # noise space moves against the wind, so the clouds travel with it
+	var use_sun := e > -4.0
+	clouds.sun_dir = sd if use_sun else md
+	clouds.light_intensity = (sun.light_energy if use_sun else moon.light_energy * 1.6) * 2.9
+	clouds.sun_color = sun.light_color if use_sun else moon.light_color
+	clouds.ambient = 0.62
+	var sky_top := Color(0.012, 0.016, 0.03).lerp(Color(0.42, 0.52, 0.68), day).lerp(Color(0.4, 0.38, 0.48), golden * 0.5)
+	clouds.amb_top = sky_top.lerp(Color(0.36, 0.38, 0.42) * maxf(day, 0.05), over)
+	clouds.amb_bottom = Color(0.01, 0.012, 0.015).lerp(Color(0.2, 0.22, 0.2), day).lerp(Color(0.32, 0.22, 0.16), golden * 0.4)
+	clouds.fog_color = env.fog_light_color
+	clouds.fog_density = env.fog_density
+	clouds.base = float(_w.base)
+	clouds.top = float(_w.top)
+	clouds.coverage = float(_w.ccov)
+	clouds.density = float(_w.cdens)
+	clouds.stratus = float(_w.strat)
+	clouds.darkness = float(_w.cdark)
+	clouds.wind = _cloud_drift
+
+	# ---- water haze ----
+	for om in preload("res://scripts/world/surface_materials.gd").ocean_materials:
+		(om as ShaderMaterial).set_shader_parameter("haze_color", env.fog_light_color)
+		(om as ShaderMaterial).set_shader_parameter("haze_density", maxf(env.fog_density * 1.9, 0.00003))
 
 	# ---- sky shader (high cirrus and the sky itself) ----
 	_drift += Vector2(0.004, 0.0025) * delta * (1.0 + WorldData.atmosphere.wind_speed * 0.1)
 	sky_mat.set_shader_parameter("sun_dir", sd)
 	sky_mat.set_shader_parameter("moon_dir", md)
 	sky_mat.set_shader_parameter("sun_elev", e)
-	sky_mat.set_shader_parameter("cloud_coverage", clampf(float(_w.cov) * 0.55 + over * 0.45, 0.0, 1.0))
+	sky_mat.set_shader_parameter("cloud_coverage", clampf(float(_w.cov) * 0.3 + over * 0.2, 0.0, 1.0))   # high cirrus only
 	sky_mat.set_shader_parameter("overcast", over)
 	sky_mat.set_shader_parameter("haze", float(_w.haze) * below)
 	sky_mat.set_shader_parameter("cloud_drift", _drift)
 
 	# ---- rain: particles around the camera, slanted by the wind, plus its sound ----
 	var rain: float = _w.rain
-	var cam := cam0
+	var cam: Camera3D = cam_now
 	if cam:
 		_rain.global_position = cam.global_position + Vector3(0.0, 30.0, 0.0)
-	rain *= 1.0 - smoothstep(DECK_ALT - 200.0, DECK_ALT, cam_y)     # no rain above the cloud base
+	rain *= 1.0 - smoothstep(float(_w.base), float(_w.base) + 300.0, cam_y)     # no rain above the cloud base
 	_rain.emitting = rain > 0.05
 	_rain.amount_ratio = clampf(rain, 0.0, 1.0)
 	var wv: Vector3 = WorldData.atmosphere.wind_at(_rain.global_position, 0.0, 0.0) if WorldData.atmosphere else Vector3.ZERO

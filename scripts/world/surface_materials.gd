@@ -5,6 +5,8 @@ extends RefCounted
 const OCEAN_SHADER := preload("res://shaders/ocean.gdshader")
 const CLOUD_SHADER := preload("res://shaders/menu_clouds.gdshader")
 
+## Every ocean material created, so the sky system can update their distance haze.
+static var ocean_materials: Array = []
 static var _normal_large: NoiseTexture2D
 static var _normal_small: NoiseTexture2D
 static var _clouds: NoiseTexture2D
@@ -39,6 +41,7 @@ static func ocean() -> ShaderMaterial:
 	m.shader = OCEAN_SHADER
 	m.set_shader_parameter("normal_large", _normal_large)
 	m.set_shader_parameter("normal_small", _normal_small)
+	ocean_materials.append(m)
 	return m
 
 
@@ -98,3 +101,49 @@ static func terrain_textures() -> Dictionary:
 			"normal": _noise(512, 0.03, 4, 613, true, 6.0),
 		}
 	return _terrain_tex
+
+
+static var _volumes := {}
+
+
+## 3D noise volumes for the raymarched clouds (Perlin, Worley, fine Worley detail) and a 2D weather map.
+## Generated on worker threads; returns textures that may still be generating.
+static func cloud_volumes() -> Dictionary:
+	if not _volumes.is_empty():
+		return _volumes
+	var perlin := FastNoiseLite.new()
+	perlin.noise_type = FastNoiseLite.TYPE_PERLIN
+	perlin.frequency = 0.045
+	perlin.fractal_type = FastNoiseLite.FRACTAL_FBM
+	perlin.fractal_octaves = 4
+	var worley := FastNoiseLite.new()
+	worley.noise_type = FastNoiseLite.TYPE_CELLULAR
+	worley.cellular_return_type = FastNoiseLite.RETURN_DISTANCE
+	worley.frequency = 0.06
+	worley.fractal_type = FastNoiseLite.FRACTAL_FBM
+	worley.fractal_octaves = 3
+	var detail := FastNoiseLite.new()
+	detail.noise_type = FastNoiseLite.TYPE_CELLULAR
+	detail.cellular_return_type = FastNoiseLite.RETURN_DISTANCE
+	detail.frequency = 0.14
+	detail.fractal_type = FastNoiseLite.FRACTAL_FBM
+	detail.fractal_octaves = 2
+	_volumes = {
+		"perlin": _volume(96, perlin, false),
+		"worley": _volume(96, worley, true),
+		"detail": _volume(32, detail, true),
+		"weather": _noise(512, 0.009, 4, 808, false),
+	}
+	return _volumes
+
+
+static func _volume(size: int, n: FastNoiseLite, invert: bool) -> NoiseTexture3D:
+	var t := NoiseTexture3D.new()
+	t.width = size
+	t.height = size
+	t.depth = size
+	t.seamless = true
+	t.invert = invert
+	t.normalize = true
+	t.noise = n
+	return t

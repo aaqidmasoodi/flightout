@@ -10,6 +10,8 @@ uniform vec2 scroll = vec2(0.0);   // world-space offset (menu backdrop fakes fo
 uniform sampler2D normal_large : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D normal_small : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D depth_tex : hint_depth_texture, filter_linear_mipmap;
+uniform vec3 haze_color : source_color = vec3(0.6, 0.7, 0.8);
+uniform float haze_density = 0.0;     // set by the sky system; 0 = use only the scene fog
 
 varying vec3 wpos;
 
@@ -44,4 +46,9 @@ void fragment() {
 	ALPHA = mix(0.6, 0.97, thickness);
 	ROUGHNESS = mix(0.07, 0.24, smoothstep(300.0, 9000.0, dist));
 	SPECULAR = 0.5;
+	// distant water converges to the horizon haze, like the land does
+	if (haze_density > 0.0) {
+		float haze = 1.0 - exp(-haze_density * dist);
+		FOG = vec4(haze_color, clamp(haze, 0.0, 0.97));
+	}
 }

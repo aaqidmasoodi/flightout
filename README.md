@@ -42,7 +42,8 @@ All keys can be rebound in Settings → Controls (two keys per action; conflicts
 Settings → Weather: time presets (night, dawn, morning, noon, afternoon, sunset, dusk), a time slider, time flow (frozen, real time, fast), and sky conditions (clear, scattered, broken, overcast, fog, rain), plus wind and turbulence. Settings → Display → Image: brightness, contrast, gamma, saturation.
 - `scripts/world/sky_system.gd`: sun and moon positions from the hour at a 34°N latitude; light colour and strength, ambient light, fog, exposure and glow keyed to the sun's elevation; weather eases in smoothly; above an overcast deck the sky is clear; rain particles and rain sound.
 - `shaders/sky.gdshader`: sky colour by sun elevation, sun disc and glow, moon, stars, high cirrus.
-- `scripts/world/cloud_field.gd`: 3D cumulus in two layers (about 1,500 m and 3,600 m) built from about 11,500 soft, hand-lit puffs in one draw call; seeded layout, coverage reveals clouds in a fixed order; fly-through whiteout; overcast stratus deck.
+- Distant water fades into the horizon haze like the land.
+- `scripts/world/volumetric_clouds.gd` + `shaders/clouds_march.glsl` / `clouds_composite.glsl`: raymarched volumetric clouds as a compositor effect. Half-resolution GPU raymarch through a 3D Perlin-Worley density field with detail erosion and a 2D weather map, depth-aware against terrain and aircraft, Beer-Lambert self-shadowing toward the sun, powder and forward scattering, sky and ground ambient, distance haze; then upsampled and composited over the HDR scene. Each condition sets the layer base and top, coverage, density and cumulus/stratus shape; flying through a cloud is soft mist. About 1 to 2 ms of GPU time.
 
 ## Terrain and forests
 - One forest density map is computed from the heightmap: dense woods on hillsides, groves in the lowlands, a treeline near 1,100 m, nothing on steep rock or beaches. The terrain shader paints forest floor from the same map.

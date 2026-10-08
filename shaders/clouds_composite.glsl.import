@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://b5jr3hoduvi26"
+path="res://.godot/imported/clouds_composite.glsl-af3be923dff6e6e711f9ade94e036965.res"
+
+[deps]
+
+source_file="res://shaders/clouds_composite.glsl"
+dest_files=["res://.godot/imported/clouds_composite.glsl-af3be923dff6e6e711f9ade94e036965.res"]
+
+[params]
+
