@@ -114,7 +114,24 @@ func _unhandled_input(event: InputEvent) -> void:
 			_pitch = clampf(_pitch, deg_to_rad(-80.0), deg_to_rad(80.0))
 
 
+var _origin_moved := false
+
+
+## The floating origin moved during this physics tick (scripts/main.gd).
+func origin_moved() -> void:
+	_origin_moved = true
+
+
 func _physics_process(delta: float) -> void:
+	_physics_step(delta)
+	if _origin_moved:
+		# only now, with the camera placed in the new frame: interpolating from its old-frame position would draw
+		# one frame from part way back across the shift
+		_origin_moved = false
+		reset_physics_interpolation()
+
+
+func _physics_step(delta: float) -> void:
 	if target == null:
 		return
 	far = clampf(maxf(base_far, (global_position.y - maxf(WorldData.sea_level, 0.0)) * 32.0), base_far, 450000.0)

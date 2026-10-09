@@ -50,7 +50,7 @@ var _has_history := false
 var _noise := {}
 var _frame := 0
 var _prev_wind := Vector2.ZERO
-var _shifted := false              # the floating origin moved: last frame's history is in the old frame
+var _shift := Vector3.ZERO         # the floating origin moved by this since the last frame: history is in the old frame
 var _prev_shape := Vector4.ZERO   # coverage, density, base, top last frame: weather changing -> trust history less
 var _layer := RID()             # full resolution: r = transmittance, g = cloud front distance (km)
 var _layer_size := Vector2i.ZERO
@@ -69,10 +69,11 @@ func _init() -> void:
 	RenderingServer.call_on_render_thread(_setup)
 
 
-## The clouds are sampled at map positions (scene + origin), so they stay put when the origin moves; only the
-## reprojection history (kept in scene space) is dropped for a frame.
-func _on_origin_shifted(_delta: Vector3) -> void:
-	_shifted = true
+## The clouds are sampled at map positions (scene + origin), so they stay put when the origin moves. The reprojection
+## history is kept: last frame's view-projection is moved into the new frame instead (dropping the history used to
+## show a frame of raw, noisy clouds at every shift).
+func _on_origin_shifted(delta: Vector3) -> void:
+	_shift += delta
 
 
 func _setup() -> void:
@@ -234,6 +235,10 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	var vp := proj * Projection(cam_xf.affine_inverse())
 	_frame += 1
 	_cur = 1 - _cur
+	if _shift != Vector3.ZERO:
+		# a point at new scene position p was at p + shift in last frame's scene
+		_prev_vp = _prev_vp * Projection(Transform3D(Basis(), _shift))
+		_shift = Vector3.ZERO
 	var data := PackedFloat32Array()
 	data.append_array(_proj_floats(proj.inverse()))
 	data.append_array(_xform_floats(cam_xf))
@@ -256,8 +261,7 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	var shape := Vector4(coverage, density, base * 0.001, top * 0.001)
 	var hw := history_weight if shape.distance_to(_prev_shape) < 0.0002 else minf(history_weight, 0.7)
 	_prev_shape = shape
-	data.append_array([1.0 if _has_history and not _shifted else 0.0, hw, height_variation, WorldData.origin_z])   # w: origin z
-	_shifted = false
+	data.append_array([1.0 if _has_history else 0.0, hw, height_variation, WorldData.origin_z])   # w: origin z
 	data.append_array([hor_toward.r, hor_toward.g, hor_toward.b, sun_xz.x])
 	data.append_array([hor_away.r, hor_away.g, hor_away.b, sun_xz.y])
 	var bytes := data.to_byte_array()

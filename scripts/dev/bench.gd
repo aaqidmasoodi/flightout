@@ -10,6 +10,10 @@ extends Node
 ##   --bench-flight             fly a real sortie instead of straight and level: autopilot turns both ways, a 180,
 ##                              aileron rolls, a hard banked pull, inverted flight, and the camera cycling through
 ##                              every view (cockpit looking around, chase, far, orbit swinging round the jet)
+##   --bench-speed=m/s          start speed (default 230)
+##   --bench-diff=<dir>         watch the picture for flicker: every frame is compared with the one before (small
+##                              grey copies); a sudden change much larger than the motion around it is logged as the
+##                              "diff" column and both frames are saved to <dir> for a look
 ##   --bench-frames=<file.csv>  also log every frame (hunting hitches): frame time, render times, terrain and forest
 ##                              work, tiles loaded and evicted, near-tree rebuilds, floating origin shifts
 
@@ -21,6 +25,13 @@ var _out := ""
 var _len := 90.0
 var _pan := false
 var _flight := false
+var _speed := 230.0
+var _diff_dir := ""
+var _diff := 0.0
+var _diff_hist: Array[float] = []
+var _prev_small := PackedByteArray()
+var _prev_img: Image
+var _saved := 0
 var _phase := ""
 var _held: Array[String] = []
 var _t := -1.0
@@ -64,6 +75,11 @@ func _ready() -> void:
 			_pan = true
 		elif arg == "--bench-flight":
 			_flight = true
+		elif arg.begins_with("--bench-speed="):
+			_speed = arg.trim_prefix("--bench-speed=").to_float()
+		elif arg.begins_with("--bench-diff="):
+			_diff_dir = arg.trim_prefix("--bench-diff=")
+			DirAccess.make_dir_recursive_absolute(_diff_dir)
 		elif arg.begins_with("--bench-frames="):
 			_frames_out = arg.trim_prefix("--bench-frames=")
 	WorldData.origin_shifted.connect(func(_d): _shifts += 1)
@@ -72,7 +88,7 @@ func _ready() -> void:
 	_vp = get_viewport().get_viewport_rid()
 	RenderingServer.viewport_set_measure_render_time(_vp, true)
 	await get_tree().create_timer(0.5).timeout
-	aircraft.air_start(Transform3D(Basis(Vector3.UP, deg_to_rad(-hdg)), at), 230.0)
+	aircraft.air_start(Transform3D(Basis(Vector3.UP, deg_to_rad(-hdg)), at), _speed)
 	cam.view = view
 	cam._first = true
 	cam._yaw = 0.0
@@ -94,6 +110,8 @@ func _process(delta: float) -> void:
 	_cpu += RenderingServer.viewport_get_measured_render_time_cpu(_vp) + RenderingServer.get_frame_setup_time_cpu()
 	_gpu += RenderingServer.viewport_get_measured_render_time_gpu(_vp)
 	var draws := RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)
+	if _diff_dir != "":
+		_watch()
 	if _frames_out != "":
 		_log_frame(delta, draws)
 	_draw_max = maxi(_draw_max, draws)
@@ -207,6 +225,38 @@ func _fly() -> void:
 		print("BENCH phase %s at %.1f s  alt %.0f m  hdg %.0f" % [phase, _t, fm.world_pos().y, hdg])
 
 
+## Compares the last rendered frame with the one before it (192 x 108 grey). Saves both when the change jumps.
+func _watch() -> void:
+	var img := get_viewport().get_texture().get_image()
+	if img == null:
+		return
+	var mid := img.duplicate() as Image
+	mid.resize(480, 270, Image.INTERPOLATE_BILINEAR)
+	var small := mid.duplicate() as Image
+	small.resize(192, 108, Image.INTERPOLATE_BILINEAR)
+	small.convert(Image.FORMAT_L8)
+	var data := small.get_data()
+	_diff = 0.0
+	if _prev_small.size() == data.size():
+		var s := 0
+		for k in range(0, data.size()):
+			s += absi(data[k] - _prev_small[k])
+		_diff = float(s) / data.size()
+		var sorted := _diff_hist.duplicate()
+		sorted.sort()
+		var med: float = sorted[sorted.size() / 2] if not sorted.is_empty() else _diff
+		if _diff_hist.size() >= 20 and _diff > med * 2.2 + 1.0 and _saved < 60:
+			_saved += 1
+			_prev_img.save_png(_diff_dir.path_join("flick_%06.2f_a.png" % _t))
+			mid.save_png(_diff_dir.path_join("flick_%06.2f_b.png" % _t))
+			print("BENCH flicker at %.2f s: change %.1f (usual %.1f)" % [_t, _diff, med])
+		_diff_hist.append(_diff)
+		if _diff_hist.size() > 30:
+			_diff_hist.remove_at(0)
+	_prev_small = data
+	_prev_img = mid
+
+
 var _pipe_prev := -1
 
 ## Render pipelines compiled since the last frame (a new shader / state combination being built mid-flight).
@@ -229,7 +279,7 @@ func _ap_heading(ap, fm, h: float) -> void:
 
 func _log_frame(delta: float, draws: int) -> void:
 	if _frame_rows.is_empty():
-		_frame_rows.append("t,dt_ms,cpu_ms,gpu_ms,draws,terrain_us,drawn,loads,evict,evict_split,forest_us,near_us,near_rebuild,cells_planted,origin_shift,cam_yaw,view,bank,process_ms,physics_ms,pipelines")
+		_frame_rows.append("t,dt_ms,cpu_ms,gpu_ms,draws,terrain_us,drawn,loads,evict,evict_split,forest_us,near_us,near_rebuild,cells_planted,origin_shift,cam_yaw,view,bank,process_ms,physics_ms,pipelines,diff")
 	var st: Dictionary = world.streamer.stats if world.streamer else {}
 	var cf: Node = world.get_node_or_null("CoverForest")
 	var fs: Dictionary = cf.stats if cf else {}
@@ -239,11 +289,11 @@ func _log_frame(delta: float, draws: int) -> void:
 	for k in cur:
 		d[k] = cur[k] - int(_prev.get(k, cur[k]))
 	_prev = cur
-	_frame_rows.append("%.3f,%.2f,%.2f,%.2f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%d,%.0f,%.2f,%.2f,%d" % [_t, delta * 1000.0,
+	_frame_rows.append("%.3f,%.2f,%.2f,%.2f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%d,%.0f,%.2f,%.2f,%d,%.2f" % [_t, delta * 1000.0,
 		RenderingServer.viewport_get_measured_render_time_cpu(_vp) + RenderingServer.get_frame_setup_time_cpu(),
 		RenderingServer.viewport_get_measured_render_time_gpu(_vp), draws, int(st.get("proc_us", 0)), int(st.get("drawn", 0)),
 		d.loads, d.evict, d.evict_split, int(fs.get("proc_us", 0)), int(fs.get("near_us", 0)), d.near_n, d.plant_n, d.shifts, cam._yaw, cam.view, rad_to_deg(asin(clampf(aircraft.fm.rot.x.y, -1.0, 1.0))),
-		Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0, _pipelines()])
+		Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0, _pipelines(), _diff])
 
 
 func _finish() -> void:

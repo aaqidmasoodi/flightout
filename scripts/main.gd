@@ -25,7 +25,7 @@ var _world: Node3D
 func _on_origin_shifted(_delta: Vector3) -> void:
 	_world.position = Vector3(-WorldData.origin_x, 0.0, -WorldData.origin_z)
 	if _cam:
-		_cam.reset_physics_interpolation()
+		_cam.origin_moved()     # resets its interpolation once it has placed itself in the new frame
 	if _origin_shots != "":
 		_save_shift_frames()
 

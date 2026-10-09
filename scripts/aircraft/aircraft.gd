@@ -301,8 +301,10 @@ func _physics_process(delta: float) -> void:
 	var k := exp(-CORRECTION_RATE * delta)
 	_vis_pos *= k
 	_vis_rot = Quaternion.IDENTITY.slerp(_vis_rot, k)
-	_follow_origin()
+	var shifted := _follow_origin()
 	global_transform = Transform3D(Basis(_vis_rot) * fm.rot, _scene_pos() + _vis_pos)
+	if shifted:
+		reset_physics_interpolation()
 	_process_events()
 	_sync_switches()
 	_update_surfaces()
@@ -347,12 +349,17 @@ func rewind(state: Array, ack: int, cmds: Dictionary, states: Dictionary, now: i
 
 
 ## The scene origin follows our own jet's simulation frame (floating origin, see scripts/world/world_data.gd).
-func _follow_origin() -> void:
+## Moves the scene origin with our jet. True when it moved: the caller must place the jet in the new frame and only
+## then reset its physics interpolation (resetting first would keep the old-frame position as the "previous" one,
+## and the next rendered frame would draw the jet, and the camera following it, part way back across the shift
+## while the terrain is already in the new frame: a one-frame jump of the whole world every 2 km).
+func _follow_origin() -> bool:
 	if is_remote or not is_in_group("player_aircraft"):
-		return
+		return false
 	if fm.ox != WorldData.origin_x or fm.oz != WorldData.origin_z:
 		WorldData.set_origin(fm.ox, fm.oz)
-		reset_physics_interpolation()
+		return true
+	return false
 
 
 ## Where the simulation puts the jet in the scene (equal to fm.pos while the scene follows this jet).
