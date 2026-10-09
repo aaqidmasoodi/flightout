@@ -32,3 +32,5 @@ id_ed25519*
 .env
 .env.*
 __pycache__/
+# large-map terrain data: built by tools/build_kashmir.py, shipped separately (not in git)
+assets/kashmir/

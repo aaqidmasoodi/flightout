@@ -37,6 +37,11 @@ var tiles: Array[Vector2i] = []    # per level: (nx, nz)
 var material: ShaderMaterial
 
 var _files: Array = []             # per level FileAccess
+var _index: Array = []             # per level PackedByteArray of uint64 tile offsets (compressed format)
+var _zstd := false
+var _lc_files: Array = []          # land cover tiles (optional): same layout, one byte per sample
+var _lc_index: Array = []
+var _lc_tex: Texture2DArray
 var _minmax: Array = []            # per level PackedByteArray (u16 min, max per tile)
 var _tex: Texture2DArray
 var _layer_of := {}                # tile key -> layer
@@ -77,6 +82,12 @@ func setup(path: String) -> bool:
 		tiles.append(Vector2i(int(t[0]), int(t[1])))
 		_files.append(FileAccess.open(dir.path_join("h%d.bin" % lv), FileAccess.READ))
 		_minmax.append(FileAccess.get_file_as_bytes(dir.path_join("mm%d.bin" % lv)))
+		_index.append(FileAccess.get_file_as_bytes(dir.path_join("i%d.bin" % lv)) if m.get("compression", "") == "zstd" else PackedByteArray())
+	_zstd = m.get("compression", "") == "zstd"
+	if FileAccess.file_exists(dir.path_join("lc0.bin")):
+		for lv in levels:
+			_lc_files.append(FileAccess.open(dir.path_join("lc%d.bin" % lv), FileAccess.READ))
+			_lc_index.append(FileAccess.get_file_as_bytes(dir.path_join("lci%d.bin" % lv)))
 	# texture pool
 	var blank := Image.create(ts, ts, false, Image.FORMAT_R16)
 	var imgs: Array[Image] = []
@@ -84,6 +95,13 @@ func setup(path: String) -> bool:
 		imgs.append(blank)
 	_tex = Texture2DArray.new()
 	_tex.create_from_images(imgs)
+	if not _lc_files.is_empty():
+		var blank_lc := Image.create(ts, ts, false, Image.FORMAT_R8)
+		var lcs: Array[Image] = []
+		for i in POOL:
+			lcs.append(blank_lc)
+		_lc_tex = Texture2DArray.new()
+		_lc_tex.create_from_images(lcs)
 	_key_of.resize(POOL)
 	_key_of.fill(-1)
 	_used.resize(POOL)
@@ -92,6 +110,9 @@ func setup(path: String) -> bool:
 	material = ShaderMaterial.new()
 	material.shader = SHADER
 	material.set_shader_parameter("heights", _tex)
+	material.set_shader_parameter("has_cover", _lc_tex != null)
+	if _lc_tex:
+		material.set_shader_parameter("cover", _lc_tex)
 	material.set_shader_parameter("tile_quads", float(tile_quads))
 	material.set_shader_parameter("tile_samples", float(ts))
 	material.set_shader_parameter("h_scale", h_scale * 65535.0)
@@ -232,9 +253,31 @@ func _load(key: int) -> bool:
 		return false
 	var f: FileAccess = _files[level]
 	var bytes := ts * ts * 2
-	f.seek((j * tiles[level].x + i) * bytes)
-	var img := Image.create_from_data(ts, ts, false, Image.FORMAT_R16, f.get_buffer(bytes))
+	var n := j * tiles[level].x + i
+	var data: PackedByteArray
+	if _zstd:
+		var idx: PackedByteArray = _index[level]
+		var a := idx.decode_u64(n * 8)
+		var b := idx.decode_u64(n * 8 + 8)
+		f.seek(a)
+		data = f.get_buffer(b - a).decompress(bytes, FileAccess.COMPRESSION_ZSTD)
+	else:
+		f.seek(n * bytes)
+		data = f.get_buffer(bytes)
+	if data.size() != bytes:
+		push_error("Terrain: tile %d/%d/%d damaged" % [level, i, j])
+		return false
+	var img := Image.create_from_data(ts, ts, false, Image.FORMAT_R16, data)
 	RenderingServer.texture_2d_update(_tex.get_rid(), img, layer)
+	if _lc_tex:
+		var li: PackedByteArray = _lc_index[level]
+		var la := li.decode_u64(n * 8)
+		var lb := li.decode_u64(n * 8 + 8)
+		var lf: FileAccess = _lc_files[level]
+		lf.seek(la)
+		var lc := lf.get_buffer(lb - la).decompress(ts * ts, FileAccess.COMPRESSION_ZSTD)
+		if lc.size() == ts * ts:
+			RenderingServer.texture_2d_update(_lc_tex.get_rid(), Image.create_from_data(ts, ts, false, Image.FORMAT_R8, lc), layer)
 	if _key_of[layer] >= 0:
 		_layer_of.erase(_key_of[layer])
 	_key_of[layer] = key

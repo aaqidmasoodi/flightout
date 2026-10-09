@@ -123,6 +123,12 @@ func _start_transform() -> Transform3D:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--alt="):   # development: start high (metres), to check the sky and cloud deck
 			t.origin.y = arg.trim_prefix("--alt=").to_float()
+		elif arg.begins_with("--start-pos="):   # development: start over map position x,z (metres)
+			var xz := arg.trim_prefix("--start-pos=").split(",")
+			t.origin.x = xz[0].to_float()
+			t.origin.z = xz[1].to_float()
+		elif arg.begins_with("--start-hdg="):
+			t.basis = Basis(Vector3.UP, deg_to_rad(-arg.trim_prefix("--start-hdg=").to_float()))
 	return t
 
 

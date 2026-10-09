@@ -58,10 +58,18 @@ func _ready() -> void:
 		mi.material_override = tmat
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	# streamed terrain (scripts/world/terrain_streamer.gd) replaces the fixed terrain meshes when its tiles exist
-	if TerrainStreamer.available(TERRAIN_DIR) and not "--old-terrain" in OS.get_cmdline_user_args():
+	var tdir := TERRAIN_DIR
+	var other_map := false
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--terrain="):       # development: another terrain (the island's scenery is hidden)
+			tdir = arg.trim_prefix("--terrain=")
+			other_map = true
+	if TerrainStreamer.available(tdir) and not "--old-terrain" in OS.get_cmdline_user_args():
 		var ts: Node3D = TerrainStreamer.new()
 		ts.name = "Terrain"
-		if ts.setup(TERRAIN_DIR):
+		if other_map:
+			_hide_island.call_deferred()
+		if ts.setup(tdir):
 			for k in ["forest_density", "macro_tex", "detail_tex", "detail_nrm", "map_half_extent"]:
 				ts.material.set_shader_parameter(k, tmat.get_shader_parameter(k))
 			preload("res://scripts/world/surface_materials.gd").ocean_materials.append(ts.material)
@@ -78,6 +86,12 @@ func _ready() -> void:
 	add_child(lights)
 	Settings.changed.connect(func(_k, _v): _apply_settings())
 	_apply_settings()
+
+
+func _hide_island() -> void:
+	for c in get_children():
+		if c is Node3D:
+			(c as Node3D).visible = false
 
 
 func _apply_settings() -> void:
