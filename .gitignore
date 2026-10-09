@@ -31,3 +31,4 @@ id_ed25519*
 *_oci.pub
 .env
 .env.*
+__pycache__/
