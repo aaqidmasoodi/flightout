@@ -748,6 +748,14 @@ def hud():
         path.append((PR - RC + RC * math.cos(a), RC + RC * math.sin(a)))
     path += [(PR, RC), (PR, PT)]
     bar_sweep("HUD_Yoke", top @ Matrix.Translation((0, 0, -0.0045)), path, 0.014, 0.016, M["paint_dark"])
+    # cooling-air inlet on the outside of the left prong, near its top: the HUD's air hose plugs in here
+    # (the hose itself is built with the canopy, after the dashboard has been moved into place)
+    global HUD_HOSE_FIT
+    fit_l = top @ Matrix.Translation((-PR - 0.012, PT - 0.018, -0.0045))     # local -x = the pilot's left
+    fit_dir = (top.to_3x3() @ Vector((-1.0, 0.45, 0.0))).normalized()
+    HUD_HOSE_FIT = (fit_l.translation.copy(), fit_dir)
+    lathe("HUD_HoseInlet", Matrix.Translation(fit_l.translation - fit_dir * 0.014) @ fit_dir.to_track_quat("Z", "Y").to_matrix().to_4x4(),
+          [(0.0, 0.0), (0.012, 0.0), (0.012, 0.004), (0.0205, 0.006), (0.0205, 0.02), (0.0175, 0.022), (0.0, 0.022)], 20, M["steel_dark"])
     for sx in (-1, 1):
         lathe("HUD_ProngCap", top @ Matrix.Translation((sx * PR, PT, -0.0045)) @ Matrix.Rotation(math.radians(-90), 4, "X"),
               [(0.0, 0.0), (0.0075, 0.0), (0.0075, 0.003), (0.004, 0.007), (0.0, 0.008)], 16, M["paint_dark"])
@@ -1366,17 +1374,56 @@ def canopy():
     if "COMPASS_FACE" in CELLS:
         quad_uv("Compass_Face", fm_, 0.04, 0.024, [CELLS["COMPASS_FACE"][0] + 76, CELLS["COMPASS_FACE"][1] + 186, 360, 140], M["gauge"], z=0.0)
     lathe("Compass_Rim", fm_, [(0.024, -0.002), (0.028, 0.0), (0.028, 0.004), (0.022, 0.004)], 24, M["steel_dark"])
-    # --- demist / ventilation hose curling from the coaming up the left of the HUD (as on the real jet)
-    # kept outboard of the HUD frame uprights (x 0.122) so it never sits behind the combiner glass
-    a = Vector((0.15, -6.48, 0.99)); b = Vector((0.205, -6.43, 1.13))
-    pts = []
-    for k in range(13):
-        t = k / 12
-        q = a.lerp(b, t) + Vector((0.035 * math.sin(math.pi * t), 0.02 * math.sin(math.pi * t), 0.03 * math.sin(math.pi * t)))
-        pts.append(q)
-    for k in range(12):
-        L = (pts[k + 1] - pts[k]).length
-        lathe("DemistHose", between(pts[k], pts[k + 1]), [(0.0, 0.0), (0.024, 0.0), (0.028, -L * 0.5), (0.024, -L), (0.0, -L)], 14, M["rubber"])
+    # --- HUD cooling-air hose (as on the real Su-27): a corrugated rubber hose that comes up from under the
+    # glareshield on the left, arcs up beside the HUD and plugs into the inlet on the outside of the HUD's left
+    # post (hud(): HUD_HOSE_FIT). Built as one swept tube, with a collar where it leaves the deck.
+    u = -0.27
+    back = pp(u, panel_top(u) + 0.045, -0.04) + Vector((0.0, DY, PANEL_DZ))
+    front = Vector((back.x * 0.86, -6.78 + DY, 0.70 + 0.04 * (1 - (back.x / 0.47) ** 2) + PANEL_DZ))
+    base = back.lerp(front, 0.1)
+    deck_n = (front - back).normalized().cross(Vector((1.0, 0.0, 0.0)))
+    if deck_n.z < 0:
+        deck_n = -deck_n
+    fit, fdir = HUD_HOSE_FIT
+    fit = fit + Vector((0.0, DY, PANEL_DZ))
+    c0 = base + deck_n * 0.02
+    c1 = c0 + deck_n * 0.16 + Vector((0.0, 0.03, 0.0))
+    c3 = fit + fdir * 0.006
+    c2 = c3 + fdir * 0.11
+    def bez(t):
+        a = 1 - t
+        return c0 * a ** 3 + c1 * 3 * a * a * t + c2 * 3 * a * t * t + c3 * t ** 3
+    N, SEG = 160, 16
+    pts = [bez(k / N) for k in range(N + 1)]
+    bm = bmesh.new()
+    rings = []
+    tan = (pts[1] - pts[0]).normalized()
+    ref = Vector((1.0, 0.0, 0.0)) if abs(tan.x) < 0.9 else Vector((0.0, 1.0, 0.0))
+    nrm = tan.cross(ref).normalized()
+    arc = 0.0
+    for k, q in enumerate(pts):
+        if k > 0:
+            arc += (q - pts[k - 1]).length
+            t2 = (pts[min(k + 1, N)] - pts[k - 1]).normalized()
+            nrm = (nrm - t2 * nrm.dot(t2)).normalized()       # parallel transport: the tube never twists
+            tan = t2
+        bin_ = tan.cross(nrm)
+        rr = 0.0155 + 0.0022 * (0.5 + 0.5 * math.cos(2 * math.pi * arc / 0.011))   # convolutions every 11 mm
+        rings.append([bm.verts.new(q + (nrm * math.cos(2 * math.pi * j / SEG) + bin_ * math.sin(2 * math.pi * j / SEG)) * rr) for j in range(SEG)])
+    for r0, r1 in zip(rings, rings[1:]):
+        for j in range(SEG):
+            bm.faces.new((r0[j], r0[(j + 1) % SEG], r1[(j + 1) % SEG], r1[j]))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm_to("HUD_AirHose", bm, M["rubber"], smooth=True)
+    # collar where the hose leaves the deck, with its fixing screws
+    col_m = Matrix.Translation(base) @ deck_n.to_track_quat("Z", "Y").to_matrix().to_4x4()
+    lathe("HUD_AirHoseCollar", col_m, [(0.0, 0.0), (0.03, 0.0), (0.03, 0.006), (0.021, 0.012), (0.02, 0.026), (0.0, 0.026)], 24, M["steel_dark"])
+    for k in range(3):
+        a_ = 2 * math.pi * k / 3 + 0.5
+        screw("HUD_AirHoseScrew", col_m @ Matrix.Translation((0.026 * math.cos(a_), 0.026 * math.sin(a_), 0.006)), 0.0022)
+    # hose clamp band at the HUD end
+    lathe("HUD_AirHoseClamp", Matrix.Translation(c3 + fdir * 0.012) @ fdir.to_track_quat("Z", "Y").to_matrix().to_4x4(),
+          [(0.0, -0.004), (0.0195, -0.004), (0.0195, 0.004), (0.0, 0.004)], 20, M["steel_dark"])
 
 # ------------------------------------------------------------------ pilot (ZSh-7 helmet, KM-34 mask, suit, G-suit, gloves, boots)
 M["suit"] = mat("CP_Suit", (0.16, 0.17, 0.11), 0.85)        # olive flight coverall
