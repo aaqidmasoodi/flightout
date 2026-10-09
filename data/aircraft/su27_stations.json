@@ -1,0 +1,199 @@
+{
+ "aircraft": "su27",
+ "stations": [
+  {
+   "id": 1,
+   "name": "L WINGTIP",
+   "pylon": "tip",
+   "allowed": [
+    "R-73"
+   ],
+   "axis": [
+    7.42,
+    4.0,
+    -0.51
+   ]
+  },
+  {
+   "id": 2,
+   "name": "L OUTER WING",
+   "pylon": "p72",
+   "allowed": [
+    "R-73"
+   ],
+   "axis": [
+    5.55,
+    3.55,
+    -0.5935
+   ]
+  },
+  {
+   "id": 3,
+   "name": "L INNER WING",
+   "pylon": "apu",
+   "allowed": [
+    "R-27ER",
+    "R-27R",
+    "R-27ET",
+    "R-27T",
+    "R-77"
+   ],
+   "axis": [
+    3.95,
+    2.25,
+    -0.6837
+   ]
+  },
+  {
+   "id": 4,
+   "name": "L INTAKE",
+   "pylon": "aku",
+   "allowed": [
+    "R-27ET",
+    "R-27T",
+    "R-27ER",
+    "R-27R",
+    "R-77"
+   ],
+   "axis": [
+    1.25,
+    -1.9,
+    -1.4475
+   ]
+  },
+  {
+   "id": 5,
+   "name": "CENTRE FWD",
+   "pylon": "aku",
+   "allowed": [
+    "R-27ER",
+    "R-27R",
+    "R-77"
+   ],
+   "axis": [
+    0.0,
+    -2.45,
+    -1.0856
+   ]
+  },
+  {
+   "id": 6,
+   "name": "CENTRE AFT",
+   "pylon": "aku",
+   "allowed": [
+    "R-27ER",
+    "R-27R",
+    "R-77"
+   ],
+   "axis": [
+    0.0,
+    2.65,
+    -0.7975
+   ]
+  },
+  {
+   "id": 7,
+   "name": "R INTAKE",
+   "pylon": "aku",
+   "allowed": [
+    "R-27ET",
+    "R-27T",
+    "R-27ER",
+    "R-27R",
+    "R-77"
+   ],
+   "axis": [
+    -1.25,
+    -1.9,
+    -1.4475
+   ]
+  },
+  {
+   "id": 8,
+   "name": "R INNER WING",
+   "pylon": "apu",
+   "allowed": [
+    "R-27ER",
+    "R-27R",
+    "R-27ET",
+    "R-27T",
+    "R-77"
+   ],
+   "axis": [
+    -3.95,
+    2.25,
+    -0.6838
+   ]
+  },
+  {
+   "id": 9,
+   "name": "R OUTER WING",
+   "pylon": "p72",
+   "allowed": [
+    "R-73"
+   ],
+   "axis": [
+    -5.55,
+    3.55,
+    -0.5932
+   ]
+  },
+  {
+   "id": 10,
+   "name": "R WINGTIP",
+   "pylon": "tip",
+   "allowed": [
+    "R-73"
+   ],
+   "axis": [
+    -7.42,
+    4.0,
+    -0.51
+   ]
+  }
+ ],
+ "stores": {
+  "R-73": {
+   "kind": "missile",
+   "guidance": "IR",
+   "fox": 2,
+   "mass": 105,
+   "range_km": 30
+  },
+  "R-27R": {
+   "kind": "missile",
+   "guidance": "SARH",
+   "fox": 1,
+   "mass": 253,
+   "range_km": 70
+  },
+  "R-27ER": {
+   "kind": "missile",
+   "guidance": "SARH",
+   "fox": 1,
+   "mass": 350,
+   "range_km": 110
+  },
+  "R-27T": {
+   "kind": "missile",
+   "guidance": "IR",
+   "fox": 2,
+   "mass": 245,
+   "range_km": 60
+  },
+  "R-27ET": {
+   "kind": "missile",
+   "guidance": "IR",
+   "fox": 2,
+   "mass": 343,
+   "range_km": 100
+  },
+  "R-77": {
+   "kind": "missile",
+   "guidance": "ARH",
+   "fox": 3,
+   "mass": 175,
+   "range_km": 80
+  }
+ }
+}

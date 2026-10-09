@@ -341,8 +341,8 @@ static func _differs(a: Array, s: Array) -> bool:
 		return true
 	if (a[3] as Vector3).distance_to(s[3]) > 0.01:
 		return true
-	for i in [6, 8, 10, 12, 26, 33, 44, 45, 46, 47]:
-		if a[i] != s[i]:
+	for i in [6, 8, 10, 12, 26, 33, 44, 45, 46, 47, 55]:   # 55: avionics master mode
+		if i < a.size() and i < s.size() and a[i] != s[i]:
 			return true
 	return absf(float(a[54][0]) - float(s[54][0])) > 0.5
 

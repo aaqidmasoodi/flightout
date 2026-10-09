@@ -15,7 +15,9 @@ const CORRECTION_RATE := 10.0        # 1/s: how fast a network correction is ble
 const TOGGLES := {"toggle_gear": FlightModel.T_GEAR, "toggle_flaps": FlightModel.T_FLAPS,
 	"toggle_airbrake": FlightModel.T_AIRBRAKE, "toggle_limiter": FlightModel.T_LIMITER,
 	"toggle_canopy": FlightModel.T_CANOPY, "toggle_radar": FlightModel.T_RADAR, "toggle_radome": FlightModel.T_RADOME,
-	"toggle_lights": FlightModel.T_LIGHTS, "reset": FlightModel.T_RESPAWN}
+	"toggle_lights": FlightModel.T_LIGHTS, "reset": FlightModel.T_RESPAWN,
+	"mode_nav": FlightModel.T_MODE_NAV, "mode_bvr": FlightModel.T_MODE_BVR, "mode_wvr": FlightModel.T_MODE_WVR,
+	"mode_gnd": FlightModel.T_MODE_GND}
 
 ## OFFLINE: single player. PREDICTED: your jet online (simulated here at once, corrected by the server).
 ## REMOTE: someone else's jet, drawn from interpolated server snapshots.
@@ -41,6 +43,7 @@ var radar_player: AnimationPlayer
 var radome_player: AnimationPlayer
 var radar_clip := "radar_scan"
 var fx: Node
+var cockpit: Node3D                  # full interior, own jet only (scripts/aircraft/cockpit.gd)
 
 # pilot / systems state that lives on the client
 var throttle := 0.0
@@ -50,9 +53,23 @@ var radar_on: bool:
 	get: return fm.radar_on
 var radome_open: bool:
 	get: return fm.radome_open
+## Avionics master mode (scripts/sim/avionics.gd Mode): drives HUD symbology, weapon release and warning inhibits.
+var master_mode: int:
+	get: return fm.master_mode
 var wheel_brakes := false
 var autothrottle := false
 var at_target := 0.0
+## onboard autopilot (scripts/sim/autopilot.gd): altitude, heading and level-flight modes, plus the take-off tail guard
+var autopilot = preload("res://scripts/sim/autopilot.gd").new()
+var stores = null                      # external stores on the stations (scripts/sim/stores.gd), null if none
+var sensors = null                     # radar and datalink picture for the displays (scripts/avionics/sensors.gd)
+var hud_shade := false                 # HUD sun shade deployed (cockpit only, not simulated)
+var cabin_lights := false              # cockpit night lighting: instrument backlighting and floodlights
+var torch := false                     # the pilot's handheld flashlight (cockpit only, follows the view)
+var _man_pitch := 0.0                  # the pilot's own (smoothed) stick, before the autopilot and tail guard
+var _man_roll := 0.0
+var _ap_hold := {}                     # autopilot target keys held: action -> seconds
+var _at_by_ap := false                 # the auto-throttle is currently driven by the autopilot's SPD mode
 var landing_event := ""
 var landing_event_time := -100.0
 var pitch_in := 0.0
@@ -144,6 +161,8 @@ var _vis_rot := Quaternion.IDENTITY
 var _remote_crashed := false
 var _dev_fly := "--dev-fly" in OS.get_cmdline_user_args()   # development: a simple autopilot for netcode tests
 var _dev_gear_done := false
+var _dev_ap_done := false
+var _dev_thr := 1.0
 
 
 func _ready() -> void:
@@ -154,6 +173,19 @@ func _ready() -> void:
 	model = load(spec.model_scene).instantiate()
 	model.rotation.y = PI  # glTF model front is +Z, Godot forward is -Z
 	add_child(model)
+	# cockpit lights start on at night (they can be switched any time)
+	var hour: float = float(WorldData.get("time_of_day")) if WorldData.get("time_of_day") != null else 12.0
+	cabin_lights = hour < 7.0 or hour > 19.0
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--cabin="):           # dev: force the cockpit lights for screenshots
+			cabin_lights = a.get_slice("=", 1) == "1"
+		elif a == "--torch":                     # dev: flashlight on for screenshots
+			torch = true
+	# pylons, launch rails and the loaded missiles (or tanks, bombs ... on aircraft that carry them)
+	var st = preload("res://scripts/sim/stores.gd").new()
+	if st.load_for(String(spec.id)):
+		st.attach(model)
+		stores = st
 
 	# One AnimationPlayer per system, each with ONLY its own clips. A player that knows other systems'
 	# tracks writes them too (e.g. the airbrake would snap the gear down), so libraries are never shared.
@@ -182,6 +214,11 @@ func _ready() -> void:
 	fx.name = "Effects"
 	add_child(fx)
 	fx.setup(self, model)
+	if not is_remote and Game.get("is_server") != true:
+		cockpit = preload("res://scripts/aircraft/cockpit.gd").new()
+		cockpit.name = "CockpitInterior"
+		model.add_child(cockpit)
+		cockpit.setup(self, model)
 	if is_remote:
 		add_to_group("remote_aircraft")
 		physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF   # placed every frame from snapshots
@@ -321,6 +358,9 @@ func _spawn_point() -> Transform3D:
 func _after_respawn() -> void:
 	throttle = 0.0
 	autothrottle = false
+	autopilot.disengage("")
+	_man_pitch = 0.0
+	_man_roll = 0.0
 	_vis_pos = Vector3.ZERO
 	_vis_rot = Quaternion.IDENTITY
 	_snap_gear_down()
@@ -354,35 +394,85 @@ func _process_events() -> void:
 func _read_inputs(delta: float) -> void:
 	if _dev_fly:
 		_dev_autopilot()
+		if "--dev-ap" in OS.get_cmdline_user_args():
+			# development: hand over to the real autopilot once airborne, then change altitude and heading
+			if not _dev_ap_done and altitude_agl > 250.0:
+				_dev_ap_done = true
+				autopilot.follow(fm)
+				autopilot.engage(fm)
+				autopilot.level = false
+				autopilot.turn("ALT", 16, true)
+				autopilot.turn("HDG", 90, true)
+				autopilot.set_value("SPD", 310.0, true)
+				autopilot.press("ALT", fm)
+				autopilot.press("HDG", fm)
+				autopilot.press("SPD", fm)
+				autopilot.turn("ALT", 5, true)            # a selected value left waiting for ENTER
+			if autopilot.engaged:
+				var ap: Array = autopilot.update(fm, spec, delta, 0.0, 0.0)
+				pitch_in = float(ap[0])
+				roll_in = float(ap[1])
+				_dev_thr = move_toward(_dev_thr, clampf(0.62 + (autopilot.spd_tgt - fm.ias) * 0.05, 0.0, spec.ab_threshold - 0.01), 0.6 * delta)
+				throttle = _dev_thr
+		pitch_in = autopilot.tail_guard(fm, spec, pitch_in)
 		return
 	if input_blocked:
-		pitch_in = move_toward(pitch_in, 0.0, delta * 4.0)
-		roll_in = move_toward(roll_in, 0.0, delta * 5.0)
+		# hands off the stick; an engaged autopilot keeps flying the jet
+		_man_pitch = 0.0
+		_man_roll = 0.0
+		var ap: Array = autopilot.update(fm, spec, delta, 0.0, 0.0)
+		pitch_in = move_toward(pitch_in, float(ap[0]), delta * 4.0)
+		roll_in = move_toward(roll_in, float(ap[1]), delta * 5.0)
 		yaw_in = move_toward(yaw_in, 0.0, delta * 3.0)
 		wheel_brakes = false
 		return
+	# typing a value into the autopilot panel: the keys belong to the panel, not to the jet's switches
+	var typing: bool = cockpit != null and cockpit.has_method("ap_editing") and cockpit.ap_editing()
 	for action in TOGGLES:
-		if Input.is_action_just_pressed(action):
+		if not typing and Input.is_action_just_pressed(action):
 			var sh: int = TOGGLES[action] * 2
 			_tog = (_tog & ~(3 << sh)) | ((((_tog >> sh) & 3) + 1) & 3) << sh
-	if Input.is_action_just_pressed("toggle_autothrottle") and not fm.wow and not fm.crashed:
-		autothrottle = not autothrottle
-		at_target = fm.ias
+	if not typing and Input.is_action_just_pressed("toggle_cabin_lights"):
+		cabin_lights = not cabin_lights
 		sim_event.emit("switch", 0.0)
-	if Input.is_action_just_pressed("practice_approach") and net_mode == NetMode.OFFLINE:
+	if not typing and Input.is_action_just_pressed("toggle_torch"):
+		torch = not torch
+		sim_event.emit("switch", 0.0)
+	if not typing and Input.is_action_just_pressed("toggle_hud_shade"):
+		hud_shade = not hud_shade
+		sim_event.emit("switch", 0.0)
+	if not typing and Input.is_action_just_pressed("practice_approach") and net_mode == NetMode.OFFLINE:
 		practice_approach()
 	var pitch_axis := Input.get_axis("pitch_down", "pitch_up")
 	if bool(Settings.get_value("controls/invert_pitch")):
 		pitch_axis = -pitch_axis
-	pitch_in = move_toward(pitch_in, pitch_axis, delta * 4.0)
-	roll_in = move_toward(roll_in, Input.get_axis("roll_left", "roll_right"), delta * 5.0)
+	_man_pitch = move_toward(_man_pitch, pitch_axis, delta * 4.0)
+	_man_roll = move_toward(_man_roll, Input.get_axis("roll_left", "roll_right"), delta * 5.0)
+	if not typing:
+		_autopilot_keys(delta)
+	var ap: Array = autopilot.update(fm, spec, delta, _man_pitch, _man_roll)
+	# the tail-strike guard only protects the autopilot's own pitch commands: hand flying, you rotate when you like
+	pitch_in = autopilot.tail_guard(fm, spec, float(ap[0])) if autopilot.engaged else float(ap[0])
+	roll_in = float(ap[1])
 	yaw_in = move_toward(yaw_in, Input.get_axis("yaw_left", "yaw_right"), delta * 3.0)
+	var hand_on_throttle := Input.is_action_pressed("throttle_up") or Input.is_action_pressed("throttle_down")
 	if Input.is_action_pressed("throttle_up"):
 		throttle = minf(throttle + delta * 0.4, 1.0)
-		autothrottle = false
 	if Input.is_action_pressed("throttle_down"):
 		throttle = maxf(throttle - delta * 0.4, 0.0)
+	if hand_on_throttle:
+		# moving the throttle takes the speed back from the autopilot (its SPD mode drops out)
 		autothrottle = false
+		if autopilot.spd_on:
+			autopilot.spd_on = false
+	# the autopilot's speed mode drives the auto-throttle (also used on its own by the practice approach)
+	if autopilot.engaged and autopilot.spd_on:
+		autothrottle = true
+		at_target = autopilot.spd_tgt
+		_at_by_ap = true
+	elif _at_by_ap:
+		autothrottle = false
+		_at_by_ap = false
 	_ias_rate = lerpf(_ias_rate, (fm.ias - _prev_ias) / maxf(delta, 1e-3), clampf(delta * 3.0, 0.0, 1.0))
 	_prev_ias = fm.ias
 	if autothrottle:
@@ -394,6 +484,64 @@ func _read_inputs(delta: float) -> void:
 			var want := clampf(0.62 + err * 0.05 - _ias_rate * 0.35, 0.0, spec.ab_threshold - 0.01)
 			throttle = move_toward(throttle, want, 0.6 * delta)
 	wheel_brakes = Input.is_action_pressed("wheel_brake")
+
+
+## Flips one of the simulated switches (a TOGGLES action such as "toggle_radar") as if its key were pressed:
+## used by cockpit buttons, so they go through the same path as the keys (and the network).
+func press_switch(action: String) -> void:
+	if is_remote or not TOGGLES.has(action):
+		return
+	var sh: int = TOGGLES[action] * 2
+	_tog = (_tog & ~(3 << sh)) | ((((_tog >> sh) & 3) + 1) & 3) << sh
+
+
+## Autopilot panel value typed into a window, in display units (see Autopilot.set_value).
+func ap_set(id: String, shown: float) -> void:
+	if is_remote:
+		return
+	autopilot.set_value(id, shown, int(Settings.get_value("hud/unit_system")) == 1)
+	sim_event.emit("switch", 0.0)
+
+
+## Autopilot panel button: "AP", "LVL", or a window's enter button "SPD", "HDG", "ALT", "VS" (panel and keys).
+func ap_press(id: String) -> void:
+	if is_remote:
+		return
+	autopilot.press(id, fm)
+	sim_event.emit("switch", 0.0)
+
+
+## Autopilot panel knob: "SPD", "HDG", "ALT", "VS", turned by `steps` detents.
+func ap_turn(id: String, steps: int) -> void:
+	if is_remote:
+		return
+	autopilot.turn(id, steps, int(Settings.get_value("hud/unit_system")) == 1)
+
+
+## Autopilot keys: the same buttons and knobs as the panel. Knob keys step per press and repeat while held.
+func _autopilot_keys(delta: float) -> void:
+	if Input.is_action_just_pressed("ap_master"):
+		ap_press("AP")
+	if Input.is_action_just_pressed("ap_level"):
+		ap_press("LVL")
+	ap_turn("ALT", _ap_steps("ap_alt_up", delta) - _ap_steps("ap_alt_down", delta))
+	ap_turn("HDG", _ap_steps("ap_hdg_right", delta) - _ap_steps("ap_hdg_left", delta))
+	ap_turn("SPD", _ap_steps("ap_spd_up", delta) - _ap_steps("ap_spd_down", delta))
+
+
+func _ap_steps(action: String, delta: float) -> int:
+	if Input.is_action_just_pressed(action):
+		_ap_hold[action] = 0.0
+		return 1
+	if not Input.is_action_pressed(action):
+		_ap_hold.erase(action)
+		return 0
+	# held: after a short pause, repeat ten times a second
+	var t: float = _ap_hold.get(action, 0.0)
+	var before := floori(maxf(t - 0.4, 0.0) * 10.0)
+	t += delta
+	_ap_hold[action] = t
+	return floori(maxf(t - 0.4, 0.0) * 10.0) - before
 
 
 ## Development autopilot: full power, rotate at 150 kt, gear up, climb to about 900 m and weave gently.
@@ -463,7 +611,8 @@ func _toggle_clip(p: AnimationPlayer, clip: String, open: bool) -> void:
 
 func _switches() -> Dictionary:
 	return {"gear": fm.gear_down, "flaps": fm.flaps, "airbrake": fm.airbrake, "limiter": fm.limiter,
-		"canopy": fm.canopy_open, "radar": fm.radar_on, "radome": fm.radome_open, "lights": fm.lights_on}
+		"canopy": fm.canopy_open, "radar": fm.radar_on, "radome": fm.radome_open, "lights": fm.lights_on,
+		"mode": fm.master_mode}
 
 
 ## Animations and switch sounds follow the simulation's switch states, whoever changed them (this pilot, a
@@ -491,6 +640,8 @@ func _sync_switches() -> void:
 			radar_player.pause()
 		sim_event.emit("switch", 0.0)
 	if now.lights != _shown.lights:
+		sim_event.emit("switch", 0.0)
+	if now.mode != _shown.mode and not is_remote:
 		sim_event.emit("switch", 0.0)
 	if now.limiter != _shown.limiter and not is_remote:
 		_event("AOA LIMITER " + ("ON" if now.limiter else "OFF  ·  CAREFUL"))

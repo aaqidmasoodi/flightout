@@ -57,6 +57,17 @@ func _ready() -> void:
 	_apply_settings()
 	Game.release_cache()
 	_dev_capture.call_deferred()
+	if "--dev-bandits" in OS.get_cmdline_user_args():
+		_dev_bandits(aircraft)
+	if "--dev-shade" in OS.get_cmdline_user_args():
+		aircraft.hud_shade = true
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--jitter-log="):   # development: per-frame pose log to hunt view vibration
+			var probe: Node = preload("res://scripts/dev/jitter_probe.gd").new()
+			probe.path = arg.trim_prefix("--jitter-log=")
+			probe.ac = aircraft
+			probe.cam = _cam
+			add_child(probe)
 
 
 func _on_disconnected(reason: String) -> void:
@@ -104,6 +115,26 @@ func _dev_capture() -> void:
 			views = arg.trim_prefix("--views=").split(";")
 		elif arg.begins_with("--hour="):
 			WorldData.time_of_day = arg.trim_prefix("--hour=").to_float()
+		elif arg.begins_with("--conditions="):     # dev: 0 clear .. 4 fog, 5 rain
+			WorldData.conditions = arg.trim_prefix("--conditions=").to_int()
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--dev-weather-shot="):   # development: the Weather tab as seen in flight
+			await get_tree().create_timer(6.0).timeout
+			for n in get_children():
+				if n.has_method("_open_settings"):
+					n.open()
+					n._open_settings()
+					await get_tree().process_frame
+					var tabs := n.find_children("*", "TabContainer", true, false)
+					if not tabs.is_empty():
+						var tc := tabs[0] as TabContainer
+						for i in tc.get_tab_count():
+							if tc.get_tab_title(i) == "WEATHER":
+								tc.current_tab = i
+			await get_tree().create_timer(1.5).timeout
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png(arg.trim_prefix("--dev-weather-shot="))
+			get_tree().quit()
 	if folder.is_empty():
 		return
 	var wait := 5.0
@@ -122,6 +153,7 @@ func _dev_capture() -> void:
 		_cam._yaw = deg_to_rad(v[1].to_float()) if v.size() > 1 else 0.0
 		_cam._pitch = deg_to_rad(v[2].to_float()) if v.size() > 2 else 0.0
 		_cam._zoom = v[3].to_float() if v.size() > 3 else 1.0
+		_cam._ck_zoom = v[4].to_float() if v.size() > 4 else 1.0
 		_cam._idle = -1000.0
 		if "--spin" in OS.get_cmdline_user_args():
 			# swing the view fast for a second before the capture: shows any smearing behind moving objects
@@ -135,4 +167,48 @@ func _dev_capture() -> void:
 			await get_tree().create_timer(2.5).timeout
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(folder.path_join("shot_%d.png" % i))
+		var burst := 3 if "--burst" in OS.get_cmdline_user_args() else 0
+		for arg in OS.get_cmdline_user_args():
+			if arg.begins_with("--burst="):
+				burst = arg.trim_prefix("--burst=").to_int()
+		if burst > 0:
+			# development: consecutive frames, to measure flicker
+			for k in burst:
+				await RenderingServer.frame_post_draw
+				get_viewport().get_texture().get_image().save_png(folder.path_join("shot_%d_%d.png" % [i, k]))
 	get_tree().quit()
+
+
+## Development: targets for the radar and situation displays, ahead of the start position, plus an AWACS
+## (datalink source) far behind, so radar (filled) and datalink-only (open) contacts can both be seen.
+func _dev_bandits(aircraft: Node3D) -> void:
+	var Bandit = preload("res://scripts/dev/dev_bandit.gd")
+	var start: Transform3D = aircraft.global_transform
+	var fwd: Vector3 = -start.basis.z
+	fwd.y = 0.0
+	fwd = fwd.normalized()
+	var right := fwd.cross(Vector3.UP)
+	# [metres ahead, metres right, altitude, speed, heading offset deg, team, turn rate]
+	var list := [[30000.0, -6000.0, 4000.0, 230.0, 180.0, "red", 0.0], [42000.0, 9000.0, 6500.0, 250.0, 200.0, "red", 0.0],
+		[55000.0, 2000.0, 3000.0, 210.0, 150.0, "red", 0.02], [70000.0, -20000.0, 8000.0, 240.0, 90.0, "red", 0.0],
+		[20000.0, 15000.0, 2500.0, 200.0, 0.0, "blue", 0.0], [140000.0, 30000.0, 7000.0, 230.0, 180.0, "red", 0.0]]
+	for i in list.size():
+		var e: Array = list[i]
+		var b: Node3D = Bandit.new()
+		b.name = "DevBandit%d" % i
+		add_child(b)
+		b.global_position = start.origin + fwd * float(e[0]) + right * float(e[1])
+		b.global_position.y = float(e[2])
+		var dir := fwd.rotated(Vector3.UP, -deg_to_rad(float(e[4])))
+		b.velocity = dir * float(e[3])
+		b.team = e[5]
+		b.callsign = "BANDIT %d" % (i + 1) if e[5] == "red" else "FRIENDLY"
+		b.turn_rate = float(e[6])
+	var awacs := Node3D.new()
+	awacs.name = "DevAWACS"
+	add_child(awacs)
+	awacs.global_position = start.origin - fwd * 60000.0 + Vector3.UP * 9000.0
+	awacs.set_meta("datalink_range", 400000.0)
+	awacs.add_to_group("awacs")
+	if "--dev-radar" in OS.get_cmdline_user_args():
+		aircraft.press_switch.call_deferred("toggle_radar")

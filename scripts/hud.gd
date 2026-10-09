@@ -128,11 +128,11 @@ func _build_panel() -> void:
 
 const PANEL_W := 392.0
 const CHIP_ACTIONS := [["GEAR", "toggle_gear"], ["FLAPS", "toggle_flaps"], ["A/BRK", "toggle_airbrake"], ["BRAKE", "wheel_brake"],
-	["A/THR", "toggle_autothrottle"], ["LIGHTS", "toggle_lights"], ["RADAR", "toggle_radar"], ["CANOPY", "toggle_canopy"],
-	["VIEW", "toggle_view"], ["NO LIMIT", "toggle_limiter"]]
+	["LIGHTS", "toggle_lights"], ["RADAR", "toggle_radar"], ["CANOPY", "toggle_canopy"],
+	["VIEW", "toggle_view"], ["NO LIMIT", "toggle_limiter"], ["AUTOPILOT", "ap_master"], ["COCKPIT LT", "toggle_cabin_lights"], ["TORCH", "toggle_torch"]]
 const HINT_ACTIONS := [[["pitch_down", "pitch_up"], "Pitch"], [["roll_left", "roll_right"], "Roll"], [["yaw_left", "yaw_right"], "Yaw"],
 	[["throttle_up", "throttle_down"], "Throttle"], [["toggle_gear"], "Gear"], [["toggle_flaps"], "Flaps"], [["toggle_airbrake"], "Airbrake"],
-	[["wheel_brake"], "Brakes"], [["toggle_view"], "View"], [["practice_approach"], "Approach"], [["toggle_hud"], "Flight data"]]
+	[["wheel_brake"], "Brakes"], [["ap_master"], "Autopilot"], [["toggle_view"], "View"], [["practice_approach"], "Approach"], [["toggle_hud"], "Flight data"]]
 
 
 ## A readout with fixed-width slots: value (right-aligned, tabular digits) and unit.
@@ -311,11 +311,13 @@ func _process(_delta: float) -> void:
 	_chip("FLAPS", a.flaps)
 	_chip("A/BRK", a.airbrake)
 	_chip("BRAKE", a.wheel_brakes, T.WARN)
-	_chip("A/THR", a.autothrottle)
 	_chip("LIGHTS", a.fx != null and a.fx.lights_on)
 	_chip("RADAR", a.radar_on)
 	_chip("CANOPY", a.canopy_open, T.WARN)
 	_chip("NO LIMIT", not a.aoa_limiter, T.BAD)
+	_chip("AUTOPILOT", a.autopilot != null and a.autopilot.engaged)
+	_chip("COCKPIT LT", bool(a.get("cabin_lights")))
+	_chip("TORCH", bool(a.get("torch")))
 	_chip("VIEW", cam != null and "view_name" in cam and String(cam.view_name) != "CLOSE", Color(0.4, 0.7, 1.0))
 
 

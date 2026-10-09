@@ -54,6 +54,8 @@ var canopy_open := false
 var radar_on := false
 var radome_open := false
 var lights_on := true
+## Avionics master mode (scripts/sim/avionics.gd): 0 NAV, 1 BVR, 2 WVR, 3 GND. Server-owned like every switch.
+var master_mode := 0
 ## Last applied toggle counters: 2 bits per switch (see T_*). A switch fires when its counter changes, so a press
 ## is applied exactly once even though inputs are resent several times over the network.
 var toggles := 0
@@ -87,7 +89,8 @@ var _prev_comp := [0.0, 0.0, 0.0]
 
 
 # ---------------- pilot input (the only way controls enter the simulation) ----------------
-enum { T_GEAR, T_FLAPS, T_AIRBRAKE, T_LIMITER, T_CANOPY, T_RADAR, T_RADOME, T_LIGHTS, T_RESPAWN, T_COUNT }
+enum { T_GEAR, T_FLAPS, T_AIRBRAKE, T_LIMITER, T_CANOPY, T_RADAR, T_RADOME, T_LIGHTS, T_RESPAWN,
+	T_MODE_NAV, T_MODE_BVR, T_MODE_WVR, T_MODE_GND, T_COUNT }
 
 ## Applies one tick of pilot input. Axis values must already be quantised (see net/protocol.gd), so client and
 ## server apply bit-identical numbers. Returns a bitmask of the switches that changed state (1 << T_*), and
@@ -130,6 +133,10 @@ func apply_input(pitch: float, roll: float, yaw: float, throttle: float, brake: 
 	if pressed & (1 << T_LIGHTS):
 		lights_on = not lights_on
 		fired |= 1 << T_LIGHTS
+	for m in 4:
+		if pressed & (1 << (T_MODE_NAV + m)) and master_mode != m:
+			master_mode = m
+			fired |= 1 << (T_MODE_NAV + m)
 	return fired
 
 
@@ -145,7 +152,7 @@ func get_state() -> Array:
 		gear_comp[0], gear_comp[1], gear_comp[2], _prev_comp[0], _prev_comp[1], _prev_comp[2],
 		crashed, _air_time, _rock_t, _drop, alpha_crit_deg, rng.state,
 		in_pitch, in_roll, in_yaw, in_throttle, in_brake, canopy_open, radar_on, radome_open, lights_on, toggles,
-		tail_scrape, wheel_speed, thrust, fuel_flow, wind, e]
+		tail_scrape, wheel_speed, thrust, fuel_flow, wind, e, master_mode]   # new fields go last: net/client.gd indexes this
 
 
 func set_state(s: Array) -> void:
@@ -208,6 +215,8 @@ func set_state(s: Array) -> void:
 		en.ab_lit = e[k * 5 + 2]
 		en._ab_timer = e[k * 5 + 3]
 		en.running = e[k * 5 + 4]
+	i += 1
+	master_mode = s[i] if i < s.size() else 0
 	_update_mass()
 
 
@@ -257,6 +266,7 @@ func respawn(xform: Transform3D) -> void:
 	airbrake_pos = 0.0
 	gear_down = true
 	gear_pos = 1.0
+	master_mode = 0
 
 
 func set_engines_n2(n2: float) -> void:

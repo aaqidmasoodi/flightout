@@ -32,7 +32,7 @@ func _draw() -> void:
 
 	# --- flight path marker: where the jet is actually going (cockpit view only) ---
 	var vel: Vector3 = a.velocity
-	if cockpit and vel.length() > 15.0:
+	if cockpit and vel.length() > 15.0 and a.get("cockpit") == null:   # jets with a real HUD draw it on the combiner
 		var p3: Vector3 = a.global_position + vel.normalized() * 600.0
 		if not cam.is_position_behind(p3):
 			var c := cam.unproject_position(p3)
@@ -74,19 +74,11 @@ func _draw() -> void:
 	var warns: Array = []   # [title, subtitle, colour]
 	var agl: float = a.altitude_agl
 	var vsi: float = a.vertical_speed
-	if not a.wow and not a.crashed:
-		if vsi < -15.0 and agl / -vsi < 6.0:
-			warns.append(["PULL UP", "TERRAIN", RED])
-		if a.stall_frac > 0.55:
-			warns.append(["STALL", "LOWER THE NOSE", RED])
-		if ((agl < 400.0 and vsi < -10.0) or (agl < 60.0 and vsi < -5.0)) and warns.size() < 2:
-			warns.append(["SINK RATE", "DESCENT TOO FAST", RED])
-		if agl < 300.0 and vsi < -2.0 and not a.gear_down and a.speed < 120.0:
-			warns.append(["GEAR", "GEAR NOT DOWN", AMBER])
-		if a.stall_frac > 0.05 and a.stall_frac <= 0.55:
-			warns.append(["BUFFET", "NEAR THE STALL", AMBER])
-	if not a.crashed and a.fuel_kg < 800.0:
-		warns.append(["FUEL", "LOW FUEL", AMBER])
+	# what to show comes from the avionics layer, which also applies the master mode's inhibits
+	var av = preload("res://scripts/sim/avionics.gd")
+	for wid in av.active(a):
+		var info: Array = av.INFO[wid]
+		warns.append([info[0], info[1], RED if int(info[2]) == 0 else AMBER])
 	if warns.size() > 3:
 		warns.resize(3)
 	if not warns.is_empty():

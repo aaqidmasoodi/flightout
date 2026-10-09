@@ -37,6 +37,7 @@ const DEFAULTS := {
 	"hud/unit_system": 1,            # 1 aviation (kt, ft, ft/min, NM), 0 metric (km/h, m, m/s, km)
 	"controls/invert_pitch": false,
 	"controls/mouse_sensitivity": 1.0,
+	"cockpit/seat_height": 0.0,      # metres above the design eye point (-0.06 .. +0.06)
 	"audio/master": 0.8,
 	"audio/engine": 0.9,
 	"audio/effects": 0.9,
@@ -216,9 +217,15 @@ const DEFAULT_BINDINGS := {
 	"yaw_left": [KEY_Q], "yaw_right": [KEY_E],
 	"throttle_up": [KEY_SHIFT], "throttle_down": [KEY_CTRL],
 	"toggle_gear": [KEY_G], "toggle_flaps": [KEY_F], "toggle_airbrake": [KEY_B], "wheel_brake": [KEY_SPACE],
-	"toggle_autothrottle": [KEY_Z], "toggle_limiter": [KEY_K], "toggle_canopy": [KEY_C], "toggle_lights": [KEY_L],
+	"toggle_limiter": [KEY_K], "toggle_canopy": [KEY_C], "toggle_lights": [KEY_L],
 	"toggle_radar": [KEY_R], "toggle_radome": [KEY_T], "toggle_view": [KEY_V], "toggle_hud": [KEY_H],
 	"practice_approach": [KEY_P], "reset": [KEY_BACKSPACE],
+	"mode_nav": [KEY_1], "mode_bvr": [KEY_2], "mode_wvr": [KEY_3], "mode_gnd": [KEY_4],
+	"toggle_hud_shade": [KEY_U], "toggle_cabin_lights": [KEY_N], "toggle_torch": [KEY_O],
+	"ap_master": [KEY_J], "ap_level": [KEY_Y],
+	"ap_alt_up": [KEY_PAGEUP], "ap_alt_down": [KEY_PAGEDOWN],
+	"ap_hdg_left": [KEY_BRACKETLEFT], "ap_hdg_right": [KEY_BRACKETRIGHT],
+	"ap_spd_up": [KEY_EQUAL], "ap_spd_down": [KEY_MINUS],
 }
 ## Settings screen layout: [section] or [action, label].
 const BINDABLE := [
@@ -226,12 +233,20 @@ const BINDABLE := [
 	["roll_left", "Roll left"], ["roll_right", "Roll right"], ["yaw_left", "Yaw left / steer left"], ["yaw_right", "Yaw right / steer right"],
 	["throttle_up", "Throttle up"], ["throttle_down", "Throttle down"],
 	["SYSTEMS"], ["toggle_gear", "Landing gear"], ["toggle_flaps", "Flaps"], ["toggle_airbrake", "Airbrake"], ["wheel_brake", "Wheel brakes (hold)"],
-	["toggle_autothrottle", "Auto-throttle"], ["toggle_limiter", "AoA limiter override (Cobra)"], ["toggle_canopy", "Canopy"],
+	["toggle_limiter", "AoA limiter override (Cobra)"], ["toggle_canopy", "Canopy"],
 	["toggle_lights", "Exterior lights"], ["toggle_radar", "Radar scan"], ["toggle_radome", "Radome"],
+	["AVIONICS"], ["mode_nav", "Master mode: NAV"], ["mode_bvr", "Master mode: BVR"], ["mode_wvr", "Master mode: WVR"],
+	["mode_gnd", "Master mode: GND (ground attack)"],
+	["toggle_hud_shade", "HUD sun shade"], ["toggle_cabin_lights", "Cockpit lights (instruments and floodlights)"],
+	["toggle_torch", "Flashlight (points where you look)"],
+	["AUTOPILOT"], ["ap_master", "Autopilot on / off (holds speed, heading and altitude)"], ["ap_level", "Level flight (horizon recovery)"],
+	["ap_alt_up", "Selected altitude up"], ["ap_alt_down", "Selected altitude down"],
+	["ap_hdg_left", "Selected heading left"], ["ap_hdg_right", "Selected heading right"],
+	["ap_spd_up", "Selected speed up"], ["ap_spd_down", "Selected speed down"],
 	["CAMERA AND GAME"], ["toggle_view", "Camera view"], ["toggle_hud", "Flight data panel"], ["practice_approach", "Practice approach"],
 	["reset", "Reset to runway"],
 ]
-const FIXED_BINDINGS := [["Look around", "RIGHT MOUSE"], ["Zoom", "MOUSE WHEEL"], ["Pause menu", "ESC"]]
+const FIXED_BINDINGS := [["Look around", "RIGHT MOUSE"], ["Zoom", "MOUSE WHEEL"], ["Reset cockpit zoom", "MIDDLE MOUSE"], ["Pause menu", "ESC"]]
 const SHORT_NAMES := {"Space": "SPACE", "Shift": "SHIFT", "Ctrl": "CTRL", "Alt": "ALT", "BackSpace": "BKSP", "Backspace": "BKSP",
 	"Escape": "ESC", "Enter": "ENTER", "Tab": "TAB", "Up": "UP", "Down": "DOWN", "Left": "LEFT", "Right": "RIGHT",
 	"CapsLock": "CAPS", "Delete": "DEL", "Insert": "INS", "PageUp": "PGUP", "PageDown": "PGDN", "Home": "HOME", "End": "END"}

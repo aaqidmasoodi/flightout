@@ -171,19 +171,14 @@ func _process(delta: float) -> void:
 
 
 func _update_warnings() -> void:
+	# the highest-priority voiced warning the master mode lets through (scripts/sim/avionics.gd)
 	var w := ""
-	var agl: float = ac.altitude_agl
-	var vs: float = ac.vertical_speed
-	if not ac.wow:
-		var t_impact := agl / maxf(-vs, 0.1)
-		if vs < -5.0 and t_impact < 6.0 and agl < 600.0:
-			w = "warn_pullup"
-		elif ac.stall_frac > 0.55:
-			w = "warn_stall"
-		elif ac.g_load > ac.spec.g_max - 0.4:
-			w = "warn_overg"
-		elif not ac.gear_down and agl < 150.0 and vs < -1.5 and ac.ias < 95.0:
-			w = "warn_gear"
+	var av = preload("res://scripts/sim/avionics.gd")
+	for wid in av.active(ac):
+		var clip: String = av.INFO[wid][3]
+		if clip != "":
+			w = clip
+			break
 	_set_warning(w)
 	if ac.fuel_kg < 800.0 and not _low_fuel_warned:
 		_low_fuel_warned = true

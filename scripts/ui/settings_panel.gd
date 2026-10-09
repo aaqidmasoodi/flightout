@@ -115,6 +115,10 @@ func _ready() -> void:
 			_refresh_keys())
 
 	p = _page("WEATHER")
+	if Game.online:
+		var wi := _tabs.get_tab_count() - 1
+		_tabs.set_tab_icon(wi, _lock_icon(16))
+		_tabs.get_tab_bar().set_tab_tooltip(wi, SERVER_NOTE)
 	p.add_child(T.label("TIME", 18, "Bold", T.DIM, 3))
 	_time_presets(p)
 	_slider(p, "Time of day", "weather/time", 0.0, 23.99, 0.05, func(v): return "%02d:%02d" % [int(v), int(fposmod(v, 1.0) * 60.0)])
@@ -250,22 +254,32 @@ func _choice(page: VBoxContainer, title: String, key: String, labels: Array, val
 	for i in labels.size():
 		ob.add_item(labels[i], i)
 	var refresh := func():
-		var idx: int = values.find(Settings.get_value(key))
+		var v = _value(key)
+		var idx: int = values.find(v)
+		if idx < 0 and (typeof(v) == TYPE_FLOAT or typeof(v) == TYPE_INT):
+			var best := INF
+			for i in values.size():       # server values need not match a menu entry exactly
+				var d := absf(float(values[i]) - float(v))
+				if d < best:
+					best = d
+					idx = i
 		ob.select(maxi(idx, 0))
 	refresh.call()
 	_refreshers.append(refresh)
 	ob.item_selected.connect(func(i): Settings.set_value(key, values[i]))
 	row.add_child(ob)
+	_lock(row, ob, key)
 
 
 func _toggle(page: VBoxContainer, title: String, key: String) -> void:
 	var row := _row(page, title)
 	var cb := CheckButton.new()
-	var refresh := func(): cb.set_pressed_no_signal(bool(Settings.get_value(key)))
+	var refresh := func(): cb.set_pressed_no_signal(bool(_value(key)))
 	refresh.call()
 	_refreshers.append(refresh)
 	cb.toggled.connect(func(on): Settings.set_value(key, on))
 	row.add_child(cb)
+	_lock(row, cb, key)
 
 
 func _slider(page: VBoxContainer, title: String, key: String, lo: float, hi: float, step: float, fmt: Callable) -> void:
@@ -278,7 +292,7 @@ func _slider(page: VBoxContainer, title: String, key: String, lo: float, hi: flo
 	val.custom_minimum_size = Vector2(78, 0)
 	val.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	var refresh := func():
-		s.set_value_no_signal(float(Settings.get_value(key)))
+		s.set_value_no_signal(float(_value(key)))
 		val.text = fmt.call(s.value)
 	refresh.call()
 	_refreshers.append(refresh)
@@ -287,6 +301,98 @@ func _slider(page: VBoxContainer, title: String, key: String, lo: float, hi: flo
 		Settings.set_value(key, v))
 	row.add_child(s)
 	row.add_child(val)
+	_lock(row, s, key)
+
+
+# ---------------- server-owned settings ----------------
+## Online, the server decides time and weather for everyone. Those rows show the server's live values,
+## greyed out and locked; the player's own choices are kept and come back after leaving the server.
+func _server_owned(key: String) -> bool:
+	return Game.online and key.begins_with("weather/")
+
+
+func _value(key: String) -> Variant:
+	if not _server_owned(key):
+		return Settings.get_value(key)
+	var a = WorldData.atmosphere
+	match key:
+		"weather/time":
+			return WorldData.time_of_day
+		"weather/time_flow":
+			return _nearest(WorldData.TIME_SCALES, WorldData.time_scale)
+		"weather/conditions":
+			return WorldData.conditions
+		"weather/wind":
+			return _nearest(WorldData.WIND_SPEEDS, a.wind_speed)
+		"weather/wind_from":
+			return snappedf(fposmod(a.wind_from_deg, 360.0), 45.0)
+		"weather/turbulence":
+			return _nearest(WorldData.TURBULENCE, a.turbulence)
+	return Settings.get_value(key)
+
+
+static func _nearest(table: Array, v: float) -> int:
+	var best := 0
+	for i in table.size():
+		if absf(float(table[i]) - v) < absf(float(table[best]) - v):
+			best = i
+	return best
+
+
+func _lock(row: Control, control: Control, key: String) -> void:
+	if not _server_owned(key):
+		return
+	control.set("disabled", true)
+	control.set("editable", false)
+	control.focus_mode = Control.FOCUS_NONE
+	row.modulate.a = 0.5
+	# a small lock right after the setting's name; hovering anywhere on the row explains it, clicking says so too
+	var title := row.get_child(0) as Control
+	title.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	var lock := TextureRect.new()
+	lock.texture = _lock_icon(18)
+	lock.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
+	lock.custom_minimum_size = Vector2(30, 0)
+	row.add_child(lock)
+	row.move_child(lock, 1)
+	var fill := Control.new()
+	fill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(fill)
+	row.move_child(fill, 2)
+	for c in [title, lock, fill, control]:
+		(c as Control).tooltip_text = SERVER_NOTE
+		(c as Control).mouse_filter = Control.MOUSE_FILTER_STOP
+		(c as Control).gui_input.connect(_on_locked_input)
+
+
+func _on_locked_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		_show_toast(SERVER_NOTE, T.DIM)
+
+
+const SERVER_NOTE := "Set by the server"
+static var _lock_cache := {}
+
+static func _lock_icon(px: int) -> Texture2D:
+	if not _lock_cache.has(px):
+		var svg := '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M5 7.2V5.2a3 3 0 0 1 6 0v2" fill="none" stroke="#c4cad1" stroke-width="1.7"/><rect x="3" y="7" width="10" height="8" rx="1.8" fill="#c4cad1"/><circle cx="8" cy="11" r="1.2" fill="#1a1d22"/></svg>'
+		var img := Image.new()
+		img.load_svg_from_string(svg, px / 16.0)
+		_lock_cache[px] = ImageTexture.create_from_image(img)
+	return _lock_cache[px]
+
+
+var _live_t := 0.0
+
+func _process(delta: float) -> void:
+	# keep the locked rows showing the server's live values (time of day moves on, weather can change)
+	if not Game.online:
+		return
+	_live_t += delta
+	if _live_t >= 0.5:
+		_live_t = 0.0
+		for r in _refreshers:
+			r.call()
 
 
 func _on_reset() -> void:
@@ -398,6 +504,12 @@ func _time_presets(page: VBoxContainer) -> void:
 		b.add_theme_stylebox_override("focus", T.flat(Color(1, 1, 1, 0.09), T.ACCENT, [1, 1, 1, 1], [14, 4, 14, 4]))
 		b.add_theme_stylebox_override("pressed", T.flat(Color(1.0, 0.6, 0.18, 0.2), T.ACCENT, [1, 1, 1, 1], [14, 4, 14, 4]))
 		var hour: float = pr[1]
+		if _server_owned("weather/time"):
+			b.disabled = true
+			b.modulate.a = 0.4
+			b.focus_mode = Control.FOCUS_NONE
+			b.tooltip_text = SERVER_NOTE
+			b.gui_input.connect(_on_locked_input)
 		b.pressed.connect(func():
 			Settings.set_value("weather/time", hour)
 			for r in _refreshers:

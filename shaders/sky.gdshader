@@ -9,6 +9,10 @@ uniform float cloud_coverage = 0.3;               // 0 clear .. 1 overcast deck
 uniform float overcast = 0.0;                     // 0..1 greys the whole sky
 uniform float haze = 0.0;                         // 0..1 fog / rain whiteout near the horizon
 uniform vec2 cloud_drift = vec2(0.0);
+// cirrus drift per second of TIME: the layer moves smoothly every frame without touching any uniform (a uniform
+// change re-renders the sky's lighting, so those are only sent a few times a second, which made the cirrus tick).
+// 15 and 9 texture repeats an hour, so TIME's hourly rollover lands on a whole repeat and never shows.
+const vec2 DRIFT_RATE = vec2(15.0, 9.0) / 3600.0;
 uniform sampler2D cloud_tex : filter_linear_mipmap, repeat_enable;
 
 float hash3(vec3 p) {
@@ -83,7 +87,7 @@ void sky() {
 
 	// cloud layer projected onto a dome
 	if (d.y > 0.0 && cloud_coverage > 0.01) {
-		vec2 uv = d.xz / (d.y + 0.12) * 0.32 + cloud_drift;
+		vec2 uv = d.xz / (d.y + 0.12) * 0.32 + cloud_drift + DRIFT_RATE * TIME;
 		float n = texture(cloud_tex, uv * 0.55).r * 0.62 + texture(cloud_tex, uv * 1.9 + vec2(0.37, 0.71)).r * 0.38;
 		float edge = 1.0 - cloud_coverage;
 		float dens = smoothstep(edge - 0.08, edge + 0.22, n) * smoothstep(0.0, 0.14, d.y);

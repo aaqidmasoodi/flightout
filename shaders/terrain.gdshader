@@ -9,6 +9,23 @@ uniform sampler2D macro_tex : filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D detail_tex : filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D detail_nrm : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform float map_half_extent = 20480.0;
+// distance haze shared with the ocean (set by the sky system, see surface_materials.ocean_materials): the seabed
+// fades out exactly where the sea does, so the square edge of the map's seabed never shows through the water
+uniform vec3 haze_color : source_color = vec3(0.6, 0.7, 0.8);
+uniform float haze_density = 0.0;
+uniform vec3 hor_toward : source_color = vec3(0.0);
+uniform vec3 hor_away : source_color = vec3(0.0);
+uniform vec2 sun_xz = vec2(0.0);
+
+float haze_mean(float y0, float y1) {
+	const float H = 2500.0;
+	y0 = max(y0, 0.0);
+	y1 = max(y1, 0.0);
+	float a = exp(-y0 / H);
+	float b = exp(-y1 / H);
+	float dy = y0 - y1;
+	return abs(dy) < 1.0 ? a : H * (b - a) / dy;
+}
 
 varying vec3 wpos;
 varying vec3 wnorm;
@@ -78,6 +95,20 @@ void fragment() {
 	NORMAL = normalize((VIEW_MATRIX * vec4(nw, 0.0)).xyz);
 
 	ALBEDO = c;
+	// (done with ALBEDO / EMISSION, not FOG: writing FOG would switch the scene fog off for the whole terrain)
+	if (haze_density > 0.0 && h < 1.0) {
+		float haze = 1.0 - exp(-haze_density * dist * haze_mean(CAMERA_POSITION_WORLD.y, 0.0));
+		vec3 hc = haze_color;
+		if (dot(sun_xz, sun_xz) > 0.25) {
+			vec2 dh = normalize(wpos.xz - CAMERA_POSITION_WORLD.xz + vec2(1e-5));
+			float toward = pow(clamp(dot(dh, sun_xz) * 0.5 + 0.5, 0.0, 1.0), 3.0);
+			hc = mix(hor_away, hor_toward, toward);
+		}
+		// gone a little before the water above it, and faded in from the coast so the shoreline stays sharp
+		float f = smoothstep(0.45, 0.95, haze) * smoothstep(1.0, -3.0, h);
+		ALBEDO = c * (1.0 - f);
+		EMISSION = hc * f;
+	}
 	ROUGHNESS = mix(0.95, 0.5, snow_amt);
 	SPECULAR = mix(0.25, 0.45, snow_amt);
 }

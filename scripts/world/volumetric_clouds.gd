@@ -50,10 +50,17 @@ var _has_history := false
 var _noise := {}
 var _frame := 0
 var _prev_wind := Vector2.ZERO
+var _prev_shape := Vector4.ZERO   # coverage, density, base, top last frame: weather changing -> trust history less
+var _layer := RID()             # full resolution: r = transmittance, g = cloud front distance (km)
+var _layer_size := Vector2i.ZERO
+var layer_texture := Texture2DRD.new()
+var _layer_published := false
 
 
 func _init() -> void:
-	effect_callback_type = EFFECT_CALLBACK_TYPE_POST_TRANSPARENT
+	# before the transparent pass: glass, the HUD, flames and particles then draw over the clouds instead of being
+	# painted over by them; far transparent things (the sea) hide behind clouds through the cloud layer texture
+	effect_callback_type = EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT
 	_rd = RenderingServer.get_rendering_device()
 	if _rd == null:
 		return   # headless (dedicated server): nothing to render
@@ -96,7 +103,7 @@ func _all_targets() -> Array:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE and _rd:
 		var rids: Array = [_raw_color, _raw_depth, _hist_color[0], _hist_color[1], _hist_depth[0], _hist_depth[1],
-			_repeat_sampler, _clamp_sampler, _point_sampler, _ubo]
+			_repeat_sampler, _clamp_sampler, _point_sampler, _ubo, _layer]
 		for k in _pipes:
 			rids.append(_pipes[k][1])
 			rids.append(_pipes[k][0])
@@ -112,6 +119,27 @@ func _target(fmt: int, size: Vector2i) -> RID:
 	f.height = size.y
 	f.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
 	return _rd.texture_create(f, RDTextureView.new())
+
+
+func _ensure_layer(size: Vector2i) -> void:
+	if size == _layer_size and _layer.is_valid():
+		return
+	var f := RDTextureFormat.new()
+	f.format = RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT
+	f.width = size.x
+	f.height = size.y
+	f.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT \
+		| RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT
+	var old := _layer
+	_layer = _rd.texture_create(f, RDTextureView.new())
+	_rd.texture_clear(_layer, Color(1.0, 60000.0, 0.0, 1.0), 0, 1, 0, 1)
+	layer_texture.texture_rd_rid = _layer
+	if old.is_valid():
+		_rd.free_rid(old)
+	_layer_size = size
+	if not _layer_published:
+		_layer_published = true
+		(func(): RenderingServer.global_shader_parameter_set("cloud_layer", layer_texture)).call_deferred()
 
 
 func _ensure_targets(size: Vector2i) -> void:
@@ -181,6 +209,8 @@ func _dispatch(name: String, uniforms: Array, size: Vector2i) -> void:
 func _render_callback(_type: int, render_data: RenderData) -> void:
 	if _pipes.size() < 3 or _noise.size() < 5 or coverage <= 0.001:
 		_has_history = false
+		if _layer.is_valid():
+			_rd.texture_clear(_layer, Color(1.0, 60000.0, 0.0, 1.0), 0, 1, 0, 1)   # clear sky: nothing hides
 		return
 	var buffers := render_data.get_render_scene_buffers() as RenderSceneBuffersRD
 	if buffers == null:
@@ -189,6 +219,7 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	if size.x == 0 or size.y == 0:
 		return
 	_ensure_targets(size)
+	_ensure_layer(size)
 	var sd := render_data.get_render_scene_data()
 	var cam_xf := sd.get_cam_transform()
 	var proj := sd.get_cam_projection()
@@ -212,7 +243,12 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	data.append_array([float(_half_size.x), float(_half_size.y), float(size.x), float(size.y)])
 	data.append_array([max_distance, float(_frame % 4096), float(primary_steps), float(light_steps)])
 	data.append_array(_proj_floats(_prev_vp))
-	data.append_array([1.0 if _has_history else 0.0, history_weight, height_variation, 0.0])
+	# while the weather is changing (the sky system eases coverage, density and layer heights), the accumulated
+	# history describes clouds that no longer exist: blend it out quickly so a new sky builds in a second or so
+	var shape := Vector4(coverage, density, base * 0.001, top * 0.001)
+	var hw := history_weight if shape.distance_to(_prev_shape) < 0.0002 else minf(history_weight, 0.7)
+	_prev_shape = shape
+	data.append_array([1.0 if _has_history else 0.0, hw, height_variation, 0.0])
 	data.append_array([hor_toward.r, hor_toward.g, hor_toward.b, sun_xz.x])
 	data.append_array([hor_away.r, hor_away.g, hor_away.b, sun_xz.y])
 	var bytes := data.to_byte_array()
@@ -228,6 +264,7 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 			_u_tex(2, _point_sampler, _raw_color), _u_tex(3, _point_sampler, _raw_depth),
 			_u_tex(4, _clamp_sampler, _hist_color[1 - _cur]), _u_ubo(6)], _half_size)
 		_dispatch("composite", [_u_image(0, color), _u_tex(1, _point_sampler, _hist_color[_cur]),
-			_u_tex(2, _point_sampler, _hist_depth[_cur]), _u_tex(3, _point_sampler, depth), _u_ubo(4)], size)
+			_u_tex(2, _point_sampler, _hist_depth[_cur]), _u_tex(3, _point_sampler, depth), _u_ubo(4),
+			_u_image(5, _layer)], size)
 	_prev_vp = vp
 	_has_history = true

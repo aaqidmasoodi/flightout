@@ -48,6 +48,8 @@ func _ready() -> void:
 	tmat.set_shader_parameter("detail_tex", tex.detail)
 	tmat.set_shader_parameter("detail_nrm", tex.normal)
 	tmat.set_shader_parameter("map_half_extent", WorldData.half_extent)
+	# the seabed takes the sea's distance haze too (the sky system updates every material in this list)
+	preload("res://scripts/world/surface_materials.gd").ocean_materials.append(tmat)
 	for n in world.find_children("Terrain_*", "MeshInstance3D", true, false):
 		var mi := n as MeshInstance3D
 		mi.material_override = tmat

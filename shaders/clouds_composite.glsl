@@ -10,6 +10,8 @@ layout(rgba16f, set = 0, binding = 0) uniform restrict image2D color_img;
 layout(set = 0, binding = 1) uniform sampler2D cloud_color;
 layout(set = 0, binding = 2) uniform sampler2D cloud_depth;
 layout(set = 0, binding = 3) uniform sampler2D depth_tex;
+// per-pixel cloud cover for transparent surfaces drawn after this pass: r = transmittance, g = front distance (km)
+layout(rgba16f, set = 0, binding = 5) uniform restrict writeonly image2D layer_img;
 layout(set = 0, binding = 4, std140) uniform Params {
 	mat4 inv_proj;
 	mat4 cam_xform;        // camera to world
@@ -75,4 +77,12 @@ void main() {
 	}
 	vec4 scene = imageLoad(color_img, px);
 	imageStore(color_img, px, vec4(scene.rgb * cl.a + cl.rgb, scene.a));
+	float front = 1e9;
+	for (int j = 0; j < 2; j++) {
+		for (int i = 0; i < 2; i++) {
+			ivec2 q = clamp(b + ivec2(i, j), ivec2(0), ivec2(p.sizes.xy) - 1);
+			front = min(front, texelFetch(cloud_depth, q, 0).x);
+		}
+	}
+	imageStore(layer_img, px, vec4(cl.a, min(front * 0.001, 60000.0), 0.0, 1.0));
 }

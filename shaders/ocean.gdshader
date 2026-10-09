@@ -27,6 +27,8 @@ float haze_mean(float y0, float y1) {
 	return abs(dy) < 1.0 ? a : H * (b - a) / dy;
 }
 
+#include "res://shaders/include/cloud_cover.gdshaderinc"
+
 varying vec3 wpos;
 
 vec2 nm(sampler2D tex, vec2 uv) {
@@ -74,4 +76,5 @@ void fragment() {
 		// the farthest water fades out, so the sea meets the sky's own horizon with no seam (seen from high up)
 		ALPHA *= 1.0 - smoothstep(0.6, 0.985, haze);
 	}
+	ALPHA *= cloud_visibility(SCREEN_UV, dist);
 }

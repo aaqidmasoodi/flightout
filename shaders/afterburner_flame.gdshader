@@ -5,6 +5,8 @@ render_mode blend_add, unshaded, cull_disabled, depth_draw_never, shadows_disabl
 uniform float intensity = 1.0;
 uniform float length_m = 3.8;
 
+#include "res://shaders/include/cloud_cover.gdshaderinc"
+
 varying float t;
 
 void vertex() {
@@ -20,4 +22,5 @@ void fragment() {
 	fade *= fade;
 	float facing = abs(dot(NORMAL, VIEW));
 	ALBEDO = col * fade * facing * intensity * flick * 1.8;
+	ALBEDO *= cloud_visibility(SCREEN_UV, length(VERTEX));
 }

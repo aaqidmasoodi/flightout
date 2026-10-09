@@ -274,10 +274,10 @@ func _process(delta: float) -> void:
 	# ---- sky shader (high cirrus and the sky itself) ----
 	# Changing any sky uniform re-renders the sky's lighting cubemap, so update a few times a second at most, and
 	# only when something actually changed (Godot's recommended practice for dynamic skies).
-	_drift += Vector2(0.004, 0.0025) * delta * (1.0 + WorldData.atmosphere.wind_speed * 0.1)
+	# cirrus drift runs in the sky shader from TIME (smooth every frame); only real changes re-send uniforms
 	_sky_timer += delta
 	var sky_state := Vector4(e, over, float(_w.haze) * below, float(_w.cov))
-	if _sky_timer >= 0.25 and (sky_state.distance_to(_sky_sent) > 0.002 or _drift.distance_to(_drift_sent) > 0.0005):
+	if _sky_timer >= 0.25 and sky_state.distance_to(_sky_sent) > 0.002:
 		_sky_timer = 0.0
 		_sky_sent = sky_state
 		_drift_sent = _drift

@@ -7,7 +7,7 @@ extends RefCounted
 ##                     and the last input tick the server applied for it (for reconciliation).
 ## Channel 0 carries unreliable state (inputs, snapshots); channel 1 carries reliable events (join, leave, weather).
 
-const VERSION := 1
+const VERSION := 2                     # 2: avionics master mode in the input toggles and the state
 const DEFAULT_PORT := 27015
 const MAX_PLAYERS := 16
 const TICK_RATE := 120                 # simulation ticks per second (2 substeps each = 240 Hz physics)
@@ -37,7 +37,7 @@ enum {
 
 static func make_cmd(tick: int, pitch: float, roll: float, yaw: float, throttle: float, brake: float, toggles: int) -> Array:
 	return [tick, _axis(pitch), _axis(roll), _axis(yaw), roundf(clampf(throttle, 0.0, 1.0) * 65535.0) / 65535.0,
-		roundf(clampf(brake, 0.0, 1.0) * 255.0) / 255.0, toggles & 0x3FFFF]
+		roundf(clampf(brake, 0.0, 1.0) * 255.0) / 255.0, toggles & 0x3FFFFFF]
 
 
 static func _axis(v: float) -> float:
