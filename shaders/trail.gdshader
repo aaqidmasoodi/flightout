@@ -23,6 +23,8 @@ uniform float fade_in = 0.0;          // seconds before a point shows (contrails
 uniform vec4 color : source_color = vec4(1.0);
 uniform float opacity = 0.6;
 uniform float wisp = 0.5;             // how broken up (noise) the ribbon looks
+uniform float self_lit = 0.0;         // extra brightness in daylight: smoke and vapour scatter sunlight from every side
+global uniform vec3 sun_dir;
 
 varying float v_alpha;
 varying float v_side;
@@ -93,6 +95,7 @@ void fragment() {
 	float body = mix(1.0, smoothstep(0.25, 0.75, n * 0.65 + n2 * 0.35), wisp);
 	ALPHA = clamp(v_alpha * opacity * across * across * body, 0.0, 1.0);
 	ALBEDO = color.rgb;
+	EMISSION = color.rgb * self_lit * smoothstep(-0.05, 0.25, sun_dir.y);
 	ROUGHNESS = 1.0;
 	BACKLIGHT = color.rgb * 0.6;       // sunlight through the vapour
 }

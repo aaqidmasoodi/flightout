@@ -7,6 +7,7 @@ var _t := 0.0
 var _vel := Vector3.ZERO
 const SPEED := 820.0
 const LIFE := 12.0
+const BURN := 6.0                  # motor burn (smoke) time, like a medium range missile
 
 
 func launch(from: Transform3D) -> void:
@@ -24,7 +25,7 @@ func launch(from: Transform3D) -> void:
 		global_position -= d
 		reset_physics_interpolation())
 	preload("res://scripts/fx/trail.gd").attach(self, Vector3(0.0, 0.0, 1.9), preload("res://scripts/fx/aircraft_trails.gd").SMOKE,
-		func(): return 1.0 if _t < LIFE - 1.0 else 0.0)
+		func(): return 1.0 if _t < BURN else 0.0)
 
 
 func _physics_process(delta: float) -> void:

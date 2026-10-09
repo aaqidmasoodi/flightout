@@ -10,6 +10,7 @@ extends MeshInstance3D
 ##
 ## Make one with Trail.attach(anchor, local_offset, preset, intensity_fn); presets are dictionaries:
 ##   lifetime (s), sample (s between stored points), width (m), growth (m/s), fade_in (s), color, opacity, wisp
+##   (0 smooth .. 1 broken up), self_lit (extra daylight brightness, so white smoke reads white against the sky)
 
 const SHADER := preload("res://shaders/trail.gdshader")
 const SUB := 2                                  # spline steps per stored point
@@ -73,6 +74,7 @@ func _ready() -> void:
 	_mat.set_shader_parameter("color", preset.get("color", Color.WHITE))
 	_mat.set_shader_parameter("opacity", float(preset.get("opacity", 0.6)))
 	_mat.set_shader_parameter("wisp", float(preset.get("wisp", 0.5)))
+	_mat.set_shader_parameter("self_lit", float(preset.get("self_lit", 0.0)))
 	material_override = _mat
 	visible = false
 	WorldData.origin_shifted.connect(_on_origin_shifted)

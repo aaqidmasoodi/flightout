@@ -11,15 +11,25 @@ extends Node
 ## Everything reads the aircraft's own readouts (G, alpha, speed, altitude, engine), which remote jets estimate from
 ## their motion, so other players' jets show the same. Settings: graphics/vapour.
 
+## Every trail is a preset of the same ribbon (scripts/fx/trail.gd). Lifetimes from how the real things behave:
+##   - contrails (FAA / EPA contrail fact sheet): in dry air the ice evaporates as the exhaust mixes, and the trail is
+##     gone within seconds to a minute or so (short-lived); only in ice-supersaturated air do they persist for
+##     minutes to hours and spread. So the lifetime follows the weather: clear skies give a trail a few kilometres
+##     long that dissolves behind the jet, an overcast, humid sky a long persistent one (CONTRAIL_LIFE).
+##   - missile smoke: the motor burns only a few seconds (about 2 s for an R-73, 5 to 8 s for longer range missiles)
+##     but the smoke it leaves hangs in the air much longer, dense and white at first, then thinning and spreading.
+##     It is what you see of a missile, so it must read clearly against the sky (whiter, self-lit).
 const VORTEX := {"lifetime": 1.4, "sample": 0.025, "width": 0.3, "growth": 0.5, "fade_in": 0.03,
-	"color": Color(0.96, 0.97, 1.0), "opacity": 0.55, "wisp": 0.55}
+	"color": Color(0.97, 0.98, 1.0), "opacity": 0.6, "wisp": 0.55, "self_lit": 0.2}
 const LERX := {"lifetime": 0.07, "sample": 0.012, "width": 1.0, "growth": 38.0, "fade_in": 0.0,
-	"color": Color(0.96, 0.97, 1.0), "opacity": 0.32, "wisp": 0.8}
-const CONTRAIL := {"lifetime": 45.0, "sample": 0.2, "width": 1.6, "growth": 0.7, "fade_in": 0.18,
-	"color": Color(0.97, 0.98, 1.0), "opacity": 0.7, "wisp": 0.35}
-## For missiles (tomorrow): a grey smoke trail from the motor while it burns.
-const SMOKE := {"lifetime": 10.0, "sample": 0.04, "width": 0.7, "growth": 2.2, "fade_in": 0.0,
-	"color": Color(0.82, 0.82, 0.84), "opacity": 0.75, "wisp": 0.6}
+	"color": Color(0.97, 0.98, 1.0), "opacity": 0.35, "wisp": 0.8, "self_lit": 0.2}
+const CONTRAIL := {"lifetime": 20.0, "sample": 0.2, "width": 1.6, "growth": 0.9, "fade_in": 0.18,
+	"color": Color(0.97, 0.98, 1.0), "opacity": 0.7, "wisp": 0.35, "self_lit": 0.1}
+## contrail lifetime (s) by weather: clear, scattered, broken, overcast, fog, rain (drier air: shorter trails)
+const CONTRAIL_LIFE := [12.0, 20.0, 35.0, 70.0, 30.0, 50.0]
+## Missile motor smoke: dense and white near the missile, hanging for half a minute while it thins and spreads.
+const SMOKE := {"lifetime": 35.0, "sample": 0.08, "width": 1.2, "growth": 1.0, "fade_in": 0.0,
+	"color": Color(0.95, 0.95, 0.96), "opacity": 0.95, "wisp": 0.35, "self_lit": 0.35}
 
 ## Emitters in the model's own coordinates (Su-27: +X left wing, +Z nose), from its light and nozzle empties.
 const POINTS := {"su27": {
@@ -42,8 +52,10 @@ func setup(ac: Node3D, model: Node3D) -> void:
 		_trails.append(load("res://scripts/fx/trail.gd").attach(ac, m * p, VORTEX, _vortex))
 	for p in pts.lerx:
 		_trails.append(load("res://scripts/fx/trail.gd").attach(ac, m * p, LERX, _lerx))
+	var con := CONTRAIL.duplicate()
+	con.lifetime = CONTRAIL_LIFE[clampi(WorldData.conditions, 0, 5)]
 	for p in pts.nozzles:
-		_trails.append(load("res://scripts/fx/trail.gd").attach(ac, m * p, CONTRAIL, _contrail))
+		_trails.append(load("res://scripts/fx/trail.gd").attach(ac, m * p, con, _contrail))
 	Settings.changed.connect(func(_k, _v): _on = bool(Settings.get_value("graphics/vapour")))
 	_on = bool(Settings.get_value("graphics/vapour"))
 

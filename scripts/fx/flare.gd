@@ -5,8 +5,8 @@ extends Node3D
 
 const BURN := 4.5                  # s
 const DRAG := 0.9                  # 1/s: a flare loses most of the jet's speed within a couple of seconds
-const SMOKE := {"lifetime": 7.0, "sample": 0.05, "width": 0.35, "growth": 1.3, "fade_in": 0.05,
-	"color": Color(0.9, 0.9, 0.9), "opacity": 0.55, "wisp": 0.7}
+const SMOKE := {"lifetime": 10.0, "sample": 0.05, "width": 0.5, "growth": 1.3, "fade_in": 0.05,
+	"color": Color(0.95, 0.95, 0.96), "opacity": 0.8, "wisp": 0.5, "self_lit": 0.35}
 
 var _vel := Vector3.ZERO
 var _t := 0.0
