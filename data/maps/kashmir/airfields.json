@@ -1,0 +1,862 @@
+{
+ "source": "OurAirports (public domain)",
+ "airfields": [
+  {
+   "id": "OPLA",
+   "icao": "OPLA",
+   "name": "Allama Iqbal International Airport",
+   "country": "PK",
+   "type": "large_airport",
+   "lat": 31.521601,
+   "lon": 74.403603,
+   "x": -189310.2,
+   "z": 334920.3,
+   "runways": [
+    {
+     "ids": [
+      "18L",
+      "36R"
+     ],
+     "a": [
+      -189165.4,
+      216.75,
+      333254.72
+     ],
+     "b": [
+      -189275.87,
+      214.64,
+      336600.63
+     ],
+     "length": 3347.7,
+     "width": 46.0,
+     "surface": "CON"
+    },
+    {
+     "ids": [
+      "18R",
+      "36L"
+     ],
+     "a": [
+      -189360.52,
+      216.62,
+      333551.38
+     ],
+     "b": [
+      -189450.39,
+      215.06,
+      336297.07
+     ],
+     "length": 2747.2,
+     "width": 46.0,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "VIAW",
+   "icao": "VIAW",
+   "name": "Awantipura Air Force Station",
+   "country": "IN",
+   "type": "small_airport",
+   "lat": 33.876598,
+   "lon": 74.9757,
+   "x": -131488.1,
+   "z": 73957.4,
+   "runways": [
+    {
+     "ids": [
+      "12",
+      "30"
+     ],
+     "a": [
+      -132804.39,
+      1651.59,
+      73037.67
+     ],
+     "b": [
+      -130180.55,
+      1643.63,
+      74865.2
+     ],
+     "length": 3197.6,
+     "width": 45.7,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "VI88",
+   "icao": "VI88",
+   "name": "Beas Airport",
+   "country": "IN",
+   "type": "small_airport",
+   "lat": 31.559999,
+   "lon": 75.341301,
+   "x": -100354.0,
+   "z": 331960.9,
+   "runways": [
+    {
+     "ids": [
+      "16",
+      "34"
+     ],
+     "a": [
+      -100547.09,
+      233.43,
+      331380.41
+     ],
+     "b": [
+      -100151.46,
+      231.93,
+      332541.08
+     ],
+     "length": 1226.2,
+     "width": 32.0,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "OPBG",
+   "icao": "OPBG",
+   "name": "Bhagatanwala Airport",
+   "country": "PK",
+   "type": "small_airport",
+   "lat": 32.056098938,
+   "lon": 72.948402,
+   "x": -325325.5,
+   "z": 271867.7,
+   "runways": [
+    {
+     "ids": [
+      "07",
+      "25"
+     ],
+     "a": [
+      -326622.52,
+      192.55,
+      272291.67
+     ],
+     "b": [
+      -324029.29,
+      193.84,
+      271443.53
+     ],
+     "length": 2728.4,
+     "width": 45.0,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "OP1Y",
+   "icao": "OP1Y",
+   "name": "Chandhar Airport",
+   "country": "PK",
+   "type": "small_airport",
+   "lat": 32.0778007507,
+   "lon": 73.790199,
+   "x": -245942.6,
+   "z": 271785.6,
+   "runways": [
+    {
+     "ids": [
+      "05",
+      "23"
+     ],
+     "a": [
+      -247019.69,
+      212.09,
+      272637.23
+     ],
+     "b": [
+      -244874.78,
+      212.92,
+      270922.56
+     ],
+     "length": 2746.0,
+     "width": 45.0,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "OPQS",
+   "icao": "OPQS",
+   "name": "Dhamial Army Airbase",
+   "country": "PK",
+   "type": "small_airport",
+   "lat": 33.5602,
+   "lon": 73.033203,
+   "x": -311924.8,
+   "z": 104905.4,
+   "runways": [
+    {
+     "ids": [
+      "14",
+      "32"
+     ],
+     "a": [
+      -312509.33,
+      500.16,
+      104073.44
+     ],
+     "b": [
+      -311330.97,
+      487.86,
+      105737.67
+     ],
+     "length": 2039.2,
+     "width": 45.1,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "VI66",
+   "icao": "VI66",
+   "name": "Fukche Advanced Landing Ground",
+   "country": "IN",
+   "type": "small_airport",
+   "lat": 32.937401,
+   "lon": 79.213203,
+   "x": 262536.3,
+   "z": 175706.9,
+   "runways": [
+    {
+     "ids": [
+      "13",
+      "31"
+     ],
+     "a": [
+      261575.79,
+      4164.87,
+      174720.97
+     ],
+     "b": [
+      263496.29,
+      4182.99,
+      176693.25
+     ],
+     "length": 2752.9,
+     "width": 50.0,
+     "surface": "GVL"
+    }
+   ]
+  },
+  {
+   "id": "OPGT",
+   "icao": "OPGT",
+   "name": "Gilgit Airport",
+   "country": "PK",
+   "type": "medium_airport",
+   "lat": 35.918800354003906,
+   "lon": 74.333603,
+   "x": -186085.9,
+   "z": -154129.1,
+   "runways": [
+    {
+     "ids": [
+      "07",
+      "25"
+     ],
+     "a": [
+      -186866.39,
+      1460.53,
+      -153878.43
+     ],
+     "b": [
+      -185297.45,
+      1460.48,
+      -154368.74
+     ],
+     "length": 1643.8,
+     "width": 45.0,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "ZWTN",
+   "icao": "ZWTN",
+   "name": "Hotan Airport",
+   "country": "CN",
+   "type": "medium_airport",
+   "lat": 37.03850173950195,
+   "lon": 79.864899,
+   "x": 307574.7,
+   "z": -282096.0,
+   "runways": [
+    {
+     "ids": [
+      "11",
+      "29"
+     ],
+     "a": [
+      306073.02,
+      1406.79,
+      -282599.78
+     ],
+     "b": [
+      309076.53,
+      1424.4,
+      -281592.13
+     ],
+     "length": 3168.0,
+     "width": 50.0,
+     "surface": "CON"
+    }
+   ]
+  },
+  {
+   "id": "OPIS",
+   "icao": "OPIS",
+   "name": "Islamabad International Airport",
+   "country": "PK",
+   "type": "large_airport",
+   "lat": 33.549,
+   "lon": 72.82566,
+   "x": -331188.8,
+   "z": 105495.3,
+   "runways": [
+    {
+     "ids": [
+      "10L",
+      "28R"
+     ],
+     "a": [
+      -332938.38,
+      531.26,
+      104988.29
+     ],
+     "b": [
+      -329386.78,
+      534.43,
+      105780.91
+     ],
+     "length": 3639.0,
+     "width": 44.8,
+     "surface": "ASP"
+    },
+    {
+     "ids": [
+      "10R",
+      "28L"
+     ],
+     "a": [
+      -332987.88,
+      531.22,
+      105189.94
+     ],
+     "b": [
+      -329428.63,
+      534.44,
+      105988.36
+     ],
+     "length": 3647.7,
+     "width": 60.0,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "VIJU",
+   "icao": "VIJU",
+   "name": "Jammu Airport",
+   "country": "IN",
+   "type": "medium_airport",
+   "lat": 32.688849,
+   "lon": 74.838152,
+   "x": -146183.4,
+   "z": 205838.6,
+   "runways": [
+    {
+     "ids": [
+      "18",
+      "36"
+     ],
+     "a": [
+      -146294.09,
+      293.35,
+      204774.81
+     ],
+     "b": [
+      -146212.8,
+      288.61,
+      206833.29
+     ],
+     "length": 2060.1,
+     "width": 45.1,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "VIGG",
+   "icao": "VIGG",
+   "name": "Kangra Airport",
+   "country": "IN",
+   "type": "medium_airport",
+   "lat": 32.164902,
+   "lon": 76.263018,
+   "x": -12897.7,
+   "z": 265202.6,
+   "runways": [
+    {
+     "ids": [
+      "15",
+      "33"
+     ],
+     "a": [
+      -13237.55,
+      769.2,
+      264579.48
+     ],
+     "b": [
+      -12485.55,
+      749.7,
+      265770.29
+     ],
+     "length": 1408.4,
+     "width": 45.0,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "VI65",
+   "icao": "VI65",
+   "name": "Kargil Airport",
+   "country": "IN",
+   "type": "small_airport",
+   "lat": 34.5243,
+   "lon": 76.155899,
+   "x": -22362.6,
+   "z": 2830.7,
+   "runways": [
+    {
+     "ids": [
+      "02",
+      "20"
+     ],
+     "a": [
+      -22703.66,
+      2926.66,
+      3685.91
+     ],
+     "b": [
+      -22012.49,
+      2913.63,
+      1986.62
+     ],
+     "length": 1834.5,
+     "width": 32.3,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "VILH",
+   "icao": "VILH",
+   "name": "Leh Kushok Bakula Rimpochee Airport",
+   "country": "IN",
+   "type": "medium_airport",
+   "lat": 34.135899,
+   "lon": 77.546501,
+   "x": 105519.4,
+   "z": 45449.3,
+   "runways": [
+    {
+     "ids": [
+      "07L",
+      "25R"
+     ],
+     "a": [
+      104245.76,
+      3221.51,
+      45974.88
+     ],
+     "b": [
+      106792.99,
+      3308.88,
+      44934.31
+     ],
+     "length": 2751.6,
+     "width": 45.7,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "OPMA",
+   "icao": "OPMA",
+   "name": "Mangla Airport",
+   "country": "PK",
+   "type": "medium_airport",
+   "lat": 33.05009841918945,
+   "lon": 73.638397,
+   "x": -257388.4,
+   "z": 163307.7,
+   "runways": [
+    {
+     "ids": [
+      "14",
+      "32"
+     ],
+     "a": [
+      -257904.84,
+      270.66,
+      162748.38
+     ],
+     "b": [
+      -256871.78,
+      267.71,
+      163866.66
+     ],
+     "length": 1522.4,
+     "width": 30.5,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "OPMS",
+   "icao": "OPMS",
+   "name": "Minhas Air Base",
+   "country": "PK",
+   "type": "medium_airport",
+   "lat": 33.8690986633,
+   "lon": 72.400902,
+   "x": -369137.5,
+   "z": 68446.0,
+   "runways": [
+    {
+     "ids": [
+      "12",
+      "30"
+     ],
+     "a": [
+      -370398.07,
+      307.82,
+      67605.4
+     ],
+     "b": [
+      -367876.67,
+      322.73,
+      69286.04
+     ],
+     "length": 3030.2,
+     "width": 50.3,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "OPRN",
+   "icao": "OPRN",
+   "name": "PAF Base Nur Khan (Benazir Bhutto International Airport)",
+   "country": "PK",
+   "type": "medium_airport",
+   "lat": 33.616699,
+   "lon": 73.099197,
+   "x": -305610.8,
+   "z": 98824.0,
+   "runways": [
+    {
+     "ids": [
+      "12",
+      "30"
+     ],
+     "a": [
+      -307066.03,
+      506.32,
+      97986.57
+     ],
+     "b": [
+      -304218.83,
+      506.06,
+      99637.07
+     ],
+     "length": 3291.0,
+     "width": 45.7,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "VIPK",
+   "icao": "VIPK",
+   "name": "Pathankot Airport",
+   "country": "IN",
+   "type": "medium_airport",
+   "lat": 32.233611,
+   "lon": 75.634444,
+   "x": -72025.4,
+   "z": 257303.5,
+   "runways": [
+    {
+     "ids": [
+      "01",
+      "19"
+     ],
+     "a": [
+      -72236.85,
+      304.48,
+      258648.64
+     ],
+     "b": [
+      -71784.36,
+      320.68,
+      255949.87
+     ],
+     "length": 2736.4,
+     "width": 45.7,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "OP27",
+   "icao": "OP27",
+   "name": "Rahwali Airport",
+   "country": "PK",
+   "type": "small_airport",
+   "lat": 32.23899841308594,
+   "lon": 74.130997,
+   "x": -213445.6,
+   "z": 254621.6,
+   "runways": [
+    {
+     "ids": [
+      "05",
+      "23"
+     ],
+     "a": [
+      -214192.24,
+      225.75,
+      255216.63
+     ],
+     "b": [
+      -212707.71,
+      227.26,
+      254025.92
+     ],
+     "length": 1903.1,
+     "width": 45.1,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "OPSS",
+   "icao": "OPSS",
+   "name": "Saidu Sharif Airport",
+   "country": "PK",
+   "type": "medium_airport",
+   "lat": 34.813599,
+   "lon": 72.352798,
+   "x": -369381.7,
+   "z": -36729.2,
+   "runways": [
+    {
+     "ids": [
+      "05",
+      "23"
+     ],
+     "a": [
+      -370087.76,
+      935.35,
+      -36212.17
+     ],
+     "b": [
+      -368676.11,
+      970.49,
+      -37235.59
+     ],
+     "length": 1743.6,
+     "width": 46.0,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "OPSD",
+   "icao": "OPSD",
+   "name": "Skardu International Airport",
+   "country": "PK",
+   "type": "large_airport",
+   "lat": 35.33866,
+   "lon": 75.538648,
+   "x": -78132.3,
+   "z": -88030.4,
+   "runways": [
+    {
+     "ids": [
+      "14L",
+      "32R"
+     ],
+     "a": [
+      -79207.01,
+      2227.2,
+      -88011.01
+     ],
+     "b": [
+      -78305.99,
+      2230.11,
+      -86246.11
+     ],
+     "length": 1981.6,
+     "width": 30.8,
+     "surface": "ASP"
+    },
+    {
+     "ids": [
+      "14R",
+      "32L"
+     ],
+     "a": [
+      -78856.95,
+      2211.76,
+      -89664.44
+     ],
+     "b": [
+      -76906.27,
+      2226.89,
+      -86578.68
+     ],
+     "length": 3650.6,
+     "width": 45.7,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "VIAR",
+   "icao": "VIAR",
+   "name": "Sri Guru Ram Das Ji International Airport",
+   "country": "IN",
+   "type": "large_airport",
+   "lat": 31.7096,
+   "lon": 74.797302,
+   "x": -151665.4,
+   "z": 314664.3,
+   "runways": [
+    {
+     "ids": [
+      "16",
+      "34"
+     ],
+     "a": [
+      -152276.06,
+      231.06,
+      313131.03
+     ],
+     "b": [
+      -151063.77,
+      229.73,
+      316197.29
+     ],
+     "length": 3297.2,
+     "width": 45.1,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "VISR",
+   "icao": "VISR",
+   "name": "Srinagar International Airport",
+   "country": "IN",
+   "type": "large_airport",
+   "lat": 33.987099,
+   "lon": 74.7742,
+   "x": -149893.0,
+   "z": 61391.4,
+   "runways": [
+    {
+     "ids": [
+      "13",
+      "31"
+     ],
+     "a": [
+      -151116.6,
+      1648.7,
+      60048.03
+     ],
+     "b": [
+      -148659.63,
+      1670.12,
+      62723.37
+     ],
+     "length": 3632.4,
+     "width": 45.7,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "VI57",
+   "icao": "VI57",
+   "name": "Thoise Airport",
+   "country": "IN",
+   "type": "small_airport",
+   "lat": 34.652599,
+   "lon": 77.375801,
+   "x": 89255.9,
+   "z": -11839.9,
+   "runways": [
+    {
+     "ids": [
+      "10",
+      "28"
+     ],
+     "a": [
+      87788.28,
+      3063.76,
+      -12270.9
+     ],
+     "b": [
+      90714.53,
+      3063.12,
+      -11409.62
+     ],
+     "length": 3050.4,
+     "width": 44.2,
+     "surface": "ASP"
+    }
+   ]
+  },
+  {
+   "id": "VIUX",
+   "icao": "VIUX",
+   "name": "Udhampur Air Force Station",
+   "country": "IN",
+   "type": "medium_airport",
+   "lat": 32.902152,
+   "lon": 75.155709,
+   "x": -116179.4,
+   "z": 182527.1,
+   "runways": [
+    {
+     "ids": [
+      "18",
+      "36"
+     ],
+     "a": [
+      -116145.06,
+      651.5,
+      181143.12
+     ],
+     "b": [
+      -116121.79,
+      615.36,
+      183901.32
+     ],
+     "length": 2758.3,
+     "width": 45.1,
+     "surface": "PEM"
+    }
+   ]
+  }
+ ]
+}

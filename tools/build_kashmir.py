@@ -96,6 +96,50 @@ class Dem:
         return out
 
 
+def load_runways(path):
+    """Runways from data/maps/kashmir/airfields.json (tools/build_airfields.py), as flattening boxes."""
+    if not path or not os.path.exists(path):
+        return []
+    rw = []
+    for a in json.load(open(path))["airfields"]:
+        for r in a["runways"]:
+            A = np.array([r["a"][0], r["a"][2]])
+            B = np.array([r["b"][0], r["b"][2]])
+            L = float(np.linalg.norm(B - A))
+            rw.append({"A": A, "u": (B - A) / L, "L": L, "ha": r["a"][1], "hb": r["b"][1], "hw": r["width"] / 2.0})
+    return rw
+
+
+FLAT_ALONG = 90.0      # flat beyond each runway end (m)
+FLAT_ACROSS = 45.0     # flat beyond each runway edge (more than one grid cell: no terrain triangle pokes through)
+BLEND = 160.0          # then blended back into the natural ground over this distance
+
+
+def flatten(X, Z, H, runways):
+    """Levels the ground under every runway to its straight profile (in place)."""
+    for r in runways:
+        A, u, L = r["A"], r["u"], r["L"]
+        ext = L / 2.0 + FLAT_ALONG + BLEND
+        c = A + u * L / 2.0
+        if Z.max() < c[1] - ext or Z.min() > c[1] + ext or X.max() < c[0] - ext or X.min() > c[0] + ext:
+            continue
+        dx = X - A[0]
+        dz = Z - A[1]
+        along = dx * u[0] + dz * u[1]
+        across = np.abs(dx * u[1] - dz * u[0])
+        out_a = np.maximum(np.maximum(-along - FLAT_ALONG, along - L - FLAT_ALONG), 0.0)
+        out_c = np.maximum(across - r["hw"] - FLAT_ACROSS, 0.0)
+        d = np.hypot(out_a, out_c)
+        m = d < BLEND
+        if not m.any():
+            continue
+        t = np.clip(along[m] / L, 0.0, 1.0)
+        plane = r["ha"] + (r["hb"] - r["ha"]) * t
+        w = 1.0 - np.clip(d[m] / BLEND, 0.0, 1.0)
+        w = w * w * (3.0 - 2.0 * w)
+        H[m] = H[m] * (1.0 - w) + plane * w
+
+
 def encode(h):
     return np.clip(np.round((h - H_OFFSET) / H_SCALE), 0, 65535).astype("<u2")
 
@@ -104,6 +148,8 @@ def main():
     src, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
     dem = Dem(src)
+    runways = load_runways(sys.argv[sys.argv.index("--airfields") + 1] if "--airfields" in sys.argv else "")
+    print("%d runways to flatten" % len(runways), flush=True)
     x0, z0 = -HALF_X, -HALF_Z
     leaf = TQ * SPACING
     nx0 = int(math.ceil(2 * HALF_X / leaf))
@@ -132,6 +178,7 @@ def main():
                 X, Z = np.meshgrid(xs, zs)
                 lat, lon = inverse_aeqd(X, Z)
                 H = dem.sample(lat, lon)
+                flatten(X, Z, H, runways)
                 for i in range(nx):
                     t = H[:, i * TQ: i * TQ + TS]
                     e = encode(t)

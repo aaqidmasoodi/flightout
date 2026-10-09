@@ -11,8 +11,10 @@ extends Node3D
 ## (shaders/terrain_cdlod.gdshader). Near the edge of its range a tile's vertices slide onto the grid of the next
 ## level up (morphing), so neighbouring tiles of different levels always meet without cracks and nothing pops.
 ##
-## Heights stream from disk: a tile is read only when it is about to be drawn, into a fixed pool of texture layers
-## (least recently used ones are recycled). Until a child is loaded its parent keeps drawing, so there are no holes.
+## Heights stream from disk on worker threads: every tile the quadtree wants around the camera is kept resident,
+## whichever way you look (only drawing is limited to the view), so turning your head never has to wait for data.
+## Tiles live in a fixed pool of texture layers (least recently used ones are recycled). Until a child is loaded its
+## parent keeps drawing, so there are never holes.
 ##
 ## Floating origin: this node is NOT under the World node; instances are placed in scene coordinates
 ## (map minus WorldData origin) every frame, so nearby terrain always has full float precision.
@@ -20,8 +22,9 @@ extends Node3D
 const SHADER := preload("res://shaders/terrain_cdlod.gdshader")
 const RANGE_K := 2.6               # split a tile while the camera is closer than this many tile sizes
 const MORPH_START := 0.7           # fraction of the next level's range where morphing begins
-const POOL := 640                  # texture layers resident
-const LOADS_PER_FRAME := 12
+const POOL := 1280                 # texture layers resident
+const LOADS_PER_FRAME := 24        # finished tiles uploaded per frame
+const MAX_IN_FLIGHT := 48          # tiles being read on worker threads at once
 
 var dir := ""
 var meta := {}
@@ -36,10 +39,8 @@ var h_offset := -500.0
 var tiles: Array[Vector2i] = []    # per level: (nx, nz)
 var material: ShaderMaterial
 
-var _files: Array = []             # per level FileAccess
 var _index: Array = []             # per level PackedByteArray of uint64 tile offsets (compressed format)
 var _zstd := false
-var _lc_files: Array = []          # land cover tiles (optional): same layout, one byte per sample
 var _lc_index: Array = []
 var _lc_tex: Texture2DArray
 var _minmax: Array = []            # per level PackedByteArray (u16 min, max per tile)
@@ -56,6 +57,9 @@ var _cam_map := Vector3.ZERO
 var _planes: Array = []
 var stats := {"drawn": 0, "resident": 0, "loads": 0}
 var _log_stats := "--terrain-stats" in OS.get_cmdline_user_args()
+var _pending := {}                 # key -> true while a worker reads it
+var _done: Array = []              # [key, heights, cover] read by workers, waiting for upload
+var _mutex := Mutex.new()
 
 
 static func available(path: String) -> bool:
@@ -80,13 +84,11 @@ func setup(path: String) -> bool:
 	for lv in levels:
 		var t: Array = m.tiles[lv]
 		tiles.append(Vector2i(int(t[0]), int(t[1])))
-		_files.append(FileAccess.open(dir.path_join("h%d.bin" % lv), FileAccess.READ))
 		_minmax.append(FileAccess.get_file_as_bytes(dir.path_join("mm%d.bin" % lv)))
 		_index.append(FileAccess.get_file_as_bytes(dir.path_join("i%d.bin" % lv)) if m.get("compression", "") == "zstd" else PackedByteArray())
 	_zstd = m.get("compression", "") == "zstd"
 	if FileAccess.file_exists(dir.path_join("lc0.bin")):
 		for lv in levels:
-			_lc_files.append(FileAccess.open(dir.path_join("lc%d.bin" % lv), FileAccess.READ))
 			_lc_index.append(FileAccess.get_file_as_bytes(dir.path_join("lci%d.bin" % lv)))
 	# texture pool
 	var blank := Image.create(ts, ts, false, Image.FORMAT_R16)
@@ -95,7 +97,7 @@ func setup(path: String) -> bool:
 		imgs.append(blank)
 	_tex = Texture2DArray.new()
 	_tex.create_from_images(imgs)
-	if not _lc_files.is_empty():
+	if not _lc_index.is_empty():
 		var blank_lc := Image.create(ts, ts, false, Image.FORMAT_R8)
 		var lcs: Array[Image] = []
 		for i in POOL:
@@ -135,7 +137,9 @@ func setup(path: String) -> bool:
 	var top := levels - 1
 	for j in tiles[top].y:
 		for i in tiles[top].x:
-			_load(_key(top, i, j))
+			var k := _key(top, i, j)
+			_apply(k, _read(k))
+	process_priority = 200            # after the camera has moved this frame: culling uses this frame's view
 	return true
 
 
@@ -161,12 +165,13 @@ func _process(_delta: float) -> void:
 	_frame += 1
 	_cam_map = WorldData.to_world(cam.global_position)
 	_planes = cam.get_frustum()
+	material.set_shader_parameter("view_far", cam.far)      # the aerial perspective closes in on the far plane
 	_draw.clear()
 	_wanted.clear()
 	var top := levels - 1
 	for j in tiles[top].y:
 		for i in tiles[top].x:
-			_select(top, i, j)
+			_select(top, i, j, true)
 	_stream()
 	_build_instances()
 	if _log_stats and _frame % 60 == 0:
@@ -188,8 +193,10 @@ func _distance(level: int, i: int, j: int) -> float:
 func _visible(level: int, i: int, j: int) -> bool:
 	var s := tile_size(level)
 	var hr := _height_range(level, i, j)
-	var mn := Vector3(x0 + i * s - WorldData.origin_x, hr.x - 30.0, z0 + j * s - WorldData.origin_z)
-	var mx := Vector3(mn.x + s, hr.y + 30.0, mn.z + s)
+	# a margin around the box: the view can turn a little between this test and the frame being drawn
+	var m := s * 0.15 + 30.0
+	var mn := Vector3(x0 + i * s - WorldData.origin_x - m, hr.x - m, z0 + j * s - WorldData.origin_z - m)
+	var mx := Vector3(mn.x + s + 2.0 * m, hr.y + m, mn.z + s + 2.0 * m)
 	for p: Plane in _planes:
 		# the corner furthest against the plane normal: if even that is outside, the whole box is
 		var c := Vector3(mn.x if p.normal.x > 0.0 else mx.x, mn.y if p.normal.y > 0.0 else mx.y, mn.z if p.normal.z > 0.0 else mx.z)
@@ -198,10 +205,12 @@ func _visible(level: int, i: int, j: int) -> bool:
 	return true
 
 
-func _select(level: int, i: int, j: int) -> void:
-	if not _visible(level, i, j):
-		return
+## Walks the quadtree. Every tile it reaches is kept resident; `vis` (in the view) decides drawing only.
+func _select(level: int, i: int, j: int, vis: bool) -> void:
+	if vis:
+		vis = _visible(level, i, j)
 	var d := _distance(level, i, j)
+	var prio := d if vis else d * 4.0 + 1e6          # what you can see loads first
 	if level > 0 and d < RANGE_K * tile_size(level):
 		# split: only once every child that exists is loaded (until then this tile keeps drawing)
 		var ready := true
@@ -215,69 +224,97 @@ func _select(level: int, i: int, j: int) -> void:
 			var k := _key(level - 1, ci, cj)
 			if not _layer_of.has(k):
 				ready = false
-				_wanted[k] = d
+				_wanted[k] = prio
 		if ready and not kids.is_empty():
 			for kc: Vector2i in kids:
-				_select(level - 1, kc.x, kc.y)
+				_select(level - 1, kc.x, kc.y, vis)
 			return
 	var key := _key(level, i, j)
 	if _layer_of.has(key):
-		_draw.append([level, i, j, _layer_of[key]])
 		_used[_layer_of[key]] = _frame
+		if vis:
+			_draw.append([level, i, j, _layer_of[key]])
 	else:
-		_wanted[key] = d
+		_wanted[key] = prio
 
 
 func _stream() -> void:
+	# upload what the workers have finished
+	_mutex.lock()
+	var ready := _done.slice(0, LOADS_PER_FRAME)
+	_done = _done.slice(LOADS_PER_FRAME)
+	_mutex.unlock()
+	for r in ready:
+		_pending.erase(r[0])
+		_apply(r[0], r)
+	stats.loads += ready.size()
+	# start reading the most wanted tiles
 	if _wanted.is_empty():
 		return
 	var keys := _wanted.keys()
 	keys.sort_custom(func(a, b): return _wanted[a] < _wanted[b])
-	var n := 0
 	for k in keys:
-		if n >= LOADS_PER_FRAME:
+		if _pending.size() >= MAX_IN_FLIGHT:
 			break
-		if _load(k):
-			n += 1
-	stats.loads += n
+		if _pending.has(k) or _layer_of.has(k):
+			continue
+		_pending[k] = true
+		WorkerThreadPool.add_task(_worker.bind(k))
 
 
-func _load(key: int) -> bool:
-	if _layer_of.has(key):
-		return false
+func _worker(key: int) -> void:
+	var r := _read(key)
+	_mutex.lock()
+	_done.append(r)
+	_mutex.unlock()
+
+
+## Reads and decompresses one tile (heights and land cover). Safe on any thread: opens its own file handles.
+func _read(key: int) -> Array:
 	var level := key >> 48
 	var j := (key >> 24) & 0xFFFFFF
 	var i := key & 0xFFFFFF
+	var n := j * tiles[level].x + i
+	var bytes := ts * ts * 2
+	var data := PackedByteArray()
+	var f := FileAccess.open(dir.path_join("h%d.bin" % level), FileAccess.READ)
+	if f:
+		if _zstd:
+			var idx: PackedByteArray = _index[level]
+			var a := idx.decode_u64(n * 8)
+			var b := idx.decode_u64(n * 8 + 8)
+			f.seek(a)
+			data = f.get_buffer(b - a).decompress(bytes, FileAccess.COMPRESSION_ZSTD)
+		else:
+			f.seek(n * bytes)
+			data = f.get_buffer(bytes)
+	var lc := PackedByteArray()
+	if not _lc_index.is_empty():
+		var lf := FileAccess.open(dir.path_join("lc%d.bin" % level), FileAccess.READ)
+		if lf:
+			var li: PackedByteArray = _lc_index[level]
+			var la := li.decode_u64(n * 8)
+			var lb := li.decode_u64(n * 8 + 8)
+			lf.seek(la)
+			lc = lf.get_buffer(lb - la).decompress(ts * ts, FileAccess.COMPRESSION_ZSTD)
+	return [key, data, lc]
+
+
+## Puts a read tile into a texture layer (main thread).
+func _apply(key: int, r: Array) -> bool:
+	if _layer_of.has(key):
+		return false
+	var data: PackedByteArray = r[1]
+	if data.size() != ts * ts * 2:
+		push_error("Terrain: tile %d damaged" % key)
+		return false
 	var layer := _free_layer()
 	if layer < 0:
 		return false
-	var f: FileAccess = _files[level]
-	var bytes := ts * ts * 2
-	var n := j * tiles[level].x + i
-	var data: PackedByteArray
-	if _zstd:
-		var idx: PackedByteArray = _index[level]
-		var a := idx.decode_u64(n * 8)
-		var b := idx.decode_u64(n * 8 + 8)
-		f.seek(a)
-		data = f.get_buffer(b - a).decompress(bytes, FileAccess.COMPRESSION_ZSTD)
-	else:
-		f.seek(n * bytes)
-		data = f.get_buffer(bytes)
-	if data.size() != bytes:
-		push_error("Terrain: tile %d/%d/%d damaged" % [level, i, j])
-		return false
-	var img := Image.create_from_data(ts, ts, false, Image.FORMAT_R16, data)
-	RenderingServer.texture_2d_update(_tex.get_rid(), img, layer)
-	if _lc_tex:
-		var li: PackedByteArray = _lc_index[level]
-		var la := li.decode_u64(n * 8)
-		var lb := li.decode_u64(n * 8 + 8)
-		var lf: FileAccess = _lc_files[level]
-		lf.seek(la)
-		var lc := lf.get_buffer(lb - la).decompress(ts * ts, FileAccess.COMPRESSION_ZSTD)
-		if lc.size() == ts * ts:
-			RenderingServer.texture_2d_update(_lc_tex.get_rid(), Image.create_from_data(ts, ts, false, Image.FORMAT_R8, lc), layer)
+	RenderingServer.texture_2d_update(_tex.get_rid(), Image.create_from_data(ts, ts, false, Image.FORMAT_R16, data), layer)
+	var lc: PackedByteArray = r[2]
+	if _lc_tex and lc.size() == ts * ts:
+		RenderingServer.texture_2d_update(_lc_tex.get_rid(), Image.create_from_data(ts, ts, false, Image.FORMAT_R8, lc), layer)
 	if _key_of[layer] >= 0:
 		_layer_of.erase(_key_of[layer])
 	_key_of[layer] = key

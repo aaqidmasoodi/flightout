@@ -20,6 +20,9 @@ uniform float haze_density = 0.0;
 uniform vec3 hor_toward : source_color = vec3(0.0);
 uniform vec3 hor_away : source_color = vec3(0.0);
 uniform vec2 sun_xz = vec2(0.0);
+uniform float aerial_k = 1.0;        // large maps: strength of the aerial perspective
+uniform float aerial_max = 0.9;      // never fully hazed: distant ranges keep their silhouette
+uniform float view_far = 1e9;        // camera far plane (set by the streamer)
 
 float haze_mean(float y0, float y1) {
 	const float H = 2500.0;
@@ -93,12 +96,12 @@ vec3 cover_col(float c, float macro, float macro2, float det, float fields, floa
 	if (c < 25.0) return mix(grass, bare, 0.45) * 0.9;                                // shrubland
 	if (c < 35.0) return grass;                                                         // grassland
 	if (c < 45.0) {                                                                     // cropland: a patchwork of fields
-		vec3 f1 = vec3(0.1, 0.15, 0.05), f2 = vec3(0.2, 0.19, 0.09), f3 = vec3(0.15, 0.12, 0.07), f4 = vec3(0.13, 0.17, 0.06);
+		vec3 f1 = vec3(0.09, 0.14, 0.045), f2 = vec3(0.15, 0.16, 0.07), f3 = vec3(0.13, 0.12, 0.07), f4 = vec3(0.11, 0.155, 0.05);
 		return fields < 0.25 ? f1 : (fields < 0.5 ? f2 : (fields < 0.75 ? f3 : f4));
 	}
 	if (c < 55.0) {                                                                     // built-up: roofs among trees and gardens
-		vec3 roofs = mix(vec3(0.13, 0.12, 0.11), vec3(0.22, 0.19, 0.16), fields);
-		return mix(roofs, grass * 0.8, smoothstep(0.45, 0.7, det) * 0.6);
+		vec3 roofs = mix(vec3(0.12, 0.11, 0.1), vec3(0.18, 0.16, 0.14), fields);
+		return mix(roofs, grass * 0.75, 0.25 + smoothstep(0.4, 0.7, det) * 0.4);
 	}
 	if (c < 65.0) return bare;                                                          // bare / sparse vegetation
 	if (c < 75.0) return vec3(0.84, 0.87, 0.92) * (0.93 + 0.07 * det);                // snow and ice
@@ -130,7 +133,7 @@ void fragment() {
 				+ (vec2(texture(detail_tex, tc(sp, 50.0) + 0.11).r, texture(detail_tex, tc(sp, 50.0) + 0.61).r) - 0.5) * 0.8;
 		vec2 gw = clamp(v_grid + warp - 0.5, vec2(-1.0), vec2(tile_quads + 0.99));
 		vec2 g0 = floor(gw);
-		vec2 f = smoothstep(0.15, 0.85, gw - g0);
+		vec2 f = gw - g0;
 		vec3 c00 = cover_col(cls_at(g0, v_layer), macro, macro2, det, fields, h);
 		vec3 c10 = cover_col(cls_at(g0 + vec2(1.0, 0.0), v_layer), macro, macro2, det, fields, h);
 		vec3 c01 = cover_col(cls_at(g0 + vec2(0.0, 1.0), v_layer), macro, macro2, det, fields, h);
@@ -152,6 +155,24 @@ void fragment() {
 		ALBEDO = c;
 		ROUGHNESS = mix(mix(0.95, 0.55, snowc * (1.0 - rock_amt)), 0.08, waterc);
 		SPECULAR = mix(mix(0.25, 0.45, snowc), 0.6, waterc);
+		// aerial perspective (replaces the scene fog on this terrain): the haze along the line of sight thins with
+		// height, so valley floors fade blue-grey with distance while high ridges stay crisp, and the farthest
+		// ranges keep their silhouette against the sky instead of vanishing into it
+		if (haze_density > 0.0) {
+			float depth = haze_density * aerial_k * dist * haze_mean(CAMERA_POSITION_WORLD.y, h);
+			float haze = 1.0 - exp(-depth);
+			vec3 hc = haze_color;
+			if (dot(sun_xz, sun_xz) > 0.25) {
+				vec2 dh = normalize(wpos.xz - CAMERA_POSITION_WORLD.xz + vec2(1e-5));
+				float toward = pow(clamp(dot(dh, sun_xz) * 0.5 + 0.5, 0.0, 1.0), 3.0);
+				hc = mix(hor_away, hor_toward, toward);
+			}
+			// a faint blue cast first (air light), the grey-white of the haze itself only far away
+			hc = mix(hc * vec3(0.82, 0.9, 1.08), hc, smoothstep(0.3, 0.8, haze));
+			// ... except right at the far plane, where the land fades fully into the sky (no cut-off edge)
+			float cap = mix(aerial_max, 1.0, smoothstep(0.85 * view_far, 0.98 * view_far, dist));
+			FOG = vec4(hc, min(max(haze, smoothstep(0.85 * view_far, 0.98 * view_far, dist)), cap));
+		}
 		if (debug_lod) {
 			vec3 tints[6] = vec3[](vec3(1.0, 0.3, 0.3), vec3(0.3, 1.0, 0.3), vec3(0.3, 0.4, 1.0), vec3(1.0, 1.0, 0.3), vec3(1.0, 0.3, 1.0), vec3(0.3, 1.0, 1.0));
 			ALBEDO = tints[int(v_level) % 6] * (0.6 + 0.4 * fract(v_grid.x * 0.5 + v_grid.y * 0.5));

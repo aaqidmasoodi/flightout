@@ -221,7 +221,7 @@ const DEFAULT_BINDINGS := {
 	"toggle_radar": [KEY_R], "toggle_radome": [KEY_T], "toggle_view": [KEY_V], "toggle_hud": [KEY_H],
 	"practice_approach": [KEY_P], "reset": [KEY_BACKSPACE],
 	"mode_nav": [KEY_1], "mode_bvr": [KEY_2], "mode_wvr": [KEY_3], "mode_gnd": [KEY_4],
-	"toggle_hud_shade": [KEY_U], "toggle_cabin_lights": [KEY_N], "toggle_torch": [KEY_O],
+	"toggle_hud_shade": [KEY_U], "toggle_cabin_lights": [KEY_N], "toggle_torch": [KEY_O], "toggle_map": [KEY_M],
 	"ap_master": [KEY_J], "ap_level": [KEY_Y],
 	"ap_alt_up": [KEY_PAGEUP], "ap_alt_down": [KEY_PAGEDOWN],
 	"ap_hdg_left": [KEY_BRACKETLEFT], "ap_hdg_right": [KEY_BRACKETRIGHT],
@@ -243,7 +243,7 @@ const BINDABLE := [
 	["ap_alt_up", "Selected altitude up"], ["ap_alt_down", "Selected altitude down"],
 	["ap_hdg_left", "Selected heading left"], ["ap_hdg_right", "Selected heading right"],
 	["ap_spd_up", "Selected speed up"], ["ap_spd_down", "Selected speed down"],
-	["CAMERA AND GAME"], ["toggle_view", "Camera view"], ["toggle_hud", "Flight data panel"], ["practice_approach", "Practice approach"],
+	["CAMERA AND GAME"], ["toggle_view", "Camera view"], ["toggle_map", "Map"], ["toggle_hud", "Flight data panel"], ["practice_approach", "Practice approach"],
 	["reset", "Reset to runway"],
 ]
 const FIXED_BINDINGS := [["Look around", "RIGHT MOUSE"], ["Zoom", "MOUSE WHEEL"], ["Reset cockpit zoom", "MIDDLE MOUSE"], ["Pause menu", "ESC"]]

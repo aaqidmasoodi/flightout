@@ -117,7 +117,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func _physics_process(delta: float) -> void:
 	if target == null:
 		return
-	far = clampf(maxf(base_far, (global_position.y - WorldData.sea_level) * 32.0), base_far, 450000.0)
+	far = clampf(maxf(base_far, (global_position.y - maxf(WorldData.sea_level, 0.0)) * 32.0), base_far, 450000.0)
 	_shake_t += delta
 	if Input.is_action_just_pressed("toggle_view"):
 		view = (view + 1) % VIEW_NAMES.size()

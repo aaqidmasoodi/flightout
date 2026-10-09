@@ -1,0 +1,15 @@
+{
+ "x0": -400000.0,
+ "z0": -344000.0,
+ "x1": 402816.0,
+ "z1": 344128.0,
+ "width": 3137,
+ "height": 2689,
+ "projection": {
+  "type": "aeqd",
+  "lat0": 34.55,
+  "lon0": 76.4,
+  "radius": 6371008.8
+ },
+ "credits": "Copernicus DEM GLO-30 (C) DLR/Airbus, ESA WorldCover 2021 (CC BY 4.0)"
+}

@@ -46,10 +46,59 @@ var loaded := false
 var _h := PackedFloat32Array()
 
 
+var _tiles = null                    # streamed-terrain heights (scripts/world/terrain_heights.gd) when flying a large map
+
+
+## Airfields of a large map (data/maps/<map>/airfields.json): [{id, name, country, x, z, runways: [{ids, a, b,
+## length, width}]}] with a, b the runway ends [x, height, z] in world coordinates.
+var airfields: Array = []
+var start_airfield := "VISR"
+var map_dir := ""                    # res://data/maps/<map> of a large map (chart, airfields)
+
+
+func _load_airfields(path: String) -> void:
+	var d = JSON.parse_string(FileAccess.get_file_as_string(path)) if FileAccess.file_exists(path) else null
+	if typeof(d) != TYPE_DICTIONARY:
+		return
+	airfields = d.airfields
+	runways = []
+	for a in airfields:
+		for r in a.runways:
+			var A := Vector3(r.a[0], r.a[1], r.a[2])
+			var B := Vector3(r.b[0], r.b[1], r.b[2])
+			var dir := Vector3(B.x - A.x, 0.0, B.z - A.z).normalized()
+			runways.append({"name": String(r.ids[0]), "threshold": A, "dir": dir, "length": float(r.length), "width": float(r.width), "ils": true, "airfield": a.id})
+			runways.append({"name": String(r.ids[1]), "threshold": B, "dir": -dir, "length": float(r.length), "width": float(r.width), "ils": true, "airfield": a.id})
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--airfield="):
+			start_airfield = arg.trim_prefix("--airfield=").to_upper()
+
+
+func airfield(id: String) -> Dictionary:
+	for a in airfields:
+		if String(a.id) == id or String(a.get("icao", "")) == id:
+			return a
+	return {}
+
+
+## True on a large streamed map (no sea, far horizons).
+func is_large() -> bool:
+	return _tiles != null
+
+
 ## Loads the heightmap. Called when a flight starts, so the main menu stays fast.
 func load_world() -> void:
 	if loaded:
 		return
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--terrain="):        # development: fly a streamed large map (no sea, no island)
+			var th = preload("res://scripts/world/terrain_heights.gd").new()
+			var tdir := arg.trim_prefix("--terrain=")
+			if th.setup(tdir):
+				_tiles = th
+				sea_level = -2000.0
+				map_dir = "res://data/maps/%s" % tdir.trim_suffix("/").get_file()
+				_load_airfields(map_dir + "/airfields.json")
 	var meta_text := FileAccess.get_file_as_string(META_PATH)
 	var meta = JSON.parse_string(meta_text)
 	if meta is Dictionary:
@@ -57,6 +106,8 @@ func load_world() -> void:
 		cell_size = float(meta.get("cell_size_m", cell_size))
 		half_extent = float(meta.get("half_extent_m", half_extent))
 		sea_level = float(meta.get("sea_level_m", sea_level))
+		if _tiles != null:
+			sea_level = -2000.0
 		spawns = meta.get("spawns", [])
 	_h = FileAccess.get_file_as_bytes(HEIGHTMAP_PATH).to_float32_array()
 	loaded = _h.size() == resolution * resolution and meta is Dictionary
@@ -69,6 +120,8 @@ func load_world() -> void:
 
 ## Terrain elevation (can be below sea level), bilinear between grid samples.
 func terrain_height(x: float, z: float) -> float:
+	if _tiles != null:
+		return _tiles.height(x, z)
 	if not loaded:
 		return 0.0
 	var col := (x + half_extent) / cell_size
@@ -144,6 +197,18 @@ func terrain_normal(x: float, z: float) -> Vector3:
 
 
 func spawn_transform(index: int = 0) -> Transform3D:
+	if is_large():
+		# lined up on the first runway of the start airfield, 150 m in from its threshold
+		var a := airfield(start_airfield)
+		if a.is_empty() and not airfields.is_empty():
+			a = airfields[0]
+		if not a.is_empty():
+			var r: Dictionary = a.runways[0]
+			var A := Vector3(r.a[0], 0.0, r.a[2])
+			var dir := (Vector3(r.b[0], 0.0, r.b[2]) - A).normalized()
+			var p := A + dir * 150.0
+			p.y = ground_height(p.x, p.z) + 2.2
+			return Transform3D(Basis(Vector3.UP, atan2(-dir.x, -dir.z)), p)
 	if spawns.is_empty():
 		return Transform3D(Basis(), Vector3(0.0, 42.0, 7350.0))
 	var s: Dictionary = spawns[index % spawns.size()]

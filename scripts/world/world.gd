@@ -69,6 +69,10 @@ func _ready() -> void:
 		ts.name = "Terrain"
 		if other_map:
 			_hide_island.call_deferred()
+			var af: Node3D = preload("res://scripts/world/airfields.gd").new()
+			af.name = "Airfields"
+			af.build(WorldData.airfields)
+			add_child.call_deferred(af)
 		if ts.setup(tdir):
 			for k in ["forest_density", "macro_tex", "detail_tex", "detail_nrm", "map_half_extent"]:
 				ts.material.set_shader_parameter(k, tmat.get_shader_parameter(k))

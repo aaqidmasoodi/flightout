@@ -673,12 +673,24 @@ func _snap_gear_down() -> void:
 	gear_player.seek(gear_player.current_animation_length, true)
 
 
-## Puts the jet on a 3 degree final approach to runway 36, 7 km out, configured to land.
+## Puts the jet on a 3 degree final approach, 7 km out, configured to land: runway 36 on the island, on a large
+## map the runway end nearest to the jet.
 func practice_approach() -> void:
-	var aim := Vector3(0.0, 40.0, 7200.0)
-	var start := aim + Vector3(0.0, PRACTICE_DISTANCE * tan(GLIDESLOPE) + spec.gear_height, PRACTICE_DISTANCE)
-	var path := Vector3(0.0, -sin(GLIDESLOPE), -cos(GLIDESLOPE))
-	fm.reset(Transform3D(Basis.from_euler(Vector3(deg_to_rad(5.0), 0.0, 0.0)), start), 0.0, false)
+	var rwy := {"name": "36", "threshold": Vector3(0.0, 40.0, 7500.0), "dir": Vector3(0.0, 0.0, -1.0)}
+	if WorldData.is_large():
+		var me := fm.world_pos()
+		var bd := INF
+		for r in WorldData.runways:
+			var d: float = Vector2(r.threshold.x - me.x, r.threshold.z - me.z).length()
+			if d < bd:
+				bd = d
+				rwy = r
+	var dir: Vector3 = rwy.dir
+	var aim: Vector3 = rwy.threshold + dir * 300.0 if WorldData.is_large() else Vector3(0.0, 40.0, 7200.0)
+	var start := aim - dir * PRACTICE_DISTANCE + Vector3(0.0, PRACTICE_DISTANCE * tan(GLIDESLOPE) + spec.gear_height, 0.0)
+	var path := dir * cos(GLIDESLOPE) + Vector3(0.0, -sin(GLIDESLOPE), 0.0)
+	var yaw := atan2(-dir.x, -dir.z)
+	fm.reset(Transform3D(Basis(Vector3.UP, yaw) * Basis.from_euler(Vector3(deg_to_rad(5.0), 0.0, 0.0)), start), 0.0, false)
 	sim_event.emit("reset", 0.0)
 	fm.vel = path * 78.0
 	fm.flaps = true
@@ -693,7 +705,29 @@ func practice_approach() -> void:
 	_follow_origin()
 	global_transform = Transform3D(fm.rot, _scene_pos())
 	reset_physics_interpolation()
-	_event("PRACTICE APPROACH  RWY 36")
+	_event("PRACTICE APPROACH  RWY " + String(rwy.name))
+
+
+## Development and tests: flying at `speed` (m/s) from a world transform, clean (gear up), autopilot holding it.
+func air_start(xform: Transform3D, speed: float) -> void:
+	fm.reset(xform, speed, false)
+	sim_event.emit("reset", 0.0)
+	fm.gear_down = false
+	fm.gear_pos = 0.0
+	fm.set_engines_n2(92.0)
+	gear_player.speed_scale = 1.0
+	gear_player.play("gear_retract")
+	gear_player.seek(gear_player.current_animation_length, true)
+	_shown = _switches()
+	throttle = 0.75
+	_follow_origin()
+	global_transform = Transform3D(fm.rot, _scene_pos())
+	reset_physics_interpolation()
+	# the autopilot takes the speed and altitude to hold from the flight model's own readings, valid after a step
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	autopilot.follow(fm)
+	autopilot.engage(fm)
 
 
 ## Back to the start: the runway offline, your shelter online. Goes through the input stream (the R switch),

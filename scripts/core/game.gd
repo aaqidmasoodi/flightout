@@ -10,6 +10,7 @@ var _cache := {}
 var client: Node                     # net/client.gd, always present
 var is_server := false               # this process is a dedicated server (FlightOut --headless -- --server)
 var hosted_pid := -1                 # a local server this game started with HOST, stopped on quit
+var map_open := false                # the map screen (M) is up: cockpit clicks and the wheel go to the map
 
 
 var online: bool:

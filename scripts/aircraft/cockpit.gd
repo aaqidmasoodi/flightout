@@ -1092,7 +1092,7 @@ func _ap_edit_key(k: InputEventKey) -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if _ap_panel == null:
+	if _ap_panel == null or Game.map_open:
 		return
 	if not _inside:
 		_ap_edit_end(false)

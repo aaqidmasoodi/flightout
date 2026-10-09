@@ -2,6 +2,13 @@ extends Node3D
 ## Flight scene: world, jet, camera, HUD and pause menu. Entered from the main menu's loading screen.
 
 const DEFAULT_AIRCRAFT := "res://data/aircraft/su27.tres"
+## Large streamed maps (Kashmir): mountains are worth seeing far away; the haze thins with draw distance so the
+## horizon stays soft, as distant ranges fade into the sky's colour (aerial perspective) instead of ending in a line.
+const DRAW_LARGE := [
+	{"far": 90000.0, "fog": 0.000024},
+	{"far": 160000.0, "fog": 0.000015},
+	{"far": 260000.0, "fog": 0.0000095},
+]
 const DRAW := [
 	{"far": 22000.0, "fog": 0.00007},
 	{"far": 40000.0, "fog": 0.000035},
@@ -75,6 +82,8 @@ func _ready() -> void:
 		aircraft.global_transform = _start_transform()
 	aircraft.spawn = aircraft.global_transform
 	aircraft.place(aircraft.spawn)
+	if "--air-start" in OS.get_cmdline_user_args():   # development: start flying (with --start-pos / --alt / --start-hdg)
+		aircraft.air_start.call_deferred(aircraft.spawn, 230.0)
 	if Game.online:
 		Game.client.aircraft = aircraft
 		Game.client.world_root = self
@@ -90,6 +99,17 @@ func _ready() -> void:
 	add_child(hud)
 
 	add_child(preload("res://scripts/ui/pause_menu.gd").new())
+	var map: CanvasLayer = preload("res://scripts/ui/map_view.gd").new()
+	map.name = "Map"
+	map.aircraft = aircraft
+	add_child(map)
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--bench="):       # development: performance run (scripts/dev/bench.gd)
+			var bench: Node = preload("res://scripts/dev/bench.gd").new()
+			bench.aircraft = aircraft
+			bench.cam = _cam
+			bench.world = world
+			add_child(bench)
 
 	Settings.changed.connect(func(_k, _v): _apply_settings())
 	_apply_settings()
@@ -123,10 +143,11 @@ func _start_transform() -> Transform3D:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--alt="):   # development: start high (metres), to check the sky and cloud deck
 			t.origin.y = arg.trim_prefix("--alt=").to_float()
-		elif arg.begins_with("--start-pos="):   # development: start over map position x,z (metres)
+		elif arg.begins_with("--start-pos="):   # development: start at map position x,z (metres), on the ground
 			var xz := arg.trim_prefix("--start-pos=").split(",")
 			t.origin.x = xz[0].to_float()
 			t.origin.z = xz[1].to_float()
+			t.origin.y = WorldData.ground_height(t.origin.x, t.origin.z) + 2.2
 		elif arg.begins_with("--start-hdg="):
 			t.basis = Basis(Vector3.UP, deg_to_rad(-arg.trim_prefix("--start-hdg=").to_float()))
 	return t
@@ -134,7 +155,7 @@ func _start_transform() -> Transform3D:
 
 func _apply_settings() -> void:
 	_sun.shadow_enabled = bool(Settings.get_value("graphics/shadows"))
-	var d: Dictionary = DRAW[clampi(int(Settings.get_value("graphics/draw_distance")), 0, 2)]
+	var d: Dictionary = (DRAW_LARGE if WorldData.is_large() else DRAW)[clampi(int(Settings.get_value("graphics/draw_distance")), 0, 2)]
 	_cam.base_far = d.far
 	_sky.draw_fog = d.fog
 

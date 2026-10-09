@@ -8,6 +8,9 @@ render_mode diffuse_burley, specular_schlick_ggx;
 uniform sampler2D detail_tex : filter_linear_mipmap_anisotropic, repeat_enable;
 uniform float width_m = 45.0;
 uniform float length_m = 3000.0;
+// designators: at the UV y = 0 end (read landing towards +y) and at the y = 1 end
+uniform ivec2 start_digits = ivec2(1, 8);
+uniform ivec2 end_digits = ivec2(3, 6);
 
 // exact coverage of the interval [-h, h] by a pixel of width w centred at q (1D box filter)
 float cover(float q, float h, float w) {
@@ -96,8 +99,8 @@ void fragment() {
 		m = max(m, cover(p.x, 0.45, fw.x) * cover(q, 15.0, fw.y));
 	}
 	// north end: runway 18 (landing southbound, travelling +y); south end: runway 36 (landing northbound)
-	m = max(m, end_markings(vec2(-p.x, p.y), fw, 1, 8, false));
-	m = max(m, end_markings(vec2(p.x, length_m - p.y), fw, 3, 6, false));
+	m = max(m, end_markings(vec2(-p.x, p.y), fw, start_digits.x, start_digits.y, false));
+	m = max(m, end_markings(vec2(p.x, length_m - p.y), fw, end_digits.x, end_digits.y, false));
 
 	// asphalt with subtle variation, worn paint, tyre marks in the touchdown zones
 	vec2 wp = p;
