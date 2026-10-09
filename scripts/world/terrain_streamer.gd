@@ -22,7 +22,8 @@ extends Node3D
 const SHADER := preload("res://shaders/terrain_cdlod.gdshader")
 const RANGE_K := 2.6               # split a tile while the camera is closer than this many tile sizes
 const MORPH_START := 0.7           # fraction of the next level's range where morphing begins
-const POOL := 1280                 # texture layers resident
+const POOL_SIZE := 2048            # texture layers resident (67 x 67 samples: ~27 MB with land cover)
+var POOL := POOL_SIZE              # (development: --terrain-pool=N to test a full pool quickly)
 const LOADS_PER_FRAME := 24        # finished tiles uploaded per frame
 const MAX_IN_FLIGHT := 48          # tiles being read on worker threads at once
 
@@ -55,11 +56,12 @@ var _mmi: MultiMeshInstance3D
 var _draw: Array = []              # [level, i, j] selected this frame
 var _cam_map := Vector3.ZERO
 var _planes: Array = []
-var stats := {"drawn": 0, "resident": 0, "loads": 0}
+var stats := {"drawn": 0, "resident": 0, "loads": 0, "evict": 0, "evict_split": 0, "proc_us": 0, "needed": 0}
 var _log_stats := "--terrain-stats" in OS.get_cmdline_user_args()
 var _pending := {}                 # key -> true while a worker reads it
 var _done: Array = []              # [key, heights, cover] read by workers, waiting for upload
 var _mutex := Mutex.new()
+var _reached := 0                  # resident tiles the quadtree needs this frame
 
 
 static func available(path: String) -> bool:
@@ -68,6 +70,9 @@ static func available(path: String) -> bool:
 
 func setup(path: String) -> bool:
 	dir = path
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--terrain-pool="):
+			POOL = maxi(64, arg.trim_prefix("--terrain-pool=").to_int())
 	var m = JSON.parse_string(FileAccess.get_file_as_string(dir.path_join("terrain.json")))
 	if typeof(m) != TYPE_DICTIONARY:
 		push_error("Terrain: no layout in " + dir)
@@ -162,20 +167,25 @@ func _process(_delta: float) -> void:
 	var cam := get_viewport().get_camera_3d()
 	if cam == null or _mm == null:
 		return
+	var t0 := Time.get_ticks_usec()
 	_frame += 1
 	_cam_map = WorldData.to_world(cam.global_position)
 	_planes = cam.get_frustum()
 	material.set_shader_parameter("view_far", cam.far)      # the aerial perspective closes in on the far plane
 	_draw.clear()
 	_wanted.clear()
+	_reached = 0
 	var top := levels - 1
 	for j in tiles[top].y:
 		for i in tiles[top].x:
 			_select(top, i, j, true)
 	_stream()
 	_build_instances()
+	stats.proc_us = Time.get_ticks_usec() - t0
+	stats.needed = _reached
+	stats.wanted = _wanted.size()
 	if _log_stats and _frame % 60 == 0:
-		print("TERRAIN drawn %d resident %d loads %d  cam %.0f %.0f %.0f" % [stats.drawn, stats.resident, stats.loads, _cam_map.x, _cam_map.y, _cam_map.z])
+		print("TERRAIN drawn %d needed %d wanted %d resident %d loads %d  cam %.0f %.0f %.0f" % [stats.drawn, stats.needed, stats.wanted, stats.resident, stats.loads, _cam_map.x, _cam_map.y, _cam_map.z])
 
 
 ## Distance from the camera (map coordinates) to a tile's box.
@@ -206,9 +216,18 @@ func _visible(level: int, i: int, j: int) -> bool:
 
 
 ## Walks the quadtree. Every tile it reaches is kept resident; `vis` (in the view) decides drawing only.
+## Every resident tile it passes through is marked in use, split ones too: a split tile is still needed (it draws
+## again as soon as you move away, and its children are only kept while it is). Leaving split tiles unmarked let the
+## pool recycle them first once it was full, and the whole patch under them dropped to a coarse ancestor for a few
+## frames until they were read back in: the flicker after flying for a while.
 func _select(level: int, i: int, j: int, vis: bool) -> void:
 	if vis:
 		vis = _visible(level, i, j)
+	var key := _key(level, i, j)
+	var layer: int = _layer_of.get(key, -1)
+	if layer >= 0:
+		_used[layer] = _frame
+		_reached += 1
 	var d := _distance(level, i, j)
 	var prio := d if vis else d * 4.0 + 1e6          # what you can see loads first
 	if level > 0 and d < RANGE_K * tile_size(level):
@@ -222,18 +241,19 @@ func _select(level: int, i: int, j: int, vis: bool) -> void:
 				continue
 			kids.append(Vector2i(ci, cj))
 			var k := _key(level - 1, ci, cj)
-			if not _layer_of.has(k):
+			var kl: int = _layer_of.get(k, -1)
+			if kl < 0:
 				ready = false
 				_wanted[k] = prio
+			else:
+				_used[kl] = _frame          # keep the loaded siblings while the last ones arrive
 		if ready and not kids.is_empty():
 			for kc: Vector2i in kids:
 				_select(level - 1, kc.x, kc.y, vis)
 			return
-	var key := _key(level, i, j)
-	if _layer_of.has(key):
-		_used[_layer_of[key]] = _frame
+	if layer >= 0:
 		if vis:
-			_draw.append([level, i, j, _layer_of[key]])
+			_draw.append([level, i, j, layer])
 	else:
 		_wanted[key] = prio
 
@@ -244,12 +264,14 @@ func _stream() -> void:
 	var ready := _done.slice(0, LOADS_PER_FRAME)
 	_done = _done.slice(LOADS_PER_FRAME)
 	_mutex.unlock()
+	if not ready.is_empty():
+		_collect_free_layers()
 	for r in ready:
 		_pending.erase(r[0])
-		_apply(r[0], r)
-	stats.loads += ready.size()
-	# start reading the most wanted tiles
-	if _wanted.is_empty():
+		if _apply(r[0], r):
+			stats.loads += 1
+	# start reading the most wanted tiles (only while the pool has room for them: tiles in use are never recycled)
+	if _wanted.is_empty() or _reached + _pending.size() >= POOL:
 		return
 	var keys := _wanted.keys()
 	keys.sort_custom(func(a, b): return _wanted[a] < _wanted[b])
@@ -316,27 +338,54 @@ func _apply(key: int, r: Array) -> bool:
 	if _lc_tex and lc.size() == ts * ts:
 		RenderingServer.texture_2d_update(_lc_tex.get_rid(), Image.create_from_data(ts, ts, false, Image.FORMAT_R8, lc), layer)
 	if _key_of[layer] >= 0:
-		_layer_of.erase(_key_of[layer])
+		var old := _key_of[layer]
+		stats.evict += 1
+		if _has_resident_child(old):
+			stats.evict_split += 1        # (development statistics) a tile whose children are in use
+		_layer_of.erase(old)
 	_key_of[layer] = key
 	_layer_of[key] = layer
 	_used[layer] = _frame
 	return true
 
 
-## A free layer, or the least recently drawn one (never one drawn this frame, never a top-level tile).
-func _free_layer() -> int:
-	var best := -1
-	var best_t := _frame
+func _has_resident_child(key: int) -> bool:
+	var level := key >> 48
+	if level == 0:
+		return false
+	var j := (key >> 24) & 0xFFFFFF
+	var i := key & 0xFFFFFF
+	for c in 4:
+		if _layer_of.has(_key(level - 1, i * 2 + (c & 1), j * 2 + (c >> 1))):
+			return true
+	return false
+
+
+## Layers that may take a new tile this frame: free ones first, then the least recently used (never one in use
+## this frame, never a top-level tile). One pass over the pool per frame instead of one per upload.
+var _free: Array = []
+
+func _collect_free_layers() -> void:
+	var empty: Array = []
+	var old: Array = []
 	for l in POOL:
 		var k := _key_of[l]
 		if k < 0:
-			return l
-		if (k >> 48) == levels - 1:
-			continue
-		if _used[l] < best_t:
-			best_t = _used[l]
-			best = l
-	return best
+			empty.append(l)
+		elif (k >> 48) != levels - 1 and _used[l] < _frame:
+			old.append(Vector2i(_used[l], l))
+	if empty.size() < LOADS_PER_FRAME and not old.is_empty():
+		old.sort()                                     # least recently used first
+		for v: Vector2i in old.slice(0, LOADS_PER_FRAME - empty.size()):
+			empty.append(v.y)
+	empty.reverse()
+	_free = empty                                      # popped from the back: free layers, then the oldest
+
+
+func _free_layer() -> int:
+	if _free.is_empty():
+		_collect_free_layers()
+	return _free.pop_back() if not _free.is_empty() else -1
 
 
 func _build_instances() -> void:

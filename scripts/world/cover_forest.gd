@@ -13,7 +13,7 @@ const CELL := 512.0
 const STEP := 32.0                    # one land cover sample
 const TREELINE := 3700.0
 const NEAR_MAX := 650.0                # detailed, shadow-casting trees inside this distance at most
-const BUDGET_USEC := 3500             # planting time per frame
+const BUDGET_USEC := 2000             # planting time per frame
 const RANGES := [3200.0, 4500.0, 6000.0]
 const CORE := 0.35                    # share of trees drawn out to the full range; the rest only out to FILL_RANGE
 const FILL_RANGE := 0.5               # of the range (farther out the canopy colour of the terrain fills in)
@@ -34,6 +34,7 @@ var _near_dirty := false
 var _last_cam := Vector2(INF, INF)
 var _runways: Array = []              # [centre, along (unit), half length, half width] in map coordinates
 var _on := true
+var stats := {"proc_us": 0, "near_us": 0, "near_n": 0, "plant_n": 0}
 var planted := 0                      # trees in the planted cells (development: --terrain-stats)
 
 
@@ -97,17 +98,25 @@ func _process(_delta: float) -> void:
 	# trees are not worth planting for a camera far above them (they would be under a pixel)
 	var agl := cp3.y - WorldData.terrain_height(cp.x, cp.y)
 	var reach := _range if agl < 6000.0 else 0.0
+	var t0 := Time.get_ticks_usec()
 	if cp.distance_to(_last_cam) > 120.0:
 		_last_cam = cp
 		_refresh(cp, reach)
-	var t0 := Time.get_ticks_usec()
 	while not _queue.is_empty() and Time.get_ticks_usec() - t0 < BUDGET_USEC:
 		var c: Vector2i = _queue.pop_front()
 		if not _cells.has(c) and _cell_dist(c, cp) < reach + CELL:
 			_plant(c)
-			_near_dirty = true
+			stats.plant_n += 1
+			if _cell_dist(c, cp) < _near_radius + 250.0:
+				_near_dirty = true            # only a cell inside the detailed radius changes the near pool
+	stats.proc_us = Time.get_ticks_usec() - t0
 	if _near_dirty or cp.distance_to(_near_center) > 150.0:
+		var t1 := Time.get_ticks_usec()
 		_update_near(cp)
+		stats.near_us = Time.get_ticks_usec() - t1
+		stats.near_n += 1
+	else:
+		stats.near_us = 0
 
 
 func _cell_dist(c: Vector2i, p: Vector2) -> float:
@@ -124,7 +133,6 @@ func _refresh(cp: Vector2, reach: float) -> void:
 				planted -= (n as MultiMeshInstance3D).multimesh.instance_count
 				(n as Node).queue_free()
 			_cells.erase(c)
-			_near_dirty = true
 	_queue.clear()
 	if reach <= 0.0:
 		return
@@ -182,6 +190,9 @@ func _plant(c: Vector2i) -> void:
 					continue
 				_add_tree(trees, rng, cls, Vector3(x, h, z), o)
 	var nodes: Array = []
+	var near := {}
+	for sp in trees:
+		near[sp] = _buffer(trees[sp], Vector3.ZERO)        # map coordinates, for the detailed pool
 	for key in ["conifer:core", "conifer:fill", "broadleaf:core", "broadleaf:fill"]:
 		var sp: String = String(key).get_slice(":", 0)
 		var core: bool = String(key).ends_with("core")
@@ -197,12 +208,7 @@ func _plant(c: Vector2i) -> void:
 		mm.use_colors = true
 		mm.mesh = _meshes[sp][1]
 		mm.instance_count = list.size()
-		for k in list.size():
-			var e: Array = list[k]
-			var xf: Transform3D = e[0]
-			xf.origin -= Vector3(o.x, 0.0, o.y)          # relative to the cell: small numbers
-			mm.set_instance_transform(k, xf)
-			mm.set_instance_color(k, e[1])
+		mm.buffer = _buffer(list, Vector3(o.x, 0.0, o.y))     # relative to the cell: small numbers
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
 		mmi.position = Vector3(o.x, 0.0, o.y)
@@ -216,7 +222,24 @@ func _plant(c: Vector2i) -> void:
 		add_child(mmi)
 		nodes.append(mmi)
 		planted += list.size()
-	_cells[c] = {"nodes": nodes, "trees": trees}
+	_cells[c] = {"nodes": nodes, "near": near}
+
+
+## MultiMesh instance data (3x4 transform rows, then RGBA) for a list of [Transform3D, Color], shifted by -offset.
+static func _buffer(list: Array, offset: Vector3) -> PackedFloat32Array:
+	var b := PackedFloat32Array()
+	b.resize(list.size() * 16)
+	var n := 0
+	for e in list:
+		var t: Transform3D = e[0]
+		var c: Color = e[1]
+		var o := t.origin - offset
+		b[n] = t.basis.x.x; b[n + 1] = t.basis.y.x; b[n + 2] = t.basis.z.x; b[n + 3] = o.x
+		b[n + 4] = t.basis.x.y; b[n + 5] = t.basis.y.y; b[n + 6] = t.basis.z.y; b[n + 7] = o.y
+		b[n + 8] = t.basis.x.z; b[n + 9] = t.basis.y.z; b[n + 10] = t.basis.z.z; b[n + 11] = o.z
+		b[n + 12] = c.r; b[n + 13] = c.g; b[n + 14] = c.b; b[n + 15] = c.a
+		n += 16
+	return b
 
 
 func _add_tree(trees: Dictionary, rng: RandomNumberGenerator, cls: int, p: Vector3, _o: Vector2) -> void:
@@ -250,23 +273,18 @@ func _add_tree(trees: Dictionary, rng: RandomNumberGenerator, cls: int, p: Vecto
 	(trees[sp] as Array).append([Transform3D(basis, Vector3(p.x, h - 0.4, p.z)), tint])
 
 
-## Refills the detailed near pools from the planted cells around the camera.
+## Refills the detailed near pools from the planted cells around the camera: whole cells, copied as packed
+## buffers (the tree shader itself hands each tree between the detailed and the simple set by its distance).
 func _update_near(cp: Vector2) -> void:
 	_near_dirty = false
 	_near_center = cp
 	var r := _near_radius + 250.0
-	var r2 := r * r
 	for sp in _near_pool:
-		var picked: Array = []
+		var buf := PackedFloat32Array()
 		for c in _cells:
-			if _cell_dist(c, cp) > r:
-				continue
-			for e in _cells[c].trees[sp]:
-				var o: Vector3 = (e[0] as Transform3D).origin
-				if Vector2(o.x - cp.x, o.z - cp.y).length_squared() < r2:
-					picked.append(e)
+			if _cell_dist(c, cp) < r:
+				buf.append_array(_cells[c].near[sp])
 		var mm: MultiMesh = (_near_pool[sp] as MultiMeshInstance3D).multimesh
-		mm.instance_count = picked.size()
-		for k in picked.size():
-			mm.set_instance_transform(k, picked[k][0])
-			mm.set_instance_color(k, picked[k][1])
+		mm.instance_count = buf.size() / 16
+		if not buf.is_empty():
+			mm.buffer = buf
