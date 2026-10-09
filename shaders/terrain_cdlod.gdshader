@@ -45,6 +45,10 @@ uniform sampler2DArray cover : filter_nearest, repeat_disable;
 uniform bool has_cover = false;
 
 global uniform vec2 world_origin;     // floating origin (scripts/world/world_data.gd): scene + origin = map
+// Earth's curvature, drawn only (the simulation stays flat, as in DCS): the ground drops by d^2 * earth_curve below
+// a flat plane at horizontal distance d from the camera. 1 / (2 R'), R' the Earth's radius stretched by standard
+// atmospheric refraction (k = 0.13, R' = R / (1 - k)); 0 on the island.
+global uniform float earth_curve;
 
 varying vec3 wpos;
 varying vec3 wnorm;
@@ -53,6 +57,8 @@ varying flat float v_level;
 uniform bool debug_lod = false;      // tint each level (development: --terrain-lod)
 varying vec2 v_grid;
 varying float v_step;
+varying float v_h;                   // true terrain height (before the curvature drop): shading, snow line, haze
+varying flat vec2 v_morph;           // this tile's morph range (m0, m1)
 
 float hfetch(vec2 g, float layer) {
 	vec2 uv = (g + 1.5) / tile_samples;        // sample g sits one texel in (the border)
@@ -70,6 +76,12 @@ void vertex() {
 	g -= fract(g * 0.5) * 2.0 * morph;
 	VERTEX = vec3(g.x / tile_quads, hfetch(g, layer), g.y / tile_quads);
 	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;     // scene position (distances, view)
+	v_h = wpos.y;
+	vec2 dc = wpos.xz - CAMERA_POSITION_WORLD.xz;
+	float drop = dot(dc, dc) * earth_curve;
+	VERTEX.y -= drop;
+	wpos.y -= drop;
+	v_morph = vec2(m0, m1);
 	v_layer = layer;
 	v_level = INSTANCE_CUSTOM.y;
 	v_grid = g;
@@ -81,6 +93,32 @@ void vertex() {
 // taken modulo the period first, so the numbers stay small (full precision) however far from the map centre.
 vec2 tc(vec2 scene_xz, float period) {
 	return (scene_xz + mod(world_origin, vec2(period))) / period;
+}
+
+// Heights on the next coarser level's grid (every other sample of this tile), central differences two samples apart:
+// the normal the parent tile would show here. Blended in with the same morph as the geometry, so when a tile splits
+// into its four children the shading does not jump to the finer detail (the patch "pop" on mountains).
+float htexel(ivec2 s, int layer) {
+	s = clamp(s, ivec2(-1), ivec2(int(tile_quads) + 1));
+	return texelFetch(heights, ivec3(s + 1, layer), 0).r * h_scale + h_offset;
+}
+
+// height on the parent's grid: bilinear between this tile's even samples only (exactly the parent's own samples)
+float hcoarse(vec2 g, int layer) {
+	vec2 p = g * 0.5;
+	vec2 i = floor(p);
+	vec2 f = p - i;
+	ivec2 s = ivec2(i) * 2;
+	float a = mix(htexel(s, layer), htexel(s + ivec2(2, 0), layer), f.x);
+	float b = mix(htexel(s + ivec2(0, 2), layer), htexel(s + ivec2(2, 2), layer), f.x);
+	return mix(a, b, f.y);
+}
+
+vec3 coarse_normal(vec2 g, float layer, float step_m) {
+	int l = int(layer + 0.5);
+	float hx = hcoarse(g + vec2(2.0, 0.0), l) - hcoarse(g - vec2(2.0, 0.0), l);
+	float hz = hcoarse(g + vec2(0.0, 2.0), l) - hcoarse(g - vec2(0.0, 2.0), l);
+	return normalize(vec3(-hx, 4.0 * step_m, -hz));
 }
 
 float cls_at(vec2 g, float layer) {
@@ -111,13 +149,18 @@ vec3 cover_col(float c, float macro, float macro2, float det, float fields, floa
 }
 
 void fragment() {
-	float h = wpos.y;
+	float h = v_h;
 	if (has_cover) {
 		float hx = hfetch(v_grid + vec2(1.0, 0.0), v_layer) - hfetch(v_grid - vec2(1.0, 0.0), v_layer);
 		float hz = hfetch(v_grid + vec2(0.0, 1.0), v_layer) - hfetch(v_grid - vec2(0.0, 1.0), v_layer);
 		vec3 n = normalize(vec3(-hx, 2.0 * v_step, -hz));
-		float slope = 1.0 - clamp(n.y, 0.0, 1.0);
 		float dist = length(CAMERA_POSITION_WORLD - wpos);
+		// shading morph (see coarse_normal): towards the outer edge of its range a tile shades like its parent
+		float morph = clamp((dist - v_morph.x) / max(v_morph.y - v_morph.x, 1.0), 0.0, 1.0);
+		if (morph > 0.0) {
+			n = normalize(mix(n, coarse_normal(v_grid, v_layer, v_step), morph));
+		}
+		float slope = 1.0 - clamp(n.y, 0.0, 1.0);
 		vec2 sp = wpos.xz;
 		float macro = texture(macro_tex, tc(sp, 16000.0)).r;
 		float macro2 = texture(macro_tex, tc(sp, 4000.0) + 0.5).r;
@@ -139,8 +182,24 @@ void fragment() {
 		vec3 c01 = cover_col(cls_at(g0 + vec2(0.0, 1.0), v_layer), macro, macro2, det, fields, h);
 		vec3 c11 = cover_col(cls_at(g0 + vec2(1.0, 1.0), v_layer), macro, macro2, det, fields, h);
 		vec3 c = mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
-		float snowc = (cls_at(g0, v_layer) > 65.0 && cls_at(g0, v_layer) < 75.0) ? 1.0 : 0.0;
-		float waterc = (cls_at(g0, v_layer) > 75.0 && cls_at(g0, v_layer) < 85.0) ? 1.0 : 0.0;
+		float c_here = cls_at(g0, v_layer);
+		if (morph > 0.0) {
+			// the parent's land cover: only every other sample, so the class blocks are twice as big
+			// the parent reads its cover through the same warp in its own (twice as coarse) sample units
+			vec2 gc = clamp(v_grid * 0.5 + warp - 0.5, vec2(0.0), vec2(tile_quads * 0.5 - 0.001));
+			vec2 q0 = floor(gc);
+			vec2 fq = gc - q0;
+			vec3 p00 = cover_col(cls_at(q0 * 2.0, v_layer), macro, macro2, det, fields, h);
+			vec3 p10 = cover_col(cls_at(q0 * 2.0 + vec2(2.0, 0.0), v_layer), macro, macro2, det, fields, h);
+			vec3 p01 = cover_col(cls_at(q0 * 2.0 + vec2(0.0, 2.0), v_layer), macro, macro2, det, fields, h);
+			vec3 p11 = cover_col(cls_at(q0 * 2.0 + vec2(2.0, 2.0), v_layer), macro, macro2, det, fields, h);
+			c = mix(c, mix(mix(p00, p10, fq.x), mix(p01, p11, fq.x), fq.y), morph);
+			if (morph > 0.5) {
+				c_here = cls_at(q0 * 2.0, v_layer);
+			}
+		}
+		float snowc = (c_here > 65.0 && c_here < 75.0) ? 1.0 : 0.0;
+		float waterc = (c_here > 75.0 && c_here < 85.0) ? 1.0 : 0.0;
 		// steep faces are rock whatever the cover says (snow does not stay on cliffs)
 		float rock_det = texture(detail_tex, tc(sp, 40.0) + 0.7).r;
 		vec3 rock = mix(vec3(0.24, 0.22, 0.21), vec3(0.38, 0.35, 0.32), rock_det);

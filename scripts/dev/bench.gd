@@ -25,6 +25,7 @@ var _out := ""
 var _len := 90.0
 var _pan := false
 var _flight := false
+var _look = null
 var _speed := 230.0
 var _diff_dir := ""
 var _diff := 0.0
@@ -32,6 +33,10 @@ var _diff_hist: Array[float] = []
 var _prev_small := PackedByteArray()
 var _prev_img: Image
 var _saved := 0
+const BW := 16
+const BH := 12
+var _prev_blocks := PackedFloat32Array()
+var _prev_blocks2 := PackedFloat32Array()
 var _phase := ""
 var _held: Array[String] = []
 var _t := -1.0
@@ -73,6 +78,9 @@ func _ready() -> void:
 			view = arg.trim_prefix("--bench-view=").to_int()
 		elif arg == "--bench-pan":
 			_pan = true
+		elif arg.begins_with("--bench-look="):     # fixed camera yaw,pitch (degrees) for the whole run
+			var v := arg.trim_prefix("--bench-look=").split(",")
+			_look = Vector2(deg_to_rad(v[0].to_float()), deg_to_rad(v[1].to_float()))
 		elif arg == "--bench-flight":
 			_flight = true
 		elif arg.begins_with("--bench-speed="):
@@ -115,6 +123,9 @@ func _process(delta: float) -> void:
 	if _frames_out != "":
 		_log_frame(delta, draws)
 	_draw_max = maxi(_draw_max, draws)
+	if _look != null:
+		cam._yaw = _look.x
+		cam._pitch = _look.y
 	if _flight:
 		_fly()
 	elif _pan:
@@ -238,21 +249,37 @@ func _watch() -> void:
 	var data := small.get_data()
 	_diff = 0.0
 	if _prev_small.size() == data.size():
+		# per block (16 x 12 blocks of 12 x 9 px): a pop is a block that suddenly changes much more than it did in
+		# the frames before, while smooth motion changes every block steadily
+		var blocks := PackedFloat32Array()
+		blocks.resize(BW * BH)
 		var s := 0
-		for k in range(0, data.size()):
-			s += absi(data[k] - _prev_small[k])
+		for y in 108:
+			var row := y * 192
+			var brow := (y / 9) * BW
+			for x in 192:
+				var dd := absi(data[row + x] - _prev_small[row + x])
+				s += dd
+				blocks[brow + x / 12] += dd
 		_diff = float(s) / data.size()
-		var sorted := _diff_hist.duplicate()
-		sorted.sort()
-		var med: float = sorted[sorted.size() / 2] if not sorted.is_empty() else _diff
-		if _diff_hist.size() >= 20 and _diff > med * 2.2 + 1.0 and _saved < 60:
+		var worst := 0.0
+		var worst_b := -1
+		if _prev_blocks.size() == blocks.size() and _prev_blocks2.size() == blocks.size():
+			for k in blocks.size():
+				var now := blocks[k] / 108.0
+				var before := maxf(_prev_blocks[k], _prev_blocks2[k]) / 108.0
+				var r := now - (before * 2.0 + 1.5)
+				if r > worst:
+					worst = r
+					worst_b = k
+		if worst_b >= 0 and _saved < 60:
 			_saved += 1
-			_prev_img.save_png(_diff_dir.path_join("flick_%06.2f_a.png" % _t))
-			mid.save_png(_diff_dir.path_join("flick_%06.2f_b.png" % _t))
-			print("BENCH flicker at %.2f s: change %.1f (usual %.1f)" % [_t, _diff, med])
-		_diff_hist.append(_diff)
-		if _diff_hist.size() > 30:
-			_diff_hist.remove_at(0)
+			_prev_img.save_png(_diff_dir.path_join("pop_%06.2f_a.png" % _t))
+			mid.save_png(_diff_dir.path_join("pop_%06.2f_b.png" % _t))
+			print("BENCH pop at %.2f s: block %d,%d changed %.1f (before %.1f)" % [_t, worst_b % BW, worst_b / BW,
+				blocks[worst_b] / 108.0, maxf(_prev_blocks[worst_b], _prev_blocks2[worst_b]) / 108.0])
+		_prev_blocks2 = _prev_blocks
+		_prev_blocks = blocks
 	_prev_small = data
 	_prev_img = mid
 

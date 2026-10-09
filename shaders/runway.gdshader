@@ -11,6 +11,13 @@ uniform float length_m = 3000.0;
 // designators: at the UV y = 0 end (read landing towards +y) and at the y = 1 end
 uniform ivec2 start_digits = ivec2(1, 8);
 uniform ivec2 end_digits = ivec2(3, 6);
+global uniform float earth_curve;     // drawn curvature of the Earth (see terrain_cdlod.gdshader)
+
+void vertex() {
+	// sink with the terrain under it when seen from far away
+	vec2 dc = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz - CAMERA_POSITION_WORLD.xz;
+	VERTEX.y -= dot(dc, dc) * earth_curve;
+}
 
 // exact coverage of the interval [-h, h] by a pixel of width w centred at q (1D box filter)
 float cover(float q, float h, float w) {

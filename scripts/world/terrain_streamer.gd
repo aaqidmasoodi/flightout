@@ -61,6 +61,7 @@ var _log_stats := "--terrain-stats" in OS.get_cmdline_user_args()
 var _pending := {}                 # key -> true while a worker reads it
 var _done: Array = []              # [key, heights, cover] read by workers, waiting for upload
 var _mutex := Mutex.new()
+var _curve := 0.0                  # earth_curve shader global (large maps), for culling
 var _reached := 0                  # resident tiles the quadtree needs this frame
 
 
@@ -171,6 +172,7 @@ func _process(_delta: float) -> void:
 	_frame += 1
 	_cam_map = WorldData.to_world(cam.global_position)
 	_planes = cam.get_frustum()
+	_curve = WorldData.EARTH_CURVE if WorldData.is_large() else 0.0
 	material.set_shader_parameter("view_far", cam.far)      # the aerial perspective closes in on the far plane
 	_draw.clear()
 	_wanted.clear()
@@ -205,7 +207,11 @@ func _visible(level: int, i: int, j: int) -> bool:
 	var hr := _height_range(level, i, j)
 	# a margin around the box: the view can turn a little between this test and the frame being drawn
 	var m := s * 0.15 + 30.0
-	var mn := Vector3(x0 + i * s - WorldData.origin_x - m, hr.x - m, z0 + j * s - WorldData.origin_z - m)
+	# the curvature drop (terrain shader) lowers far tiles: extend the box down by the drop at its far corner
+	var far_x := maxf(absf(x0 + i * s - _cam_map.x), absf(x0 + (i + 1) * s - _cam_map.x))
+	var far_z := maxf(absf(z0 + j * s - _cam_map.z), absf(z0 + (j + 1) * s - _cam_map.z))
+	var drop := (far_x * far_x + far_z * far_z) * _curve
+	var mn := Vector3(x0 + i * s - WorldData.origin_x - m, hr.x - m - drop, z0 + j * s - WorldData.origin_z - m)
 	var mx := Vector3(mn.x + s + 2.0 * m, hr.y + m, mn.z + s + 2.0 * m)
 	for p: Plane in _planes:
 		# the corner furthest against the plane normal: if even that is outside, the whole box is

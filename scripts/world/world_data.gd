@@ -46,6 +46,11 @@ var loaded := false
 var _h := PackedFloat32Array()
 
 
+## Drawn curvature of the Earth on large maps: 1 / (2 R'), with R' the radius stretched by standard atmospheric
+## refraction (coefficient 0.13, R' = 6371 km / 0.87 = 7323 km), as surveyors use for lines of sight. The ground
+## d metres away sits d^2 / (2 R') lower than a flat plane: 0.7 m at 3 km, 68 m at 30 km, 683 m at 100 km.
+const EARTH_CURVE := 1.0 / (2.0 * 6371008.8 / 0.87)
+
 var _tiles = null                    # streamed-terrain heights (scripts/world/terrain_heights.gd) when flying a large map
 
 
@@ -102,6 +107,8 @@ func load_world() -> void:
 			if th.setup(tdir):
 				_tiles = th
 				sea_level = -2000.0
+				# the Earth's curvature, drawn (scenery sinks below a flat plane with distance; physics stay flat)
+				RenderingServer.global_shader_parameter_set("earth_curve", EARTH_CURVE)
 				map_dir = "res://data/maps/%s" % tdir.trim_suffix("/").get_file()
 				_load_airfields(map_dir + "/airfields.json")
 	var meta_text := FileAccess.get_file_as_string(META_PATH)
@@ -170,6 +177,7 @@ func reset_origin() -> void:
 	origin_x = 0.0
 	origin_z = 0.0
 	RenderingServer.global_shader_parameter_set("world_origin", Vector2.ZERO)
+	RenderingServer.global_shader_parameter_set("earth_curve", EARTH_CURVE if is_large() else 0.0)
 
 
 func to_world(scene_pos: Vector3) -> Vector3:

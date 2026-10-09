@@ -57,3 +57,7 @@ world_origin={
 "type": "vec2",
 "value": Vector2(0, 0)
 }
+earth_curve={
+"type": "float",
+"value": 0.0
+}

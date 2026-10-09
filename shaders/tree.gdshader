@@ -14,6 +14,7 @@ uniform float min_pixels = 2.5;      // trees shorter than this on screen are le
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 
 global uniform vec2 world_origin;     // floating origin (scripts/world/world_data.gd)
+global uniform float earth_curve;     // drawn curvature of the Earth (see terrain_cdlod.gdshader)
 
 void vertex() {
 	vec3 origin = MODEL_MATRIX[3].xyz;
@@ -36,6 +37,9 @@ void vertex() {
 		float k = pow(max(VERTEX.y, 0.0) / 12.0, 2.0) * wind;
 		VERTEX.x += sin(TIME * 1.3 + phase) * 0.35 * k;
 		VERTEX.z += cos(TIME * 1.1 + phase * 1.3) * 0.25 * k;
+		// sink with the ground under it (the curvature drop, in the tree's own scale)
+		vec2 dc = origin.xz - CAMERA_POSITION_WORLD.xz;
+		VERTEX.y -= dot(dc, dc) * earth_curve / max(length(MODEL_MATRIX[1].xyz), 0.01);
 	}
 }
 
