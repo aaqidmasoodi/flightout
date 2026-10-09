@@ -159,6 +159,7 @@ var _shown := {}                     # switch states the visuals currently show
 var _vis_pos := Vector3.ZERO         # network correction still being blended out (view only)
 var _vis_rot := Quaternion.IDENTITY
 var _remote_crashed := false
+var dev_pilot: Object = null     # development: a scripted pilot (scripts/dev/formation.gd) flies instead of the keys
 var _dev_fly := "--dev-fly" in OS.get_cmdline_user_args()   # development: a simple autopilot for netcode tests
 var _dev_gear_done := false
 var _dev_ap_done := false
@@ -221,7 +222,8 @@ func _ready() -> void:
 		cockpit.setup(self, model)
 	if is_remote:
 		add_to_group("remote_aircraft")
-		physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF   # placed every frame from snapshots
+		# placed every simulation tick from the snapshots (net/client.gd) and drawn between ticks by physics
+		# interpolation, exactly like our own jet, so the two never move out of step on screen
 		_add_callsign()
 	else:
 		add_to_group("player_aircraft")
@@ -415,6 +417,9 @@ func _process_events() -> void:
 
 
 func _read_inputs(delta: float) -> void:
+	if dev_pilot != null:
+		dev_pilot.fly(self, delta)
+		return
 	if _dev_fly:
 		_dev_autopilot()
 		if "--dev-ap" in OS.get_cmdline_user_args():

@@ -113,14 +113,19 @@ func _ready() -> void:
 	_apply_settings()
 	Game.release_cache()
 	_dev_capture.call_deferred()
-	if "--dev-missile" in OS.get_cmdline_user_args():
-		_dev_missiles(aircraft)
-	if "--dev-flares" in OS.get_cmdline_user_args():
-		_dev_flares(aircraft)
+	_demo_ac = aircraft
+	if "--dev-missile" in OS.get_cmdline_user_args() or "--dev-flares" in OS.get_cmdline_user_args():
+		set_weapons_demo.call_deferred(true)
 	if "--dev-bandits" in OS.get_cmdline_user_args():
 		_dev_bandits(aircraft)
 	if "--dev-shade" in OS.get_cmdline_user_args():
 		aircraft.hud_shade = true
+	if Game.online:
+		for arg in OS.get_cmdline_user_args():
+			if arg.begins_with("--dev-formation="):   # development: scripted two-ship flight (scripts/dev/formation.gd)
+				var f: Node = preload("res://scripts/dev/formation.gd").new()
+				f.aircraft = aircraft
+				add_child(f)
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--jitter-log="):   # development: per-frame pose log to hunt view vibration
 			var probe: Node = preload("res://scripts/dev/jitter_probe.gd").new()
@@ -283,25 +288,52 @@ func _dev_bandits(aircraft: Node3D) -> void:
 
 
 ## Development: a stand-in missile every 14 s from just ahead of the jet, weaving, to look at smoke trails.
-func _dev_missiles(ac: Node3D) -> void:
-	while is_inside_tree():
-		await get_tree().create_timer(4.0).timeout
+## Temporary weapons demo until real missiles are wired in (F5, `dev_weapons`): a missile every 12 s and a pair of
+## flares every 3 s from our jet. Local only for now: other players do not see them yet.
+var weapons_demo := false
+var _demo_gen := 0
+var _demo_ac: Node3D
+
+
+func set_weapons_demo(on: bool) -> void:
+	if on == weapons_demo:
+		return
+	weapons_demo = on
+	_demo_gen += 1
+	if on and _demo_ac:
+		_dev_missiles(_demo_ac, _demo_gen)
+		_dev_flares(_demo_ac, _demo_gen)
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and (event as InputEventKey).echo:
+		return
+	if InputMap.has_action("dev_weapons") and event.is_action_pressed("dev_weapons"):
+		set_weapons_demo(not weapons_demo)
+
+
+func _demo_alive(ac: Node3D, gen: int) -> bool:
+	return is_inside_tree() and weapons_demo and gen == _demo_gen and is_instance_valid(ac) and not ac.crashed
+
+
+## A stand-in missile ahead of the jet, off to the right and climbing a little so it crosses the view.
+func _dev_missiles(ac: Node3D, gen: int) -> void:
+	while _demo_alive(ac, gen):
 		var m: Node3D = preload("res://scripts/dev/dev_missile.gd").new()
 		add_child(m)
 		var xf: Transform3D = ac.global_transform
-		# off to the right and climbing a little, so it crosses the view ahead
 		var b := xf.basis * Basis(Vector3.UP, deg_to_rad(-25.0)) * Basis(Vector3.RIGHT, deg_to_rad(4.0))
 		m.launch(Transform3D(b, xf.origin - xf.basis.z * 40.0 - xf.basis.y * 2.0))
-		await get_tree().create_timer(10.0).timeout
+		await get_tree().create_timer(12.0).timeout
 
 
-## Development: a pair of flares every 3 s from the tail (the dispensers sit on the Su-27's tail boom).
-func _dev_flares(ac: Node3D) -> void:
-	while is_inside_tree():
-		await get_tree().create_timer(3.0).timeout
+## A pair of flares every 3 s from the tail (the dispensers sit on the Su-27's tail boom).
+func _dev_flares(ac: Node3D, gen: int) -> void:
+	while _demo_alive(ac, gen):
 		var xf: Transform3D = ac.global_transform
 		for side in [-1.0, 1.0]:
 			var f: Node3D = preload("res://scripts/fx/flare.gd").new()
 			add_child(f)
 			var kick: Vector3 = xf.basis * Vector3(side * 12.0, 14.0, 0.0)
 			f.launch(xf * Vector3(side * 0.9, 0.6, 6.5), Vector3(ac.velocity) + kick)
+		await get_tree().create_timer(3.0).timeout

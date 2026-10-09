@@ -6,9 +6,12 @@ extends Node
 ## server's; if they differ, the jet rewinds to the server state and replays the inputs since (Aircraft.rewind),
 ## and the difference is blended out of the view so nothing jumps.
 ##
-## Other jets: drawn slightly in the past, between two snapshots, along Hermite curves built from position and
-## velocity. The delay adapts to the measured jitter, so late or bunched packets never show; if snapshots stop,
-## the jet is extrapolated briefly and blended back when they resume.
+## Other jets, as DCS does it: drawn at the present moment, predicted forward from their latest snapshot (dead
+## reckoning with velocity, acceleration and turn rates: aircraft move predictably, so the prediction is close), and
+## every new snapshot is blended in over a fraction of a second (projective velocity blending) instead of snapping
+## to it, so corrections never show as jumps or shaking. They are placed every simulation tick like our own jet, and
+## the engine's physics interpolation draws both between ticks with the same fraction: in close formation the two
+## jets move together at 170 m/s, so any difference in timing between them would show directly on screen.
 
 signal joined
 signal failed(reason: String)
@@ -20,7 +23,10 @@ const Link := preload("res://scripts/net/link.gd")
 const AircraftScript := preload("res://scripts/aircraft/aircraft.gd")
 const SPEC := "res://data/aircraft/su27.tres"
 const HISTORY := 360                 # ticks of inputs and states kept (3 s)
-const MAX_EXTRAPOLATE := 0.3         # s a remote jet may coast on its last velocity
+const BLEND_TIME := 0.25            # s over which a new snapshot is blended into the jet as shown
+const MAX_PREDICT := 2.0             # s a jet is predicted past its newest snapshot (a stalled stream) before it holds
+const ACCEL_TIME := 0.5              # s of prediction that use the acceleration; beyond, velocity only (stays sane)
+const SNAP_DISTANCE := 200.0         # m: further than this from where it is shown (a respawn), the jet is moved at once
 const CONNECT_TIMEOUT := 8.0
 
 enum { IDLE, CONNECTING, ONLINE }
@@ -43,17 +49,20 @@ var _states := {}
 var _send_counter := 0
 var _last_ack := 0
 
-# remote jets: id -> {"node", "snaps": [[server_tick, data]], "off_p", "off_q", "extrap"}
+# remote jets: id -> {"node", "snaps": [[jet tick, data]], the clock, the prediction and the blend (see _predict)}
 var _remotes := {}
 var _offset := 0.0                   # server tick minus local clock (in ticks)
 var _have_clock := false
 var _jitter := 1.0                   # ticks
-var interp_delay := 8.0              # ticks behind the newest snapshot that remote jets are drawn
+var interp_delay := 0.0              # ticks the remote jets are predicted ahead of their newest snapshot (stats)
 
 # stats for the optional overlay
 var rtt_ms := 0.0
 var loss_pct := 0.0
 var corrections := 0
+var rewind_ms := 0.0                 # total time spent re-simulating after corrections
+var snap_log: PackedStringArray      # development (scripts/dev/formation.gd): every remote snapshot as it arrives
+var log_snaps := false
 var server_queue := 0
 var kbps_in := 0.0
 var kbps_out := 0.0
@@ -84,9 +93,11 @@ func _on_origin_shifted(delta: Vector3) -> void:
 		for sn in r.snaps:
 			sn[1].pos = (sn[1].pos as Vector3) - delta
 		r.shown_p = (r.shown_p as Vector3) - delta
+		r.b_p = (r.b_p as Vector3) - delta
 		if is_instance_valid(r.node):
+			# moved now, interpolation reset after this tick's placement (_physics_process), as for our own jet
 			(r.node as Node3D).global_position -= delta
-			(r.node as Node3D).reset_physics_interpolation()
+			r.reset = true
 
 
 var online: bool:
@@ -95,6 +106,11 @@ var online: bool:
 
 func _now_ticks() -> float:
 	return Time.get_ticks_usec() / 1e6 * P.TICK_RATE
+
+
+## The simulation clock in ticks (the current physics step).
+func _sim_now() -> float:
+	return float(Engine.get_physics_frames())
 
 
 # ------------------------------------------------------------------ connection
@@ -171,6 +187,23 @@ func _physics_process(_delta: float) -> void:
 		return
 	if link:
 		link.pump()
+	if state == ONLINE:
+		# other jets: placed on this tick, drawn between ticks by physics interpolation like our own
+		var now := _sim_now()
+		for id in _remotes.keys():
+			var r: Dictionary = _remotes[id]
+			if not is_instance_valid(r.node):
+				_remotes.erase(id)
+				continue
+			if r.snaps.is_empty():
+				continue
+			_predict(r, now)
+			if not r.placed or r.reset:
+				# first placement, or the scene origin moved this tick: our own jet is drawn without
+				# interpolation on this tick (aircraft.gd resets it after placing), so this one is too
+				r.placed = true
+				r.reset = false
+				(r.node as Node3D).reset_physics_interpolation()
 
 
 ## The predicted jet asks for its tick number, then hands back the command it applied and the state it reached.
@@ -304,7 +337,7 @@ func _snapshot(b: StreamPeerBuffer) -> void:
 		_last_ack = ack
 		_reconcile(ack, own)
 	# remote jets: each keeps its own timeline (its simulation tick), so stalls on the server never show
-	var now := _now_ticks()
+	var now := _sim_now()
 	for d in jets:
 		var id: int = d.id
 		if not _remotes.has(id):
@@ -313,24 +346,32 @@ func _snapshot(b: StreamPeerBuffer) -> void:
 				continue
 		var r: Dictionary = _remotes[id]
 		var t: int = d.t
-		var js := t - now
-		if not r.have:
+		var js := float(t) - now
+		# the jet's clock: its tick now = our tick + offset, smoothed over about ten snapshots (the drawing clock
+		# that follows it changes pace by 1 % at most, so what jitter is left never shows)
+		if r.snaps.is_empty():
 			r.offset = js
-			r.render = js
-			r.have = true
-		elif js > r.offset:
-			r.offset = lerpf(r.offset, js, 0.1)       # less delayed than we thought: adopt fairly quickly
 		else:
-			r.offset = lerpf(r.offset, js, 0.01)      # more delayed: only slowly (it is usually one late packet)
-		r.jitter = lerpf(r.jitter, absf(js - r.offset), 0.05)
+			r.offset = lerpf(r.offset, js, 0.1)
+		if log_snaps:
+			snap_log.append("%.4f,%d,%d,%.2f,%.2f" % [Time.get_unix_time_from_system(), id, t, js, r.offset])
 		var snaps: Array = r.snaps
 		var i := snaps.size()
 		while i > 0 and snaps[i - 1][0] > t:
 			i -= 1
 		if i > 0 and snaps[i - 1][0] == t:
 			continue
+		# acceleration from the velocity change since the previous snapshot (the server's state is exact)
+		# (lightly smoothed: wheels on a bumpy runway shake the velocity from one snapshot to the next)
+		d.acc = Vector3.ZERO
+		if i > 0:
+			var pv: Dictionary = snaps[i - 1][1]
+			var dt := float(t - snaps[i - 1][0]) / P.TICK_RATE
+			if dt > 0.0:
+				var raw: Vector3 = ((d.vel as Vector3) - (pv.vel as Vector3)) / dt
+				d.acc = (pv.acc as Vector3).lerp(raw.limit_length(120.0), 0.5)
 		snaps.insert(i, [t, d])
-		while snaps.size() > 40:
+		while snaps.size() > 16:
 			snaps.pop_front()
 
 
@@ -340,7 +381,9 @@ func _reconcile(ack: int, server_state: Array) -> void:
 	var mine: Array = _states.get(ack, [])
 	if mine.is_empty() or _differs(mine, server_state):
 		corrections += 1
+		var t0 := Time.get_ticks_usec()
 		aircraft.rewind(server_state, ack, _cmds, _states, tick)
+		rewind_ms += (Time.get_ticks_usec() - t0) / 1000.0
 	for t in _cmds.keys():
 		if t <= ack - 2:
 			_cmds.erase(t)
@@ -377,10 +420,10 @@ func _create_remote(id: int) -> void:
 	ac.name = "Remote_%d" % id
 	ac.callsign = roster.get(id, {}).get("name", "Pilot %d" % id)
 	world_root.add_child(ac)
-	_remotes[id] = {"node": ac, "snaps": [], "off_p": Vector3.ZERO, "off_q": Quaternion.IDENTITY, "extrap": false,
-		"shown_p": Vector3.ZERO, "shown_q": Quaternion.IDENTITY, "have": false, "offset": 0.0, "render": 0.0,
-		"jitter": 1.0, "delay": 8.0}
-
+	_remotes[id] = {"node": ac, "snaps": [], "offset": 0.0, "clock": 0.0, "base": -1, "placed": false, "reset": false,
+		"shown_p": Vector3.ZERO, "shown_v": Vector3.ZERO, "shown_q": Quaternion.IDENTITY, "shown_w": Vector3.ZERO,
+		"b_p": Vector3.ZERO, "b_v": Vector3.ZERO, "b_q": Quaternion.IDENTITY, "b_w": Vector3.ZERO, "b_t": 0.0, "shown_t": 0.0,
+		"stale": false}
 
 func _remove_remote(id: int) -> void:
 	if _remotes.has(id):
@@ -394,86 +437,87 @@ func _process(delta: float) -> void:
 	if state != ONLINE:
 		return
 	_stats(delta)
-	var now := _now_ticks()
-	var step := delta * P.TICK_RATE
-	for id in _remotes.keys():
-		var r: Dictionary = _remotes[id]
-		if not is_instance_valid(r.node):
-			_remotes.erase(id)
-			continue
-		if not r.have:
-			continue
-		# The render clock follows the estimate but may only run up to 3% fast or slow: speed never visibly
-		# changes. Only a big disagreement (a stall of half a second or more) is corrected at once.
-		var target := clampf(P.SNAPSHOT_EVERY * 1.5 + r.jitter * 3.0 + 2.0, 6.0, 40.0)
-		r.delay = move_toward(r.delay, target, step * 0.03)
-		var err: float = (r.offset - r.delay) - r.render
-		if absf(err) > 60.0:
-			r.render = r.offset - r.delay
-		else:
-			# proportional and rate-limited: the clock eases onto the estimate (about a second), never dithers
-			r.render += clampf(err * (1.0 - exp(-delta * 0.8)), -0.03 * step, 0.03 * step)
-		interp_delay = r.delay
-		_drive(r, now + r.render, delta)
 
 
-func _drive(r: Dictionary, rt: float, delta: float) -> void:
+## The jet's state at time `rt` (its own ticks), predicted from snapshot `d` taken at tick `t`: position, velocity
+## and orientation, with the acceleration for the first part and the body turn rates throughout.
+static func _reckon(d: Dictionary, t: int, rt: float) -> Array:
+	var dt := clampf((rt - float(t)) / P.TICK_RATE, -0.5, MAX_PREDICT)
+	var ta := clampf(dt, -ACCEL_TIME, ACCEL_TIME)
+	var a: Vector3 = d.acc
+	var pos: Vector3 = (d.pos as Vector3) + (d.vel as Vector3) * dt + a * (0.5 * ta * ta) + a * ta * (dt - ta)
+	var vel: Vector3 = (d.vel as Vector3) + a * ta
+	var w: Vector3 = d.omega
+	var rot: Quaternion = (d.rot as Quaternion) * (Quaternion(w.normalized(), w.length() * dt) if w.length() > 1e-5 else Quaternion.IDENTITY)
+	return [pos, vel, rot.normalized()]
+
+
+## Places a remote jet for this tick: predicted to the present from its newest snapshot, and blended from where it
+## was shown towards that prediction over BLEND_TIME whenever a newer snapshot takes over (projective velocity
+## blending: the old path is carried on with a velocity that turns smoothly into the new one, and the position
+## slides from the old path onto the new over the same time). No jumps, no shaking, whatever the network does.
+func _predict(r: Dictionary, now: float) -> void:
 	var snaps: Array = r.snaps
-	if snaps.is_empty():
-		return
-	var pos: Vector3
-	var rot: Quaternion
-	var vel: Vector3
-	var omega: Vector3
-	var d: Dictionary
-	var extrap := false
-	if rt <= snaps[0][0]:
-		d = snaps[0][1]
-		pos = d.pos; rot = d.rot; vel = d.vel; omega = d.omega
-	elif rt >= snaps[-1][0]:
-		d = snaps[-1][1]
-		var dt := minf((rt - snaps[-1][0]) / P.TICK_RATE, MAX_EXTRAPOLATE)
-		pos = d.pos + d.vel * dt
-		vel = d.vel
-		omega = d.omega
-		var w: Vector3 = d.omega
-		rot = (d.rot as Quaternion) * (Quaternion(w.normalized(), w.length() * dt) if w.length() > 1e-5 else Quaternion.IDENTITY)
-		extrap = true
+	# the present for this jet: its clock eases onto the estimate (1 % at most, never a jump), except when it is far
+	# out while the jet stands or rolls slowly (a player joining while loading), or two seconds out: then at once
+	var target: float = now + r.offset + rtt_ms / 1000.0 * P.TICK_RATE * 0.5      # plus the trip from the server
+	var newest: Dictionary = snaps[-1][1]
+	var err: float = target - float(r.clock)
+	if r.base < 0 or absf(err) > 240.0 or ((newest.vel as Vector3).length() < 25.0 and absf(err) > 30.0):
+		r.clock = target
 	else:
-		var i := snaps.size() - 2
-		while i > 0 and snaps[i][0] > rt:
-			i -= 1
-		var a: Dictionary = snaps[i][1]
-		var bb: Dictionary = snaps[i + 1][1]
-		var span := float(snaps[i + 1][0] - snaps[i][0])
-		var u := clampf((rt - snaps[i][0]) / span, 0.0, 1.0)
-		var h := span / P.TICK_RATE
-		var u2 := u * u
-		var u3 := u2 * u
-		pos = (2.0 * u3 - 3.0 * u2 + 1.0) * a.pos + (u3 - 2.0 * u2 + u) * h * a.vel + (-2.0 * u3 + 3.0 * u2) * bb.pos + (u3 - u2) * h * bb.vel
-		vel = (a.vel as Vector3).lerp(bb.vel, u)
-		omega = (a.omega as Vector3).lerp(bb.omega, u)
-		rot = (a.rot as Quaternion).slerp(bb.rot, u)
-		d = bb if u > 0.5 else a
-	# leaving extrapolation (late packets arrived): blend from where the jet was shown, never pop
-	if r.extrap and not extrap:
-		r.off_p = (r.shown_p as Vector3) - pos
-		r.off_q = ((r.shown_q as Quaternion) * rot.inverse()).normalized()
-		if (r.off_p as Vector3).length() > 60.0:
-			r.off_p = Vector3.ZERO
-			r.off_q = Quaternion.IDENTITY
-	r.extrap = extrap
-	var k := exp(-8.0 * delta)
-	r.off_p = (r.off_p as Vector3) * k
-	r.off_q = Quaternion.IDENTITY.slerp(r.off_q, k)
-	var show_p: Vector3 = pos + r.off_p
-	var show_q: Quaternion = ((r.off_q as Quaternion) * rot).normalized()
+		r.clock = float(r.clock) + 1.0 + clampf(err * 0.01, -0.01, 0.01)
+	var rt: float = r.clock
+	# predicted from the newest snapshot at or before that time (normally the newest of all)
+	var bi := snaps.size() - 1
+	while bi > 0 and float(snaps[bi][0]) > rt:
+		bi -= 1
+	var t: int = snaps[bi][0]
+	var bd: Dictionary = snaps[bi][1]
+	interp_delay = rt - float(snaps[-1][0])
+	r.stale = interp_delay > P.TICK_RATE * 0.25
+	var now_state := _reckon(bd, t, rt)
+	var pos: Vector3 = now_state[0]
+	var vel: Vector3 = now_state[1]
+	var rot: Quaternion = now_state[2]
+	if r.base != t:
+		# a newer snapshot: start blending from the jet as it is shown now
+		var first: bool = r.base < 0
+		r.base = t
+		r.b_p = r.shown_p
+		r.b_v = r.shown_v
+		r.b_q = r.shown_q
+		r.b_w = r.shown_w
+		r.b_t = r.shown_t                            # the time the shown state belongs to (the previous tick)
+		if first or (pos - (r.shown_p as Vector3)).length() > SNAP_DISTANCE:
+			r.b_p = pos
+			r.b_v = vel
+			r.b_q = rot
+			r.b_w = bd.omega
+			r.b_t = rt - BLEND_TIME * P.TICK_RATE
+			r.reset = true
+	var since: float = (rt - float(r.b_t)) / P.TICK_RATE
+	var k := clampf(since / BLEND_TIME, 0.0, 1.0)
+	var show_p := pos
+	var show_v := vel
+	var show_q := rot
+	if k < 1.0:
+		var acc: Vector3 = bd.acc
+		var vb: Vector3 = (r.b_v as Vector3).lerp(vel, k)
+		var old_p: Vector3 = (r.b_p as Vector3) + vb * since + acc * (0.5 * since * since)
+		show_p = old_p.lerp(pos, k)
+		show_v = vb.lerp(vel, k)
+		var bw: Vector3 = r.b_w
+		var old_q: Quaternion = (r.b_q as Quaternion) * (Quaternion(bw.normalized(), bw.length() * since) if bw.length() > 1e-5 else Quaternion.IDENTITY)
+		show_q = old_q.normalized().slerp(rot, k)
 	r.shown_p = show_p
+	r.shown_v = show_v
 	r.shown_q = show_q
+	r.shown_w = bd.omega
+	r.shown_t = rt
 	if _log:
-		_log.store_line("%.5f,%.4f,%.4f,%.4f,%d,%.2f,%.2f" % [Time.get_ticks_usec() / 1e6, show_p.x, show_p.y, show_p.z,
-			1 if extrap else 0, interp_delay, rt])
-	r.node.apply_remote(show_p, show_q, vel, omega, d, delta)
+		_log.store_line("%.5f,%.4f,%.4f,%.4f,%.2f,%.2f" % [Time.get_ticks_usec() / 1e6, show_p.x, show_p.y, show_p.z, rt - float(t), k])
+	r.node.apply_remote(show_p, show_q, show_v, bd.omega, bd, P.TICK_DT)
 
 
 func _stats(delta: float) -> void:
@@ -490,6 +534,6 @@ func _stats(delta: float) -> void:
 
 
 func stats_text() -> String:
-	return "PING %d ms   LOSS %.1f%%   IN %.1f KB/s   OUT %.1f KB/s\nINTERP %d ms   CORRECTIONS %d   SERVER BUFFER %d%s" % [
+	return "PING %d ms   LOSS %.1f%%   IN %.1f KB/s   OUT %.1f KB/s\nPREDICT %d ms   CORRECTIONS %d   SERVER BUFFER %d%s" % [
 		int(rtt_ms), loss_pct, kbps_in, kbps_out, int(interp_delay / P.TICK_RATE * 1000.0), corrections, server_queue,
 		"   NETSIM" if link and link.simulating else ""]

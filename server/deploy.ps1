@@ -15,6 +15,33 @@ Write-Host "Building the Linux server..."
 & $Godot --headless --path $root --export-release "Linux Server" (Join-Path $out "flightout_server.x86_64") | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Export failed" }
 
+# Map data: the server reads the Kashmir heights and land cover from /opt/flightout/kashmir (not packed into the
+# server build: it is large and rarely changes). Only files that are missing or changed size are sent.
+$map = Join-Path $root "assets\kashmir"
+$mapFiles = @("terrain.json", "h0.bin", "i0.bin", "lc0.bin", "lci0.bin")
+Write-Host "Checking the map data on the server..."
+$have = @{}
+$list = ssh -i $Key $Server "sudo mkdir -p /opt/flightout/kashmir; cd /opt/flightout/kashmir && stat -c '%n %s' * 2>/dev/null || true"
+foreach ($line in $list) {
+    $p = "$line".Trim() -split ' '
+    if ($p.Count -eq 2) { $have[$p[0]] = [int64]$p[1] }
+}
+$send = @()
+foreach ($f in $mapFiles) {
+    $local = Join-Path $map $f
+    if (-not (Test-Path $local)) { throw "Map file missing: $local" }
+    if (-not $have.ContainsKey($f) -or $have[$f] -ne (Get-Item $local).Length) { $send += $local }
+}
+if ($send.Count -gt 0) {
+    $mb = [math]::Round((($send | ForEach-Object { (Get-Item $_).Length }) | Measure-Object -Sum).Sum / 1MB)
+    Write-Host "Uploading map data ($($send.Count) files, $mb MB, only needed once)..."
+    ssh -i $Key $Server "mkdir -p ~/flightout_upload/kashmir"
+    scp -i $Key $send "${Server}:flightout_upload/kashmir/"
+    ssh -i $Key $Server "sudo install -m 644 ~/flightout_upload/kashmir/* /opt/flightout/kashmir/ && rm -rf ~/flightout_upload/kashmir"
+} else {
+    Write-Host "Map data is up to date."
+}
+
 Write-Host "Uploading..."
 ssh -i $Key $Server "mkdir -p ~/flightout_upload"
 scp -i $Key -C (Join-Path $out "flightout_server.x86_64") (Join-Path $out "flightout_server.pck") (Join-Path $PSScriptRoot "flightout.service") "${Server}:flightout_upload/"

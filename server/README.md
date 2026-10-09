@@ -22,5 +22,10 @@ sudo systemctl restart flightout     # restart
 
 From the project folder on Windows: `.\server\deploy.ps1` (builds the Linux export, uploads it, restarts the service).
 
+The Kashmir map data the server needs (`terrain.json`, `h0.bin`, `i0.bin`, `lc0.bin`, `lci0.bin` from
+`assets/kashmir`, about 875 MB) is not packed into the server build: it lives in `/opt/flightout/kashmir` and the
+service passes `--terrain=/opt/flightout/kashmir`. `deploy.ps1` uploads only the files that are missing or have
+changed, so the first deploy after a map change is slow and the rest are quick.
+
 Clients and server must run the same protocol version (`scripts/net/protocol.gd`, `VERSION`), so deploy the server
 whenever the netcode or the flight model changes.

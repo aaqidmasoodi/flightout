@@ -9,7 +9,8 @@ User=flightout
 Group=flightout
 WorkingDirectory=/opt/flightout
 Environment=HOME=/var/lib/flightout
-ExecStart=/opt/flightout/flightout_server.x86_64 --headless -- --server "--name=FlightOut London"
+# the map data (heights, land cover) is kept beside the server, not in its .pck: deploy.ps1 uploads it once
+ExecStart=/opt/flightout/flightout_server.x86_64 --headless -- --server "--name=FlightOut London" --terrain=/opt/flightout/kashmir
 Restart=always
 RestartSec=3
 Nice=-5

@@ -39,6 +39,14 @@ var players := {}                    # id -> Player
 var _by_peer := {}                   # peer -> Player
 var _spec: Resource
 var _weather_sent := {}
+# development: `--server-stats=<file.csv>` logs once a second how the simulation keeps up
+var _stats: FileAccess
+var _st_t0 := 0
+var _st_ticks := 0
+var _st_sum := 0
+var _st_max := 0
+var _st_stalls := 0                  # player ticks that had no input yet (the jet waited)
+var _st_repeats := 0                 # lost inputs replaced by the previous one
 
 
 func _ready() -> void:
@@ -46,6 +54,9 @@ func _ready() -> void:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--port="):
 			port = arg.trim_prefix("--port=").to_int()
+		elif arg.begins_with("--server-stats="):
+			_stats = FileAccess.open(arg.trim_prefix("--server-stats="), FileAccess.WRITE)
+			_stats.store_line("wall,ticks,avg_us,max_us,stalls,repeats,queues")
 		elif arg.begins_with("--name="):
 			server_name = arg.trim_prefix("--name=").strip_edges().left(48)
 	Engine.max_fps = 240                         # a headless server needs no more than its physics rate
@@ -63,6 +74,29 @@ func _ready() -> void:
 
 
 func _physics_process(_delta: float) -> void:
+	var t0 := Time.get_ticks_usec()
+	_physics_tick()
+	if _stats:
+		var us := Time.get_ticks_usec() - t0
+		_st_ticks += 1
+		_st_sum += us
+		_st_max = maxi(_st_max, us)
+		if t0 - _st_t0 >= 1000000:
+			var q := PackedStringArray()
+			for p: Player in players.values():
+				q.append(str(p.queue.size()))
+			_stats.store_line("%.3f,%d,%d,%d,%d,%d,%s" % [Time.get_unix_time_from_system(), _st_ticks, _st_sum / maxi(_st_ticks, 1),
+				_st_max, _st_stalls, _st_repeats, "/".join(q)])
+			_stats.flush()
+			_st_t0 = t0
+			_st_ticks = 0
+			_st_sum = 0
+			_st_max = 0
+			_st_stalls = 0
+			_st_repeats = 0
+
+
+func _physics_tick() -> void:
 	_service()
 	tick += 1
 	for p: Player in players.values():
@@ -228,10 +262,12 @@ func _advance(pl: Player) -> void:
 		elif not pl.queue.is_empty() and pl.waiting >= LOST_INPUT_WAIT and not pl.last_cmd.is_empty():
 			# the input for this tick never arrived but later ones did: repeat the last one (keeping its switches)
 			cmd = pl.last_cmd.duplicate()
+			_st_repeats += 1
 			cmd[0] = pl.next_tick
 			pl.waiting = 0
 		else:
 			pl.waiting += 1
+			_st_stalls += 1
 			return
 		_apply(pl, cmd)
 

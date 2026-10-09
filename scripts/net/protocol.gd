@@ -7,7 +7,7 @@ extends RefCounted
 ##                     and the last input tick the server applied for it (for reconciliation).
 ## Channel 0 carries unreliable state (inputs, snapshots); channel 1 carries reliable events (join, leave, weather).
 
-const VERSION := 3                     # 2: avionics master mode in the input toggles and the state; 3: floating origin (jet frames)
+const VERSION := 4                     # 2: avionics master mode in the input toggles and the state; 3: floating origin (jet frames); 4: Kashmir map, slots at three airfields
 const DEFAULT_PORT := 27015
 const MAX_PLAYERS := 16
 const TICK_RATE := 120                 # simulation ticks per second (2 substeps each = 240 Hz physics)
