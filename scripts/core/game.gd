@@ -17,6 +17,16 @@ var hosted_pid := -1                 # a local server this game started with HOS
 var dev_hud: bool:
 	get: return OS.is_debug_build() and not "--no-dev-hud" in OS.get_cmdline_user_args()
 var map_open := false                # the map screen (M) is up: cockpit clicks and the wheel go to the map
+## Other players' names floating over their jets: off by default, toggled in flight with F9 (toggle_names).
+var show_names := false
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and (event as InputEventKey).echo:
+		return
+	if InputMap.has_action("toggle_names") and event.is_action_pressed("toggle_names"):
+		show_names = not show_names
+		get_tree().call_group("callsign_labels", "set_visible", show_names)
 
 
 var online: bool:

@@ -810,4 +810,6 @@ func _add_callsign() -> void:
 	l.no_depth_test = true
 	l.position = Vector3(0.0, 4.5, 0.0)
 	l.visibility_range_end = 15000.0
+	l.visible = Game.show_names                   # off unless the player turned names on (F9)
+	l.add_to_group("callsign_labels")
 	add_child(l)
