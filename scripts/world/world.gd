@@ -6,6 +6,9 @@ const WORLD_SCENE := "res://assets/world/world.glb"
 const TERRAIN_SHADER := preload("res://shaders/terrain.gdshader")
 const OCEAN_SHADER := preload("res://shaders/ocean.gdshader")
 const TREE_VISIBLE_RANGE := 6500.0
+const TerrainStreamer := preload("res://scripts/world/terrain_streamer.gd")
+const TERRAIN_DIR := "res://assets/terrain"
+var streamer: Node3D
 const AIRBASE_EXCLUSION := Rect2(-200.0, 4100.0, 1000.0, 3800.0)   # x, z, w, d
 
 var forest_mask: Image
@@ -54,6 +57,19 @@ func _ready() -> void:
 		var mi := n as MeshInstance3D
 		mi.material_override = tmat
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# streamed terrain (scripts/world/terrain_streamer.gd) replaces the fixed terrain meshes when its tiles exist
+	if TerrainStreamer.available(TERRAIN_DIR) and not "--old-terrain" in OS.get_cmdline_user_args():
+		var ts: Node3D = TerrainStreamer.new()
+		ts.name = "Terrain"
+		if ts.setup(TERRAIN_DIR):
+			for k in ["forest_density", "macro_tex", "detail_tex", "detail_nrm", "map_half_extent"]:
+				ts.material.set_shader_parameter(k, tmat.get_shader_parameter(k))
+			preload("res://scripts/world/surface_materials.gd").ocean_materials.append(ts.material)
+			for n in world.find_children("Terrain_*", "MeshInstance3D", true, false):
+				(n as MeshInstance3D).visible = false
+			# a sibling of this node, not a child: it places its tiles in scene coordinates itself (floating origin)
+			get_parent().add_child.call_deferred(ts)
+			streamer = ts
 
 	_build_ocean()
 	_build_forests()
