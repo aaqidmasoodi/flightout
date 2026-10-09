@@ -81,6 +81,11 @@ func airfield(id: String) -> Dictionary:
 	return {}
 
 
+## Land cover class at a map position on a large map (ESA WorldCover codes, see terrain_heights.gd), else 0.
+func land_cover(x: float, z: float) -> int:
+	return _tiles.cover(x, z) if _tiles != null else 0
+
+
 ## True on a large streamed map (no sea, far horizons).
 func is_large() -> bool:
 	return _tiles != null

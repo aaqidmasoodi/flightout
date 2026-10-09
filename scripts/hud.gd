@@ -35,10 +35,8 @@ func _ready() -> void:
 	_build_panel()
 	_build_status()
 	_build_hints()
-	_fps = T.label("", 18, "Bold", T.DIM, 2)
-	_fps.anchor_left = 1.0; _fps.anchor_right = 1.0
-	_fps.offset_left = -160; _fps.offset_right = -24; _fps.offset_top = 18
-	_fps.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_fps = Label.new()                 # (the FPS counter is scripts/ui/fps_counter.gd, for players too)
+	_fps.visible = false
 	_root.add_child(_fps)
 	_net = T.label("", 15, "Bold", T.DIM, 1)
 	_net.anchor_left = 1.0; _net.anchor_right = 1.0
@@ -58,7 +56,6 @@ func _on_setting(k: String, _v) -> void:
 func _apply_settings() -> void:
 	_panel.visible = bool(Settings.get_value("hud/telemetry"))
 	_hints.visible = bool(Settings.get_value("hud/key_hints"))
-	_fps.visible = bool(Settings.get_value("hud/fps"))
 	_net.visible = bool(Settings.get_value("hud/net_stats"))
 
 

@@ -85,6 +85,12 @@ func _ready() -> void:
 
 	_build_ocean()
 	_build_forests()
+	if other_map and WorldData.is_large():
+		# trees planted from the large map's land cover (scripts/world/cover_forest.gd)
+		var cf: Node3D = preload("res://scripts/world/cover_forest.gd").new()
+		cf.name = "CoverForest"
+		cf.setup(self)
+		add_child.call_deferred(cf)
 	var lights: Node3D = preload("res://scripts/world/airfield_lights.gd").new()
 	lights.name = "AirfieldLights"
 	add_child(lights)

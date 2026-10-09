@@ -62,7 +62,7 @@ func _ready() -> void:
 	cam._pitch = 0.0
 	cam._idle = -1e9
 	await get_tree().create_timer(3.0).timeout      # let the first tiles stream in before measuring
-	_rows.append("t,x,z,alt_m,agl_m,ias,fps,worst_ms,cpu_ms,gpu_ms,draws,prims_k,vram_mb,tiles_drawn,tiles_resident,tile_loads")
+	_rows.append("t,x,z,alt_m,agl_m,ias,fps,worst_ms,cpu_ms,gpu_ms,draws,prims_k,vram_mb,tiles_drawn,tiles_resident,tile_loads,trees")
 	_t = 0.0
 
 
@@ -84,11 +84,11 @@ func _process(delta: float) -> void:
 	if _sec >= 1.0:
 		var w := WorldData.to_world(aircraft.global_position)
 		var st: Dictionary = world.streamer.stats if world.streamer else {"drawn": 0, "resident": 0, "loads": 0}
-		_rows.append("%.1f,%.0f,%.0f,%.0f,%.0f,%.0f,%.1f,%.1f,%.2f,%.2f,%d,%d,%.0f,%d,%d,%d" % [
+		_rows.append("%.1f,%.0f,%.0f,%.0f,%.0f,%.0f,%.1f,%.1f,%.2f,%.2f,%d,%d,%.0f,%d,%d,%d,%d" % [
 			_t, w.x, w.z, w.y, aircraft.altitude_agl, aircraft.fm.ias, _frames / _sec, _worst * 1000.0, _cpu / _frames, _gpu / _frames,
 			draws, RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME) / 1000,
 			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_VIDEO_MEM_USED) / 1048576.0,
-			st.drawn, st.resident, st.loads])
+			st.drawn, st.resident, st.loads, int(world.get_node("CoverForest").planted) if world.has_node("CoverForest") else 0])
 		_sec = 0.0
 		_frames = 0
 		_worst = 0.0
@@ -108,8 +108,8 @@ func _finish() -> void:
 		avg += d
 	avg /= maxf(n, 1)
 	var p99: float = sorted[int(n * 0.99)] if n > 0 else 0.0
-	var summary := "BENCH frames %d  avg %.1f fps (%.2f ms)  1%% low %.1f fps (%.2f ms)  worst %.1f ms  max draws %d  crashed %s" % [
-		n, 1.0 / avg, avg * 1000.0, 1.0 / p99, p99 * 1000.0, sorted[n - 1] * 1000.0, _draw_max, str(aircraft.fm.crashed)]
+	var summary := "BENCH frames %d  avg %.1f fps (%.2f ms)  1%% low %.1f fps (%.2f ms)  worst %.1f ms  max draws %d  crashed %s  dev overlay %s" % [
+		n, 1.0 / avg, avg * 1000.0, 1.0 / p99, p99 * 1000.0, sorted[n - 1] * 1000.0, _draw_max, str(aircraft.fm.crashed), str(Game.dev_hud)]
 	print(summary)
 	print(RenderingServer.get_video_adapter_name(), " / ", RenderingServer.get_video_adapter_vendor())
 	if _out != "":

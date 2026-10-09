@@ -21,6 +21,10 @@ var _index := PackedByteArray()
 var _zstd := false
 var _cache := {}
 var _order: Array[int] = []
+var _cfile: FileAccess              # land cover tiles (tools/build_landcover.py), same layout, one byte per sample
+var _cindex := PackedByteArray()
+var _ccache := {}
+var _corder: Array[int] = []
 
 
 func setup(dir: String) -> bool:
@@ -40,7 +44,44 @@ func setup(dir: String) -> bool:
 	_file = FileAccess.open(dir.path_join("h0.bin"), FileAccess.READ)
 	if _zstd:
 		_index = FileAccess.get_file_as_bytes(dir.path_join("i0.bin"))
+	if m.has("landcover") and FileAccess.file_exists(dir.path_join("lc0.bin")):
+		_cfile = FileAccess.open(dir.path_join("lc0.bin"), FileAccess.READ)
+		_cindex = FileAccess.get_file_as_bytes(dir.path_join("lci0.bin"))
 	return _file != null
+
+
+func has_cover() -> bool:
+	return _cfile != null
+
+
+## Land cover class (ESA WorldCover code: 10 tree cover, 20 shrubland, 30 grassland, 40 cropland, 50 built-up,
+## 60 bare, 70 snow and ice, 80 water, 90 wetland, 100 moss) of the sample nearest to (x, z); 0 when unknown.
+func cover(x: float, z: float) -> int:
+	if _cfile == null:
+		return 0
+	var gx := clampi(int(round((x - x0) / spacing)), 0, nx * tq)
+	var gz := clampi(int(round((z - z0) / spacing)), 0, nz * tq)
+	var ti := mini(gx / tq, nx - 1)
+	var tj := mini(gz / tq, nz - 1)
+	var d := _ctile(ti, tj)
+	if d.size() != ts * ts:
+		return 0
+	return d[(gz - tj * tq + 1) * ts + (gx - ti * tq + 1)]
+
+
+func _ctile(i: int, j: int) -> PackedByteArray:
+	var n := j * nx + i
+	if _ccache.has(n):
+		return _ccache[n]
+	var a := _cindex.decode_u64(n * 8)
+	var b := _cindex.decode_u64(n * 8 + 8)
+	_cfile.seek(a)
+	var data := _cfile.get_buffer(b - a).decompress(ts * ts, FileAccess.COMPRESSION_ZSTD)
+	_ccache[n] = data
+	_corder.append(n)
+	if _corder.size() > CACHE:
+		_ccache.erase(_corder.pop_front())
+	return data
 
 
 ## Map extent in world coordinates: Rect2(x, z, width, depth).

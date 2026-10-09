@@ -94,9 +94,11 @@ func _ready() -> void:
 	_cam.target = aircraft
 	add_child(_cam)
 
-	var hud: CanvasLayer = preload("res://scripts/hud.gd").new()
-	hud.aircraft = aircraft
-	add_child(hud)
+	add_child(preload("res://scripts/ui/fps_counter.gd").new())   # the players' frame rate counter (a setting)
+	if Game.dev_hud:          # development overlay only (scripts/core/game.gd), never in an exported game
+		var hud: CanvasLayer = preload("res://scripts/hud.gd").new()
+		hud.aircraft = aircraft
+		add_child(hud)
 
 	add_child(preload("res://scripts/ui/pause_menu.gd").new())
 	var map: CanvasLayer = preload("res://scripts/ui/map_view.gd").new()

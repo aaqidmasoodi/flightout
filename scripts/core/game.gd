@@ -10,6 +10,12 @@ var _cache := {}
 var client: Node                     # net/client.gd, always present
 var is_server := false               # this process is a dedicated server (FlightOut --headless -- --server)
 var hosted_pid := -1                 # a local server this game started with HOST, stopped on quit
+## Development builds only (running from the editor or the Godot binary, never an exported game): the on-screen
+## flight data panel, status, key hints, flight path marker, approach guidance and FPS counter. Players never see
+## them; their instruments are in the cockpit. `--no-dev-hud` hides them in a development build too (to measure
+## or look at the game exactly as players get it).
+var dev_hud: bool:
+	get: return OS.is_debug_build() and not "--no-dev-hud" in OS.get_cmdline_user_args()
 var map_open := false                # the map screen (M) is up: cockpit clicks and the wheel go to the map
 
 

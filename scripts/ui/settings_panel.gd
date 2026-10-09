@@ -82,17 +82,23 @@ func _ready() -> void:
 			for r in _refreshers:
 				r.call())
 
-	p = _page("HUD")
-	_toggle(p, "Flight data panel  (H)", "hud/telemetry")
-	_toggle(p, "Key hints", "hud/key_hints")
-	_toggle(p, "FPS counter", "hud/fps")
-	_toggle(p, "Network statistics (online)", "hud/net_stats")
+	p = _page("INTERFACE")
 	_choice(p, "Units", "hud/unit_system", ["Aviation  (kt, ft, ft/min)", "Metric  (km/h, m, m/s)"], [1, 0])
+	_toggle(p, "FPS counter", "hud/fps")
+	if OS.is_debug_build():
+		# development builds only: the on-screen overlay players never get (Game.dev_hud)
+		p.add_child(_gap(8))
+		p.add_child(T.label("DEVELOPER OVERLAY", 18, "Bold", T.DIM, 3))
+		_toggle(p, "Flight data panel  (H)", "hud/telemetry")
+		_toggle(p, "Key hints", "hud/key_hints")
+		_toggle(p, "Network statistics (online)", "hud/net_stats")
 
 	p = _page("CONTROLS")
 	_toggle(p, "Invert pitch", "controls/invert_pitch")
 	_slider(p, "Mouse look sensitivity", "controls/mouse_sensitivity", 0.3, 2.0, 0.05, func(v): return "%.2fx" % v)
 	for entry in Settings.BINDABLE:
+		if entry[0] == "toggle_hud" and not OS.is_debug_build():
+			continue                 # the developer overlay's key: not a player control
 		if entry.size() == 1:
 			p.add_child(_gap(8))
 			p.add_child(T.label(entry[0], 18, "Bold", T.DIM, 3))
