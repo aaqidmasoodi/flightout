@@ -22,14 +22,17 @@ instead right-click FlightOut in Applications and choose Open.
 
 ## Multiplayer
 Server-authoritative with client-side prediction: your jet responds instantly and the server corrects it invisibly;
-other jets are interpolated along smooth curves. Up to 16 pilots a server, each starting in their own hardened shelter.
+other jets are drawn the way DCS and military flight simulators do it: predicted to the present from their latest
+update and blended smoothly onto each new one, never snapped (`docs/NETCODE.md`). Up to 16 pilots a server, starting
+lined up on the runway at Srinagar (8), Leh (4) and Skardu (4).
 - **Official server:** Multiplayer → enter a callsign → JOIN on FlightOut London.
 - **Host your own:** Multiplayer → HOST A SERVER (UDP port 27015; forward it for friends outside your network), or run a
   dedicated server anywhere: `FlightOut --headless -- --server --name="My server"`. See `server/README.md`.
-- Settings → HUD → Network statistics shows ping, loss and corrections in flight.
+- F9 shows or hides other players' names (off by default).
 
 ## Features
-- 41 x 41 km island map surrounded by sea: hills, forests, a northern mountain range with snow, and an airbase with a 3 km runway, taxiways, apron, hardened shelters, hangar, tower and fuel farm
+- The whole Kashmir region at real scale (Kashmir valley, Ladakh, Gilgit-Baltistan, Aksai Chin) from Copernicus 30 m elevation and ESA land cover, streamed with continuous level of detail, Earth curvature, terrain shadows and aerial haze; real airfields with lit runways (edge, threshold, approach lights and PAPI)
+- Map screen (M) with airfields, your track and position
 - Su-27 model built at real scale in Blender, with animated landing gear, canopy, airbrake, radome, radar dish, flaperons, slats, stabilators and rudders
 - Physics-based flight model: lift and induced drag from angle of attack, transonic wave drag, thrust with afterburner and altitude lapse, gravity, air density, fly-by-wire rate commands with AoA and G limiting
 - Nose-wheel steering (tiller works even when stopped), wheel brakes, judged landings, terrain and sea collisions
@@ -56,8 +59,10 @@ All keys can be rebound in Settings → Controls (two keys per action; conflicts
 | Mouse wheel | Zoom |
 | L | Exterior lights |
 | Z | Auto-throttle (holds current speed) |
-| P | Practice approach: 7 km final to runway 36, configured to land |
-| H | Show / hide the flight data panel |
+| P | Practice approach to the nearest runway, configured to land |
+| M | Map |
+| F9 | Other players' names on / off |
+| F5 | Weapons demo, temporary: a missile every 12 s and flares every 3 s (only you see them for now) |
 | K | AoA limiter off / on (allows the Cobra; you can stall and depart) |
 | Esc | Pause menu (settings, restart, main menu) |
 | Backspace | Reset |
@@ -78,7 +83,7 @@ Settings → Weather: time presets (night, dawn, morning, noon, afternoon, sunse
 Settings → Weather: wind strength and direction (runway 36 points north, so a north wind is a headwind) and turbulence.
 
 ## Menus
-The game starts on a lightweight main menu (live Su-27 backdrop, nothing else loaded). **Play** streams the island in on a loading screen.
+The game starts on a lightweight main menu (live Su-27 backdrop, nothing else loaded). **Play** streams Kashmir in on a loading screen.
 **Settings** (also in the Esc pause menu during flight) cover display, graphics, HUD, controls and audio; every change applies instantly and is saved to `user://settings.cfg`.
 The flight path marker and ILS guidance appear in the cockpit view only.
 
@@ -86,7 +91,7 @@ The flight path marker and ILS guidance appear in the cockpit view only.
 Press **P** for a practice approach. Follow the ILS box (bottom right): keep both needles centred, about 270-300 km/h, gear down, flaps on.
 The PAPI lights left of the touchdown zone show two white and two red on the correct 3 degree glide (all white = high, all red = low).
 Flare gently a few metres above the runway and close the throttle. Touchdowns are graded: smooth (<1.5 m/s), good (<3), firm (<4.5), hard (<7), and above 7 m/s the gear collapses.
-Runway 36 (approach from the south over the sea) is the instrument runway; runway 18 is visual only because of the mountains to the north.
+Every runway end has edge, threshold and approach lights and a PAPI; at night the lit runways can be seen from far away.
 
 ## Architecture
 **Simulation (pure data, server-ready)** in `scripts/sim/`. No nodes, no rendering, seeded randomness, fixed tick (120 Hz physics, 2 substeps = 240 Hz), so the same code can run authoritatively on a server and predictively on clients.
