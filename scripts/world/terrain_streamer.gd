@@ -62,6 +62,7 @@ var _pending := {}                 # key -> true while a worker reads it
 var _done: Array = []              # [key, heights, cover] read by workers, waiting for upload
 var _mutex := Mutex.new()
 var _curve := 0.0                  # earth_curve shader global (large maps), for culling
+var _overview_tex: Texture2D       # kept alive while in use (cast shadows)
 var _reached := 0                  # resident tiles the quadtree needs this frame
 
 
@@ -146,7 +147,40 @@ func setup(path: String) -> bool:
 			var k := _key(top, i, j)
 			_apply(k, _read(k))
 	process_priority = 200            # after the camera has moved this frame: culling uses this frame's view
+	RenderingServer.global_shader_parameter_set("terrain_shadow", 0.0)
+	if meta.has("overview") and FileAccess.file_exists(dir.path_join("overview.bin")):
+		WorkerThreadPool.add_task(_load_overview)
 	return true
+
+
+## The whole map's coarse heightmap (tools/build_overview.py) for the mountains' cast shadows: read on a worker
+## thread at the start of the flight, then handed to every terrain shader at once (shader globals).
+func _load_overview() -> void:
+	var ov: Dictionary = meta.overview
+	var w := int(ov.width)
+	var h := int(ov.height)
+	var f := FileAccess.open(dir.path_join("overview.bin"), FileAccess.READ)
+	if f == null:
+		return
+	var data := f.get_buffer(f.get_length()).decompress(w * h * 2, FileAccess.COMPRESSION_ZSTD)
+	if data.size() != w * h * 2:
+		push_error("Terrain: overview damaged")
+		return
+	var img := Image.create_from_data(w, h, false, Image.FORMAT_R16, data)
+	_overview_ready.call_deferred(img, ov)
+
+
+func _overview_ready(img: Image, ov: Dictionary) -> void:
+	var tex := ImageTexture.create_from_image(img)
+	var s := float(ov.spacing)
+	# texel centres sit on the samples: the image spans half a sample beyond the first and last
+	var x0 := float(ov.x0) - s * 0.5
+	var z0 := float(ov.z0) - s * 0.5
+	RenderingServer.global_shader_parameter_set("terrain_overview", tex)
+	RenderingServer.global_shader_parameter_set("overview_rect", Vector4(x0, z0, 1.0 / (img.get_width() * s), 1.0 / (img.get_height() * s)))
+	RenderingServer.global_shader_parameter_set("terrain_shadow", 0.0 if "--no-terrain-shadow" in OS.get_cmdline_user_args() else 1.0)
+	_overview_tex = tex
+	print("TERRAIN overview %d x %d loaded (cast shadows)" % [img.get_width(), img.get_height()])
 
 
 ## Size of a tile of `level` in metres.

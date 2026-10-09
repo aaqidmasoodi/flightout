@@ -84,6 +84,12 @@ func setup(ac: Node3D, mdl: Node3D) -> void:
 			m.emission = Color(1.0, 0.45, 0.12)
 			g.material_override = m
 			_glow_mats.append(m)
+	# condensation: wingtip vortices, vapour over the wing roots, contrails (scripts/fx/aircraft_trails.gd)
+	if DisplayServer.get_name() != "headless" and not "--no-trails" in OS.get_cmdline_user_args():
+		var trails: Node = preload("res://scripts/fx/aircraft_trails.gd").new()
+		trails.name = "Trails"
+		add_child(trails)
+		trails.setup(ac, mdl)
 	_flame_mat = ShaderMaterial.new()
 	_flame_mat.shader = FLAME_SHADER
 	for n in ["AfterburnerFlame_L", "AfterburnerFlame_R"]:

@@ -15,6 +15,9 @@ float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.545
 
 global uniform vec2 world_origin;     // floating origin (scripts/world/world_data.gd)
 global uniform float earth_curve;     // drawn curvature of the Earth (see terrain_cdlod.gdshader)
+#include "res://shaders/include/terrain_shadow.gdshaderinc"
+
+varying float v_sun;                  // 0 in a mountain's shadow
 
 void vertex() {
 	vec3 origin = MODEL_MATRIX[3].xyz;
@@ -30,6 +33,7 @@ void vertex() {
 	if (px < mix(min_pixels, min_pixels * 2.5, h) || hash(mo * 0.071 + 3.7) > density) {
 		mine = false;
 	}
+	v_sun = 1.0;
 	if (!mine) {
 		VERTEX = vec3(0.0);
 	} else {
@@ -40,11 +44,13 @@ void vertex() {
 		// sink with the ground under it (the curvature drop, in the tree's own scale)
 		vec2 dc = origin.xz - CAMERA_POSITION_WORLD.xz;
 		VERTEX.y -= dot(dc, dc) * earth_curve / max(length(MODEL_MATRIX[1].xyz), 0.01);
+		v_sun = macro_shadow_lite(vec3(mo.x, origin.y, mo.y));
 	}
 }
 
 void fragment() {
-	ALBEDO = COLOR.rgb;
+	// in a mountain's shadow only the sky lights the tree (an approximation: the trees keep the engine's own lighting)
+	ALBEDO = COLOR.rgb * mix(0.5, 1.0, v_sun);
 	ROUGHNESS = 1.0;
 	BACKLIGHT = vec3(0.08, 0.12, 0.04);
 }

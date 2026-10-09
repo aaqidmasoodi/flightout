@@ -25,6 +25,12 @@ var _out := ""
 var _len := 90.0
 var _pan := false
 var _flight := false
+var _gmax := 0.0
+var _aoamax := 0.0
+var _vmax := 0.0
+var _ctr := 0.0
+var _snap_dir := ""
+var _snaps: Array[float] = []
 var _look = null
 var _speed := 230.0
 var _diff_dir := ""
@@ -78,6 +84,13 @@ func _ready() -> void:
 			view = arg.trim_prefix("--bench-view=").to_int()
 		elif arg == "--bench-pan":
 			_pan = true
+		elif arg.begins_with("--bench-snap="):     # dir:t1,t2,...  screenshots at those times
+			var spec := arg.trim_prefix("--bench-snap=")
+			var cut := spec.rfind(":")                  # (the folder may start with a drive letter)
+			_snap_dir = spec.substr(0, cut)
+			DirAccess.make_dir_recursive_absolute(_snap_dir)
+			for v in spec.substr(cut + 1).split(","):
+				_snaps.append(v.to_float())
 		elif arg.begins_with("--bench-look="):     # fixed camera yaw,pitch (degrees) for the whole run
 			var v := arg.trim_prefix("--bench-look=").split(",")
 			_look = Vector2(deg_to_rad(v[0].to_float()), deg_to_rad(v[1].to_float()))
@@ -103,7 +116,7 @@ func _ready() -> void:
 	cam._pitch = 0.0
 	cam._idle = -1e9
 	await get_tree().create_timer(3.0).timeout      # let the first tiles stream in before measuring
-	_rows.append("t,x,z,alt_m,agl_m,ias,fps,worst_ms,cpu_ms,gpu_ms,draws,prims_k,vram_mb,tiles_drawn,tiles_resident,tile_loads,trees")
+	_rows.append("t,x,z,alt_m,agl_m,ias,fps,worst_ms,cpu_ms,gpu_ms,draws,prims_k,vram_mb,tiles_drawn,tiles_resident,tile_loads,trees,g_max,aoa_max,vortex_max,contrail")
 	_t = 0.0
 
 
@@ -123,6 +136,15 @@ func _process(delta: float) -> void:
 	if _frames_out != "":
 		_log_frame(delta, draws)
 	_draw_max = maxi(_draw_max, draws)
+	_gmax = maxf(_gmax, absf(float(aircraft.g_load)))
+	_aoamax = maxf(_aoamax, float(aircraft.aoa_deg))
+	var tr: Node = aircraft.fx.get_node_or_null("Trails") if aircraft.get("fx") else null
+	if tr:
+		_vmax = maxf(_vmax, float(tr._vortex()))
+		_ctr = float(tr._contrail())
+	if not _snaps.is_empty() and _t >= _snaps[0]:
+		var at: float = _snaps.pop_front()
+		get_viewport().get_texture().get_image().save_png(_snap_dir.path_join("snap_%05.1f.png" % at))
 	if _look != null:
 		cam._yaw = _look.x
 		cam._pitch = _look.y
@@ -134,11 +156,15 @@ func _process(delta: float) -> void:
 	if _sec >= 1.0:
 		var w := WorldData.to_world(aircraft.global_position)
 		var st: Dictionary = world.streamer.stats if world.streamer else {"drawn": 0, "resident": 0, "loads": 0}
-		_rows.append("%.1f,%.0f,%.0f,%.0f,%.0f,%.0f,%.1f,%.1f,%.2f,%.2f,%d,%d,%.0f,%d,%d,%d,%d" % [
+		_rows.append("%.1f,%.0f,%.0f,%.0f,%.0f,%.0f,%.1f,%.1f,%.2f,%.2f,%d,%d,%.0f,%d,%d,%d,%d,%.1f,%.1f,%.2f,%.2f" % [
 			_t, w.x, w.z, w.y, aircraft.altitude_agl, aircraft.fm.ias, _frames / _sec, _worst * 1000.0, _cpu / _frames, _gpu / _frames,
 			draws, RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME) / 1000,
 			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_VIDEO_MEM_USED) / 1048576.0,
-			st.drawn, st.resident, st.loads, int(world.get_node("CoverForest").planted) if world.has_node("CoverForest") else 0])
+			st.drawn, st.resident, st.loads, int(world.get_node("CoverForest").planted) if world.has_node("CoverForest") else 0,
+			_gmax, _aoamax, _vmax, _ctr])
+		_gmax = 0.0
+		_aoamax = 0.0
+		_vmax = 0.0
 		_sec = 0.0
 		_frames = 0
 		_worst = 0.0

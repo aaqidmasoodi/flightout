@@ -117,6 +117,10 @@ func _ready() -> void:
 	_apply_settings()
 	Game.release_cache()
 	_dev_capture.call_deferred()
+	if "--dev-missile" in OS.get_cmdline_user_args():
+		_dev_missiles(aircraft)
+	if "--dev-flares" in OS.get_cmdline_user_args():
+		_dev_flares(aircraft)
 	if "--dev-bandits" in OS.get_cmdline_user_args():
 		_dev_bandits(aircraft)
 	if "--dev-shade" in OS.get_cmdline_user_args():
@@ -279,3 +283,28 @@ func _dev_bandits(aircraft: Node3D) -> void:
 	awacs.add_to_group("awacs")
 	if "--dev-radar" in OS.get_cmdline_user_args():
 		aircraft.press_switch.call_deferred("toggle_radar")
+
+
+## Development: a stand-in missile every 14 s from just ahead of the jet, weaving, to look at smoke trails.
+func _dev_missiles(ac: Node3D) -> void:
+	while is_inside_tree():
+		await get_tree().create_timer(4.0).timeout
+		var m: Node3D = preload("res://scripts/dev/dev_missile.gd").new()
+		add_child(m)
+		var xf: Transform3D = ac.global_transform
+		# off to the right and climbing a little, so it crosses the view ahead
+		var b := xf.basis * Basis(Vector3.UP, deg_to_rad(-25.0)) * Basis(Vector3.RIGHT, deg_to_rad(4.0))
+		m.launch(Transform3D(b, xf.origin - xf.basis.z * 40.0 - xf.basis.y * 2.0))
+		await get_tree().create_timer(10.0).timeout
+
+
+## Development: a pair of flares every 3 s from the tail (the dispensers sit on the Su-27's tail boom).
+func _dev_flares(ac: Node3D) -> void:
+	while is_inside_tree():
+		await get_tree().create_timer(3.0).timeout
+		var xf: Transform3D = ac.global_transform
+		for side in [-1.0, 1.0]:
+			var f: Node3D = preload("res://scripts/fx/flare.gd").new()
+			add_child(f)
+			var kick: Vector3 = xf.basis * Vector3(side * 12.0, 14.0, 0.0)
+			f.launch(xf * Vector3(side * 0.9, 0.6, 6.5), Vector3(ac.velocity) + kick)

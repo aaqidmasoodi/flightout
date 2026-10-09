@@ -61,3 +61,19 @@ earth_curve={
 "type": "float",
 "value": 0.0
 }
+terrain_overview={
+"type": "sampler2D",
+"value": ""
+}
+overview_rect={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+terrain_shadow={
+"type": "float",
+"value": 0.0
+}
+sun_dir={
+"type": "vec3",
+"value": Vector3(0, 1, 0)
+}

@@ -71,6 +71,7 @@ func _ready() -> void:
 	_toggle(p, "Shadows", "graphics/shadows")
 	_choice(p, "Shadow quality", "graphics/shadow_quality", ["Low", "Medium", "High", "Ultra"], [0, 1, 2, 3])
 	_toggle(p, "Forests", "graphics/trees")
+	_toggle(p, "Vapour and contrails", "graphics/vapour")
 	_choice(p, "Forest detail", "graphics/tree_detail", ["Low", "Medium", "High", "Ultra"], [0, 1, 2, 3])
 	_choice(p, "Forest density", "graphics/forest_density", ["Sparse", "Medium", "Full", "Full (Ultra)"], [0, 1, 2, 3])
 	_toggle(p, "Ambient occlusion", "graphics/ssao")

@@ -49,6 +49,7 @@ global uniform vec2 world_origin;     // floating origin (scripts/world/world_da
 // a flat plane at horizontal distance d from the camera. 1 / (2 R'), R' the Earth's radius stretched by standard
 // atmospheric refraction (k = 0.13, R' = R / (1 - k)); 0 on the island.
 global uniform float earth_curve;
+#include "res://shaders/include/terrain_shadow.gdshaderinc"
 
 varying vec3 wpos;
 varying vec3 wnorm;
@@ -59,6 +60,9 @@ varying vec2 v_grid;
 varying float v_step;
 varying float v_h;                   // true terrain height (before the curvature drop): shading, snow line, haze
 varying flat vec2 v_morph;           // this tile's morph range (m0, m1)
+varying float v_shadow;              // 1 lit by the sun, 0 in a mountain's shadow (macro_shadow)
+varying float v_wet;                 // water: sun glint (light())
+varying float v_rough;
 
 float hfetch(vec2 g, float layer) {
 	vec2 uv = (g + 1.5) / tile_samples;        // sample g sits one texel in (the border)
@@ -82,6 +86,7 @@ void vertex() {
 	VERTEX.y -= drop;
 	wpos.y -= drop;
 	v_morph = vec2(m0, m1);
+	v_shadow = macro_shadow(vec3(wpos.x + world_origin.x, v_h, wpos.z + world_origin.y));
 	v_layer = layer;
 	v_level = INSTANCE_CUSTOM.y;
 	v_grid = g;
@@ -214,6 +219,8 @@ void fragment() {
 		ALBEDO = c;
 		ROUGHNESS = mix(mix(0.95, 0.55, snowc * (1.0 - rock_amt)), 0.08, waterc);
 		SPECULAR = mix(mix(0.25, 0.45, snowc), 0.6, waterc);
+		v_rough = ROUGHNESS;
+		v_wet = SPECULAR;
 		// aerial perspective (replaces the scene fog on this terrain): the haze along the line of sight thins with
 		// height, so valley floors fade blue-grey with distance while high ridges stay crisp, and the farthest
 		// ranges keep their silhouette against the sky instead of vanishing into it
@@ -319,5 +326,22 @@ void fragment() {
 		}
 		ROUGHNESS = mix(0.95, 0.5, snow_amt);
 		SPECULAR = mix(0.25, 0.45, snow_amt);
+		v_rough = ROUGHNESS;
+		v_wet = SPECULAR;
 	}
+}
+
+
+// Sun and moon light with the mountains' cast shadows (v_shadow) on top of the shadow maps (ATTENUATION).
+// Lambert diffuse and a Blinn-Phong highlight from the roughness (glints on lakes and rivers, a sheen on snow).
+void light() {
+	float sh = LIGHT_IS_DIRECTIONAL ? v_shadow : 1.0;
+	float ndl = clamp(dot(NORMAL, LIGHT), 0.0, 1.0);
+	DIFFUSE_LIGHT += ndl * ATTENUATION * LIGHT_COLOR / PI * sh;
+	vec3 hv = normalize(LIGHT + VIEW);
+	float r4 = max(pow(v_rough, 4.0), 1e-4);
+	float n = 2.0 / r4 - 2.0;
+	float spec = pow(clamp(dot(NORMAL, hv), 0.0, 1.0), n) * (n + 8.0) / (8.0 * PI);
+	float fres = v_wet * 0.08 + (1.0 - v_wet * 0.08) * pow(1.0 - clamp(dot(VIEW, hv), 0.0, 1.0), 5.0);
+	SPECULAR_LIGHT += spec * fres * ndl * ATTENUATION * LIGHT_COLOR / PI * sh;
 }

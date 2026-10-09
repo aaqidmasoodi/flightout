@@ -27,6 +27,7 @@ const DEFAULTS := {
 	"graphics/anisotropic": 4,       # 0 off, 1 2x, 2 4x, 3 8x, 4 16x (keeps runway markings sharp at shallow angles)
 	"graphics/shadows": true,
 	"graphics/trees": true,
+	"graphics/vapour": true,         # wingtip vortices, wing vapour and contrails
 	"graphics/draw_distance": 1,     # 0 near, 1 medium, 2 far
 	"hud/telemetry": true,
 	"hud/key_hints": false,

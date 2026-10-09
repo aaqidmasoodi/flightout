@@ -241,6 +241,7 @@ func _process(delta: float) -> void:
 	_cloud_drift -= flow * delta          # noise space moves against the wind, so the clouds travel with it
 	var use_sun := e > -4.0
 	clouds.sun_dir = sd if use_sun else md
+	RenderingServer.global_shader_parameter_set("sun_dir", sd if use_sun else md)   # terrain cast shadows
 	clouds.light_intensity = (sun.light_energy if use_sun else moon.light_energy * 1.6) * 2.9
 	clouds.sun_color = sun.light_color if use_sun else moon.light_color
 	clouds.ambient = 0.62
