@@ -58,7 +58,7 @@ func _ready() -> void:
 	_vp = get_viewport().get_viewport_rid()
 	RenderingServer.viewport_set_measure_render_time(_vp, true)
 	if _log:
-		_log.store_line("us,sx,sy,sz,srx,sry,srz,wall,dt,cpu_ms,gpu_ms,phys_ms,proc_ms,phys_steps,phase,x,y,z,hdg,ias,agl,rx,ry,rz,dist,extrap,interp_ticks,rtt_ms,loss,corr,rewind_ms,srv_queue,draws")
+		_log.store_line("us,sx,sy,sz,srx,sry,srz,wall,dt,cpu_ms,gpu_ms,phys_ms,proc_ms,phys_steps,phase,x,y,z,hdg,ias,agl,rx,ry,rz,dist,extrap,interp_ticks,rtt_ms,loss,corr,rewind_ms,srv_queue,draws,trip,lead")
 
 
 func _add_wp(id: String) -> void:
@@ -220,7 +220,7 @@ func _process(delta: float) -> void:
 	# as drawn this frame (physics interpolation): what the screen shows, own jet and the other one
 	var so := WorldData.to_world(aircraft.get_global_transform_interpolated().origin)
 	var sr := WorldData.to_world(lead.get_global_transform_interpolated().origin) if lead != null else Vector3.ZERO
-	_log.store_line("%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.4f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%s,%.2f,%.2f,%.2f,%.1f,%.1f,%.0f,%.2f,%.2f,%.2f,%.1f,%d,%.1f,%.0f,%.1f,%d,%.1f,%d,%d" % [
+	_log.store_line("%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.4f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%s,%.2f,%.2f,%.2f,%.1f,%.1f,%.0f,%.2f,%.2f,%.2f,%.1f,%d,%.1f,%.0f,%.1f,%d,%.1f,%d,%d,%.2f,%.2f" % [
 		Time.get_ticks_usec(), so.x, so.y, so.z, sr.x, sr.y, sr.z, Time.get_unix_time_from_system(), delta * 1000.0,
 		RenderingServer.viewport_get_measured_render_time_cpu(_vp) + RenderingServer.get_frame_setup_time_cpu(),
 		RenderingServer.viewport_get_measured_render_time_gpu(_vp),
@@ -229,7 +229,7 @@ func _process(delta: float) -> void:
 		me.x, me.y, me.z, aircraft.heading_deg, aircraft.ias, aircraft.altitude_agl,
 		r.x, r.y, r.z, me.distance_to(r) if lead != null else -1.0, extrap, c.interp_delay, c.rtt_ms, c.loss_pct,
 		c.corrections, c.rewind_ms, c.server_queue,
-		int(RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME))])
+		int(RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)), c.trip_ticks, c.lead_ticks])
 
 
 func _finish() -> void:

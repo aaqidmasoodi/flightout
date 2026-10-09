@@ -69,6 +69,8 @@ def client_report(name, rows, other):
           f"rtt avg {mean([r['rtt_ms'] for r in fly]):.0f} ms  loss max {max(r['loss'] for r in fly):.1f}%  "
           f"predicted ahead of newest snapshot avg {mean([r['interp_ticks'] for r in fly]) / 120 * 1000:.0f} ms  "
           f"stale (no snapshot for 0.25 s) {sum(r['extrap'] for r in fly) / len(fly) * 100:.1f}% of frames")
+    if "trip" in fly[0]:
+        print(f"  measured round trip avg {mean([r['trip'] for r in fly]) / 120 * 1000:.0f} ms  own lead avg {mean([r['lead'] for r in fly]) / 120 * 1000:.0f} ms")
     # the other jet as shown here
     pops = []
     seen = [((r["rx"], r["ry"], r["rz"]), r["wall"]) for r in fly if r["dist"] >= 0]

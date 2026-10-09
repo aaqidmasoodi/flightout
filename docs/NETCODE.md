@@ -34,10 +34,35 @@ in shooters start, stop and turn instantly. That is not this game.
     far out while the jet stands or rolls slowly (a player joining while loading), or after a long outage.
   - A blend always starts from the state as it was shown, at the time it was shown (the previous tick): starting it
     at the current tick freezes the jet for a tick at every snapshot, a 30 Hz shake.
-  - The jet is predicted to the present (its clock plus the trip from the server) from the newest snapshot, using
-    the acceleration measured between snapshots and the body turn rates.
+  - The jet is predicted to the present **as its owner sees it**: its tick when the snapshot left the server, plus
+    the trip down to us, plus the owner's lead (how far the owner's own game runs ahead of the server: the trip up
+    plus the server's input buffer). Without the owner's half, at 200 ms ping every jet looked 20 m behind to
+    everyone else. Capped at `MAX_HORIZON` (0.5 s): beyond that a jet is drawn a little behind instead.
+  - Prediction uses the acceleration measured between snapshots and the body turn rates.
   - Each newer snapshot starts a blend of `BLEND_TIME` (0.25 s) from the state as shown towards the new prediction.
   - If updates stop, prediction carries on (acceleration for 0.5 s, velocity up to 2 s) instead of freezing.
+
+## Measuring the delay (lag compensation)
+
+Everything is measured in simulation ticks from data the game already has, so it needs no clock sync and covers
+whatever the connection does (both trips, the server's input buffer, simulated lag):
+
+- Each snapshot tells a client the last of its inputs the server had applied (`ack`) and how many more were waiting
+  (`queue`). Arriving at our tick `T`: round trip = `T - ack - queue`, our lead = `queue + round trip / 2`
+  (`client.gd`, `_measure`, smoothed).
+- Each client sends its lead with its inputs; the server smooths it again and puts it in every snapshot with that
+  player's jet (protocol 5). A viewer predicts that jet by half its own round trip plus that lead.
+- All of it moves the drawing clock at most 1% fast or slow (a parked or taxiing jet takes it at once), so a change of
+  ping never shows as a jump.
+
+Measured with the two-ship test at about 230 ms round trip (`--netsim=100,15,0` on both clients and the server):
+without the lead the other jet was drawn 125 to 130 ms (20 m) behind where it was; with it, 0 to 10 ms, with the same
+smoothness (under 10 cm frame to frame in 99% of frames, close formation and take-off roll). `--net-no-lead` turns it
+off to compare.
+
+Trade-off: the further ahead a jet is predicted, the more a sudden manoeuvre (a snap roll, a hard break) shows as a
+short glide back onto its real path; steady flight and formation are exact. A later upgrade: send each player's
+control inputs with their jet and predict with the flight model itself instead of its motion.
 
 ## Measuring it
 
@@ -65,3 +90,5 @@ Add `--formation-weapons` to fire the weapons demo (F5) from both jets once airb
 - Dead reckoning in DIS (military simulation standard): https://www.gamedeveloper.com/programming/dead-reckoning-latency-hiding-for-networked-games
 - Projective velocity blending: C. Murphy, "Believable Dead Reckoning for Networked Games", Game Engine Gems 2.
 - Why shooters interpolate in the past instead: https://www.gabrielgambetta.com/entity-interpolation.html
+- DIS receivers estimate each update's age from its timestamp and dead reckon by it, so entities are drawn where they
+  are now: https://open-dis.github.io/dis-tutorial/DeadReckoningLatency.html

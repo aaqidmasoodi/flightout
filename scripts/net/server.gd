@@ -15,6 +15,7 @@ const FlightModel := preload("res://scripts/sim/flight_model.gd")
 const Layout := preload("res://scripts/world/spawn_layout.gd")
 const SPEC := "res://data/aircraft/su27.tres"
 const LOST_INPUT_WAIT := 8           # ticks to wait for a missing input before repeating the last one
+const MAX_LEAD := 120.0              # ticks: a lead claimed beyond 1 s is not believed
 const BACKLOG := 6                   # queued inputs beyond this are worked off two per tick
 
 class Player:
@@ -30,6 +31,7 @@ class Player:
 	var last_cmd: Array = []
 	var waiting := 0
 	var sim_tick := 0                # ticks simulated (the jet's own clock, for smooth interpolation)
+	var lead := 0.0                  # how far the player's own game runs ahead of this simulation (ticks, smoothed)
 
 var link: Link
 var port := P.DEFAULT_PORT
@@ -146,6 +148,11 @@ func _receive(pl: Player, data: PackedByteArray) -> void:
 					pl.queue[t] = c
 					if pl.next_tick < 0:
 						pl.next_tick = t
+			var lead := P.decode_input_lead(b)
+			if lead >= 0.0:
+				# the client measures it every snapshot and smooths it; smoothed again here, so other players'
+				# predictions never see a step
+				pl.lead = lerpf(pl.lead, minf(lead, MAX_LEAD), 0.1)
 			if pl.next_tick >= 0:
 				for t in pl.queue.keys():
 					if t < pl.next_tick:
@@ -295,7 +302,7 @@ func _send_snapshots() -> void:
 	for o: Player in players.values():
 		if o.joined:
 			var jb := StreamPeerBuffer.new()
-			P.put_jet(jb, o.id, o.sim_tick, o.fm)
+			P.put_jet(jb, o.id, o.sim_tick, o.fm, o.lead)
 			blocks[o.id] = jb.data_array
 	for pl: Player in players.values():
 		if not pl.joined:

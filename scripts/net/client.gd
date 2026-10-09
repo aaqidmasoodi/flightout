@@ -27,6 +27,7 @@ const BLEND_TIME := 0.25            # s over which a new snapshot is blended int
 const MAX_PREDICT := 2.0             # s a jet is predicted past its newest snapshot (a stalled stream) before it holds
 const ACCEL_TIME := 0.5              # s of prediction that use the acceleration; beyond, velocity only (stays sane)
 const SNAP_DISTANCE := 200.0         # m: further than this from where it is shown (a respawn), the jet is moved at once
+const MAX_HORIZON := 60.0            # ticks (0.5 s): never predicted further ahead than this (a very bad connection)
 const CONNECT_TIMEOUT := 8.0
 
 enum { IDLE, CONNECTING, ONLINE }
@@ -55,6 +56,12 @@ var _offset := 0.0                   # server tick minus local clock (in ticks)
 var _have_clock := false
 var _jitter := 1.0                   # ticks
 var interp_delay := 0.0              # ticks the remote jets are predicted ahead of their newest snapshot (stats)
+# the network delay, measured in simulation ticks from our own inputs and the server's acknowledgements (so it
+# includes everything: both trips, the server's input buffer, and any simulated lag), see _measure
+var trip_ticks := 0.0                # round trip, smoothed
+var lead_ticks := 0.0                # how far our own jet runs ahead of the server's simulation of it, smoothed
+var _have_trip := false
+var _no_lead := "--net-no-lead" in OS.get_cmdline_user_args()   # development: ignore the owners' leads (to compare)
 
 # stats for the optional overlay
 var rtt_ms := 0.0
@@ -167,6 +174,9 @@ func disconnect_from_server(reason: String = "") -> void:
 		_remove_remote(id)
 	roster.clear()
 	_have_clock = false
+	_have_trip = false
+	trip_ticks = 0.0
+	lead_ticks = 0.0
 	_last_ack = 0
 	tick = 0
 	aircraft = null
@@ -226,7 +236,7 @@ func record(cmd: Array, s: Array) -> void:
 			if _cmds.has(k):
 				batch.append(_cmds[k])
 		if not batch.is_empty():
-			link.send(peer, P.CH_STATE, P.encode_input(batch), false)
+			link.send(peer, P.CH_STATE, P.encode_input(batch, lead_ticks), false)
 
 
 func _service() -> void:
@@ -335,6 +345,7 @@ func _snapshot(b: StreamPeerBuffer) -> void:
 	# reconcile our own jet
 	if not own.is_empty() and ack > _last_ack:
 		_last_ack = ack
+		_measure(ack)
 		_reconcile(ack, own)
 	# remote jets: each keeps its own timeline (its simulation tick), so stalls on the server never show
 	var now := _sim_now()
@@ -351,8 +362,11 @@ func _snapshot(b: StreamPeerBuffer) -> void:
 		# that follows it changes pace by 1 % at most, so what jitter is left never shows)
 		if r.snaps.is_empty():
 			r.offset = js
+			r.lead = d.lead
 		else:
 			r.offset = lerpf(r.offset, js, 0.1)
+			r.lead = lerpf(r.lead, d.lead, 0.05)
+		r.arrived = now
 		if log_snaps:
 			snap_log.append("%.4f,%d,%d,%.2f,%.2f" % [Time.get_unix_time_from_system(), id, t, js, r.offset])
 		var snaps: Array = r.snaps
@@ -373,6 +387,23 @@ func _snapshot(b: StreamPeerBuffer) -> void:
 		snaps.insert(i, [t, d])
 		while snaps.size() > 16:
 			snaps.pop_front()
+
+
+## The delay to the server and back, from what we know exactly: when this snapshot was sent, the server had
+## applied our inputs up to `ack`, and `server_queue` more were waiting; we are at `tick` now. So the round trip is
+## tick - ack - queue, and our jet runs ahead of the server's by the queue plus the trip up (half the round trip).
+## Every player's lead goes to the others with their jet, so each game can predict the other jets by the whole
+## delay, sender's side included, and draw them where they are now (DCS, DIS dead reckoning to the present).
+func _measure(ack: int) -> void:
+	var trip := maxf(float(tick - ack - server_queue), 0.0)
+	var lead := float(server_queue) + trip * 0.5
+	if not _have_trip:
+		trip_ticks = trip
+		lead_ticks = lead
+		_have_trip = true
+	else:
+		trip_ticks = lerpf(trip_ticks, trip, 0.05)
+		lead_ticks = lerpf(lead_ticks, lead, 0.05)
 
 
 func _reconcile(ack: int, server_state: Array) -> void:
@@ -423,7 +454,7 @@ func _create_remote(id: int) -> void:
 	_remotes[id] = {"node": ac, "snaps": [], "offset": 0.0, "clock": 0.0, "base": -1, "placed": false, "reset": false,
 		"shown_p": Vector3.ZERO, "shown_v": Vector3.ZERO, "shown_q": Quaternion.IDENTITY, "shown_w": Vector3.ZERO,
 		"b_p": Vector3.ZERO, "b_v": Vector3.ZERO, "b_q": Quaternion.IDENTITY, "b_w": Vector3.ZERO, "b_t": 0.0, "shown_t": 0.0,
-		"stale": false}
+		"stale": false, "lead": 0.0, "arrived": 0.0}
 
 func _remove_remote(id: int) -> void:
 	if _remotes.has(id):
@@ -460,10 +491,15 @@ func _predict(r: Dictionary, now: float) -> void:
 	var snaps: Array = r.snaps
 	# the present for this jet: its clock eases onto the estimate (1 % at most, never a jump), except when it is far
 	# out while the jet stands or rolls slowly (a player joining while loading), or two seconds out: then at once
-	var target: float = now + r.offset + rtt_ms / 1000.0 * P.TICK_RATE * 0.5      # plus the trip from the server
+	# the jet's tick on the server when this snapshot left, plus the trip down to us (half our round trip), plus
+	# how far its owner's game runs ahead of the server (its lead): where the owner sees it now
+	var horizon := clampf(trip_ticks * 0.5 + (0.0 if _no_lead else float(r.lead)), 0.0, MAX_HORIZON)
+	var target: float = now + r.offset + horizon
 	var newest: Dictionary = snaps[-1][1]
 	var err: float = target - float(r.clock)
-	if r.base < 0 or absf(err) > 240.0 or ((newest.vel as Vector3).length() < 25.0 and absf(err) > 30.0):
+	# (standing or taxiing, a step of a few ticks is a few centimetres to a metre: the jet takes its full horizon at once,
+	# e.g. right after joining, instead of easing into it for many seconds)
+	if r.base < 0 or absf(err) > 240.0 or ((newest.vel as Vector3).length() < 25.0 and absf(err) > 6.0):
 		r.clock = target
 	else:
 		r.clock = float(r.clock) + 1.0 + clampf(err * 0.01, -0.01, 0.01)
@@ -475,7 +511,7 @@ func _predict(r: Dictionary, now: float) -> void:
 	var t: int = snaps[bi][0]
 	var bd: Dictionary = snaps[bi][1]
 	interp_delay = rt - float(snaps[-1][0])
-	r.stale = interp_delay > P.TICK_RATE * 0.25
+	r.stale = now - float(r.arrived) > P.TICK_RATE * 0.25          # no snapshot for a quarter of a second
 	var now_state := _reckon(bd, t, rt)
 	var pos: Vector3 = now_state[0]
 	var vel: Vector3 = now_state[1]
@@ -534,6 +570,6 @@ func _stats(delta: float) -> void:
 
 
 func stats_text() -> String:
-	return "PING %d ms   LOSS %.1f%%   IN %.1f KB/s   OUT %.1f KB/s\nPREDICT %d ms   CORRECTIONS %d   SERVER BUFFER %d%s" % [
-		int(rtt_ms), loss_pct, kbps_in, kbps_out, int(interp_delay / P.TICK_RATE * 1000.0), corrections, server_queue,
+	return "PING %d ms   TRIP %d ms   LEAD %d ms   LOSS %.1f%%   IN %.1f KB/s   OUT %.1f KB/s\nPREDICT %d ms   CORRECTIONS %d   SERVER BUFFER %d%s" % [
+		int(rtt_ms), int(trip_ticks / P.TICK_RATE * 1000.0), int(lead_ticks / P.TICK_RATE * 1000.0), loss_pct, kbps_in, kbps_out, int(interp_delay / P.TICK_RATE * 1000.0), corrections, server_queue,
 		"   NETSIM" if link and link.simulating else ""]

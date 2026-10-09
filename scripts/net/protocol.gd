@@ -7,7 +7,8 @@ extends RefCounted
 ##                     and the last input tick the server applied for it (for reconciliation).
 ## Channel 0 carries unreliable state (inputs, snapshots); channel 1 carries reliable events (join, leave, weather).
 
-const VERSION := 4                     # 2: avionics master mode in the input toggles and the state; 3: floating origin (jet frames); 4: Kashmir map, slots at three airfields
+const VERSION := 5                     # 2: avionics master mode in the input toggles and the state; 3: floating origin (jet frames); 4: Kashmir map, slots at three airfields; 5: each jet carries its owner's lead
+const LEAD_SCALE := 16.0              # leads travel in sixteenths of a tick
 const DEFAULT_PORT := 27015
 const MAX_PLAYERS := 16
 const TICK_RATE := 120                 # simulation ticks per second (2 substeps each = 240 Hz physics)
@@ -44,7 +45,9 @@ static func _axis(v: float) -> float:
 	return roundf(clampf(v, -1.0, 1.0) * 32767.0) / 32767.0
 
 
-static func encode_input(cmds: Array) -> PackedByteArray:
+## The client's inputs (with redundancy) and, last, its lead: how far its own jet runs ahead of what the server has
+## simulated of it, in ticks (see net/client.gd, _measure); the server passes it on with the jet to everyone else.
+static func encode_input(cmds: Array, lead: float = 0.0) -> PackedByteArray:
 	var b := StreamPeerBuffer.new()
 	b.put_u8(C_INPUT)
 	b.put_u32(cmds[0][0])
@@ -56,7 +59,13 @@ static func encode_input(cmds: Array) -> PackedByteArray:
 		b.put_u16(roundi(c[4] * 65535.0))
 		b.put_u8(roundi(c[5] * 255.0))
 		b.put_u32(c[6])
+	b.put_u16(clampi(roundi(lead * LEAD_SCALE), 0, 65535))
 	return b.data_array
+
+
+## The lead at the end of an input packet, after decode_input has read the commands (-1 if absent).
+static func decode_input_lead(b: StreamPeerBuffer) -> float:
+	return b.get_u16() / LEAD_SCALE if b.get_available_bytes() >= 2 else -1.0
 
 
 static func decode_input(b: StreamPeerBuffer) -> Array:
@@ -151,9 +160,10 @@ const FLAG_RADOME := 256
 
 ## sim_tick: how many ticks this jet has been simulated. Remote jets are timed by it (not the server tick),
 ## so a jet whose inputs arrived late, then caught up, still moves perfectly evenly on other screens.
-static func put_jet(b: StreamPeerBuffer, id: int, sim_tick: int, fm) -> void:
+static func put_jet(b: StreamPeerBuffer, id: int, sim_tick: int, fm, lead: float = 0.0) -> void:
 	b.put_u8(id)
 	b.put_u32(sim_tick)
+	b.put_u16(clampi(roundi(lead * LEAD_SCALE), 0, 65535))      # the owner's lead (ticks), see encode_input
 	b.put_32(roundi(fm.ox)); b.put_32(roundi(fm.oz))     # the jet's frame (whole ORIGIN_CELLs, exact as ints)
 	b.put_float(fm.pos.x); b.put_float(fm.pos.y); b.put_float(fm.pos.z)
 	b.put_float(fm.vel.x); b.put_float(fm.vel.y); b.put_float(fm.vel.z)
@@ -193,6 +203,7 @@ static func get_jet(b: StreamPeerBuffer) -> Dictionary:
 	var d := {}
 	d.id = b.get_u8()
 	d.t = b.get_u32()
+	d.lead = b.get_u16() / LEAD_SCALE
 	d.ox = float(b.get_32())
 	d.oz = float(b.get_32())
 	d.pos = Vector3(b.get_float(), b.get_float(), b.get_float())     # in the jet's frame: world = pos + (ox, 0, oz)
