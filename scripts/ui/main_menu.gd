@@ -6,7 +6,7 @@ const Backdrop = preload("res://scripts/ui/menu_backdrop.gd")
 const SettingsPanel = preload("res://scripts/ui/settings_panel.gd")
 const AboutPanel = preload("res://scripts/ui/about_panel.gd")
 const MultiplayerPanel = preload("res://scripts/ui/multiplayer_panel.gd")
-const PRELOAD := ["res://assets/su27.glb", "res://assets/world/world.glb", "res://scenes/main.tscn"]
+const PRELOAD := ["res://assets/su27.glb", "res://scenes/main.tscn"]
 
 var _ui: Control
 var _left: Control

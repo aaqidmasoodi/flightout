@@ -9,7 +9,7 @@ signal sim_event(type: String, value: float)
 const FlightModel = preload("res://scripts/sim/flight_model.gd")
 const AircraftSpec = preload("res://scripts/aircraft/aircraft_spec.gd")
 const P = preload("res://scripts/net/protocol.gd")
-const Layout = preload("res://scripts/world/airbase_layout.gd")
+const Layout = preload("res://scripts/world/spawn_layout.gd")
 const SUBSTEPS := P.SUBSTEPS         # 2 substeps per 120 Hz tick = 240 Hz simulation
 const CORRECTION_RATE := 10.0        # 1/s: how fast a network correction is blended out of the view
 const TOGGLES := {"toggle_gear": FlightModel.T_GEAR, "toggle_flaps": FlightModel.T_FLAPS,
@@ -680,20 +680,21 @@ func _snap_gear_down() -> void:
 	gear_player.seek(gear_player.current_animation_length, true)
 
 
-## Puts the jet on a 3 degree final approach, 7 km out, configured to land: runway 36 on the island, on a large
-## map the runway end nearest to the jet.
+## Puts the jet on a 3 degree final approach, 7 km out, configured to land, to the runway end nearest to the jet.
+## (To be reworked: the player picks the airfield and runway.)
 func practice_approach() -> void:
-	var rwy := {"name": "36", "threshold": Vector3(0.0, 40.0, 7500.0), "dir": Vector3(0.0, 0.0, -1.0)}
-	if WorldData.is_large():
-		var me := fm.world_pos()
-		var bd := INF
-		for r in WorldData.runways:
-			var d: float = Vector2(r.threshold.x - me.x, r.threshold.z - me.z).length()
-			if d < bd:
-				bd = d
-				rwy = r
+	if WorldData.runways.is_empty():
+		return
+	var rwy: Dictionary = WorldData.runways[0]
+	var me := fm.world_pos()
+	var bd := INF
+	for r in WorldData.runways:
+		var d: float = Vector2(r.threshold.x - me.x, r.threshold.z - me.z).length()
+		if d < bd:
+			bd = d
+			rwy = r
 	var dir: Vector3 = rwy.dir
-	var aim: Vector3 = rwy.threshold + dir * 300.0 if WorldData.is_large() else Vector3(0.0, 40.0, 7200.0)
+	var aim: Vector3 = rwy.threshold + dir * WorldData.AIM_DISTANCE
 	var start := aim - dir * PRACTICE_DISTANCE + Vector3(0.0, PRACTICE_DISTANCE * tan(GLIDESLOPE) + spec.gear_height, 0.0)
 	var path := dir * cos(GLIDESLOPE) + Vector3(0.0, -sin(GLIDESLOPE), 0.0)
 	var yaw := atan2(-dir.x, -dir.z)

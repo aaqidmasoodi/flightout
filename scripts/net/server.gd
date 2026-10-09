@@ -2,7 +2,7 @@ extends Node
 ## Dedicated FlightOut server: the authority. Runs the same FlightModel as the clients for every jet, applies
 ## each pilot's numbered inputs in order, and sends snapshots. Needs no graphics:
 ##   FlightOut --headless -- --server [--port=27015] [--name="My server"] [--netsim=...]
-## Up to 16 players, one per hardened shelter at the airbase.
+## Up to 16 players, each with a parking slot at one of the airfields (scripts/world/spawn_layout.gd).
 ##
 ## Input timing: each player's jet only advances when its next input has arrived, so the server applies exactly
 ## the input stream the client predicted with (a late packet delays that jet by a tick, invisible to others,
@@ -12,7 +12,7 @@ extends Node
 const P := preload("res://scripts/net/protocol.gd")
 const Link := preload("res://scripts/net/link.gd")
 const FlightModel := preload("res://scripts/sim/flight_model.gd")
-const Layout := preload("res://scripts/world/airbase_layout.gd")
+const Layout := preload("res://scripts/world/spawn_layout.gd")
 const SPEC := "res://data/aircraft/su27.tres"
 const LOST_INPUT_WAIT := 8           # ticks to wait for a missing input before repeating the last one
 const BACKLOG := 6                   # queued inputs beyond this are worked off two per tick
@@ -181,7 +181,7 @@ func _hello(pl: Player, b: StreamPeerBuffer) -> void:
 	var j := StreamPeerBuffer.new()
 	j.put_u8(P.S_JOIN); j.put_u8(id); j.put_u8(slot); j.put_utf8_string(pl.name)
 	_broadcast(j.data_array, true, id)
-	print("Join: %s (id %d, shelter %02d), %d/%d" % [pl.name, id, slot + 1, players.size(), P.MAX_PLAYERS])
+	print("Join: %s (id %d, slot %02d at %s), %d/%d" % [pl.name, id, slot + 1, preload("res://scripts/world/spawn_layout.gd").group_of(slot)[0], players.size(), P.MAX_PLAYERS])
 
 
 func _reject(pl: Player, reason: String) -> void:

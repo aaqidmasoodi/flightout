@@ -2,17 +2,12 @@ extends Node3D
 ## Flight scene: world, jet, camera, HUD and pause menu. Entered from the main menu's loading screen.
 
 const DEFAULT_AIRCRAFT := "res://data/aircraft/su27.tres"
-## Large streamed maps (Kashmir): mountains are worth seeing far away; the haze thins with draw distance so the
+## Draw distance settings: the mountains are worth seeing far away; the haze thins with draw distance so the
 ## horizon stays soft, as distant ranges fade into the sky's colour (aerial perspective) instead of ending in a line.
-const DRAW_LARGE := [
+const DRAW := [
 	{"far": 90000.0, "fog": 0.000024},
 	{"far": 160000.0, "fog": 0.000015},
 	{"far": 260000.0, "fog": 0.0000095},
-]
-const DRAW := [
-	{"far": 22000.0, "fog": 0.00007},
-	{"far": 40000.0, "fog": 0.000035},
-	{"far": 60000.0, "fog": 0.00002},
 ]
 
 var _env: Environment
@@ -64,7 +59,7 @@ func _ready() -> void:
 	var world: Node3D = preload("res://scripts/world/world.gd").new()
 	world.name = "World"
 	add_child(world)
-	# floating origin: the World node (terrain, airbase, forests, lights, anything fixed to the map) sits at minus
+	# floating origin: the World node (runways, forests, lights, anything fixed to the map) sits at minus
 	# the scene origin, so its children keep their world coordinates (scripts/world/world_data.gd)
 	_world = world
 	WorldData.origin_shifted.connect(_on_origin_shifted)
@@ -74,10 +69,11 @@ func _ready() -> void:
 	aircraft.name = "Su27"
 	add_child(aircraft)
 	if Game.online:
-		# online: parked in our shelter, simulated here and corrected by the server
+		# online: parked beside the runway of our slot's airfield, simulated here and corrected by the server
 		aircraft.net_mode = aircraft.NetMode.PREDICTED
 		aircraft.slot = Game.client.my_slot
-		aircraft.global_transform = preload("res://scripts/world/airbase_layout.gd").parking_slot(Game.client.my_slot)
+		aircraft.global_transform = preload("res://scripts/world/spawn_layout.gd").parking_slot(Game.client.my_slot)
+		WorldData.home_airfield = preload("res://scripts/world/spawn_layout.gd").group_of(Game.client.my_slot)[0]
 	else:
 		aircraft.global_transform = _start_transform()
 	aircraft.spawn = aircraft.global_transform
@@ -139,12 +135,13 @@ func _on_disconnected(reason: String) -> void:
 	Game.goto_menu()
 
 
-## Runway by default. `--slot=N` (1..16) starts parked in that shelter, as multiplayer will.
+## Lined up on the start airfield's runway by default. `--slot=N` (1..16) starts parked in multiplayer slot N.
 func _start_transform() -> Transform3D:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--slot="):
 			var n := clampi(arg.trim_prefix("--slot=").to_int(), 1, 16)
-			return preload("res://scripts/world/airbase_layout.gd").parking_slot(n - 1)
+			WorldData.home_airfield = preload("res://scripts/world/spawn_layout.gd").group_of(n - 1)[0]
+			return preload("res://scripts/world/spawn_layout.gd").parking_slot(n - 1)
 	var t := WorldData.spawn_transform(0)
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--alt="):   # development: start high (metres), to check the sky and cloud deck
@@ -161,7 +158,7 @@ func _start_transform() -> Transform3D:
 
 func _apply_settings() -> void:
 	_sun.shadow_enabled = bool(Settings.get_value("graphics/shadows"))
-	var d: Dictionary = (DRAW_LARGE if WorldData.is_large() else DRAW)[clampi(int(Settings.get_value("graphics/draw_distance")), 0, 2)]
+	var d: Dictionary = DRAW[clampi(int(Settings.get_value("graphics/draw_distance")), 0, 2)]
 	_cam.base_far = d.far
 	_sky.draw_fog = d.fog
 
@@ -269,7 +266,7 @@ func _dev_bandits(aircraft: Node3D) -> void:
 		b.name = "DevBandit%d" % i
 		get_node("World").add_child(b)          # fixed to the map, so it moves with the floating origin
 		b.global_position = start.origin + fwd * float(e[0]) + right * float(e[1])
-		b.global_position.y = float(e[2])
+		b.global_position.y = maxf(float(e[2]), WorldData.scene_ground_height(b.global_position.x, b.global_position.z) + 1500.0)
 		var dir := fwd.rotated(Vector3.UP, -deg_to_rad(float(e[4])))
 		b.velocity = dir * float(e[3])
 		b.team = e[5]

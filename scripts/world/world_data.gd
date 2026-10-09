@@ -22,28 +22,22 @@ var origin_x := 0.0                  # scene origin in world coordinates
 var origin_z := 0.0
 var _log_origin := "--origin-log" in OS.get_cmdline_user_args()
 
-const HEIGHTMAP_PATH := "res://assets/world/heightmap.r32"
-const META_PATH := "res://assets/world/world_meta.json"
+## The map: Kashmir, streamed from its tiles (tools/build_kashmir.py; assets/kashmir is built locally, about 1 GB,
+## and not in git). Airfields, chart and other data that go with it are in data/maps/kashmir.
+const TERRAIN_DIR := "res://assets/kashmir"
+const MAP_DIR := "res://data/maps/kashmir"
+var terrain_dir := TERRAIN_DIR       # `--terrain=<dir>` (development) flies other tiles
+var map_dir := MAP_DIR
 
-var resolution := 1025
-var cell_size := 40.0
-var half_extent := 20480.0
-var sea_level := 0.0
-var spawns: Array = []
+var cell_size := 32.0                # finest terrain sample spacing (terrain_normal)
+var sea_level := -2000.0             # no sea on this map (lakes are part of the ground)
 ## Shared atmosphere (ISA, wind, turbulence). Server-owned in multiplayer; driven by Settings for now.
 var atmosphere = preload("res://scripts/sim/atmosphere.gd").new()
-## Runways: threshold = start of the landing direction, dir = landing direction (unit, flat).
-## Runway 36 (from the south, over the sea) is the instrument runway. Runway 18 is visual only:
-## the northern mountains block a straight-in approach, so it gets no ILS or PAPI.
-var runways: Array = [
-	{"name": "36", "threshold": Vector3(0.0, 40.0, 7500.0), "dir": Vector3(0.0, 0.0, -1.0), "length": 3000.0, "width": 45.0, "ils": true},
-	{"name": "18", "threshold": Vector3(0.0, 40.0, 4500.0), "dir": Vector3(0.0, 0.0, 1.0), "length": 3000.0, "width": 45.0, "ils": false},
-]
+## Runway ends of every airfield: threshold = start of the landing direction, dir = landing direction (unit, flat).
+var runways: Array = []
 const AIM_DISTANCE := 300.0      # touchdown aim point beyond the threshold
 const GLIDESLOPE_DEG := 3.0
 var loaded := false
-
-var _h := PackedFloat32Array()
 
 
 ## Drawn curvature of the Earth on large maps: 1 / (2 R'), with R' the radius stretched by standard atmospheric
@@ -51,14 +45,13 @@ var _h := PackedFloat32Array()
 ## d metres away sits d^2 / (2 R') lower than a flat plane: 0.7 m at 3 km, 68 m at 30 km, 683 m at 100 km.
 const EARTH_CURVE := 1.0 / (2.0 * 6371008.8 / 0.87)
 
-var _tiles = null                    # streamed-terrain heights (scripts/world/terrain_heights.gd) when flying a large map
+var _tiles = null                    # terrain heights from the tiles (scripts/world/terrain_heights.gd)
 
 
-## Airfields of a large map (data/maps/<map>/airfields.json): [{id, name, country, x, z, runways: [{ids, a, b,
+## Airfields (data/maps/kashmir/airfields.json, tools/build_airfields.py): [{id, name, country, x, z, runways: [{ids, a, b,
 ## length, width}]}] with a, b the runway ends [x, height, z] in world coordinates.
 var airfields: Array = []
 var start_airfield := "VISR"
-var map_dir := ""                    # res://data/maps/<map> of a large map (chart, airfields)
 
 
 func _load_airfields(path: String) -> void:
@@ -77,6 +70,18 @@ func _load_airfields(path: String) -> void:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--airfield="):
 			start_airfield = arg.trim_prefix("--airfield=").to_upper()
+	home_airfield = start_airfield
+
+
+var home_airfield := "VISR"          # where our jet started (the HSI and the MFD map point back to it)
+
+
+## Scene position of the home airfield (centre), for the instruments.
+func home_position() -> Vector3:
+	var a := airfield(home_airfield)
+	if a.is_empty():
+		return to_scene(Vector3.ZERO)
+	return to_scene(Vector3(float(a.x), 0.0, float(a.z)))
 
 
 func airfield(id: String) -> Dictionary:
@@ -91,63 +96,37 @@ func land_cover(x: float, z: float) -> int:
 	return _tiles.cover(x, z) if _tiles != null else 0
 
 
-## True on a large streamed map (no sea, far horizons).
+## True once the map is loaded (kept from when there was also a small island map: no sea, far horizons).
 func is_large() -> bool:
 	return _tiles != null
 
 
-## Loads the heightmap. Called when a flight starts, so the main menu stays fast.
+## Loads the terrain heights and the airfields. Called when a flight starts (and by the server), so the main menu
+## stays fast.
 func load_world() -> void:
 	if loaded:
 		return
 	for arg in OS.get_cmdline_user_args():
-		if arg.begins_with("--terrain="):        # development: fly a streamed large map (no sea, no island)
-			var th = preload("res://scripts/world/terrain_heights.gd").new()
-			var tdir := arg.trim_prefix("--terrain=")
-			if th.setup(tdir):
-				_tiles = th
-				sea_level = -2000.0
-				# the Earth's curvature, drawn (scenery sinks below a flat plane with distance; physics stay flat)
-				RenderingServer.global_shader_parameter_set("earth_curve", EARTH_CURVE)
-				map_dir = "res://data/maps/%s" % tdir.trim_suffix("/").get_file()
-				_load_airfields(map_dir + "/airfields.json")
-	var meta_text := FileAccess.get_file_as_string(META_PATH)
-	var meta = JSON.parse_string(meta_text)
-	if meta is Dictionary:
-		resolution = int(meta.get("resolution", resolution))
-		cell_size = float(meta.get("cell_size_m", cell_size))
-		half_extent = float(meta.get("half_extent_m", half_extent))
-		sea_level = float(meta.get("sea_level_m", sea_level))
-		if _tiles != null:
-			sea_level = -2000.0
-		spawns = meta.get("spawns", [])
-	_h = FileAccess.get_file_as_bytes(HEIGHTMAP_PATH).to_float32_array()
-	loaded = _h.size() == resolution * resolution and meta is Dictionary
-	if not loaded:
-		# Never fly in a broken world (flat ground, no forests, falling through runways): stop with a clear message.
-		push_error("WorldData: world data missing or damaged (meta %s, %d height values)" % [str(meta is Dictionary), _h.size()])
-		OS.alert("FlightOut's world data is missing or damaged.\n\nPlease reinstall FlightOut.", "FlightOut")
+		if arg.begins_with("--terrain="):        # development: other tiles
+			terrain_dir = arg.trim_prefix("--terrain=")
+	var th = preload("res://scripts/world/terrain_heights.gd").new()
+	if not th.setup(terrain_dir):
+		# Never fly in a broken world (no ground to land on): stop with a clear message.
+		push_error("WorldData: map data missing in " + terrain_dir)
+		if DisplayServer.get_name() != "headless":
+			OS.alert("FlightOut's map data is missing or damaged.\n\nPlease reinstall FlightOut.", "FlightOut")
 		get_tree().quit(1)
+		return
+	_tiles = th
+	_load_airfields(map_dir + "/airfields.json")
+	# the Earth's curvature, drawn (scenery sinks below a flat plane with distance; physics stay flat)
+	RenderingServer.global_shader_parameter_set("earth_curve", EARTH_CURVE)
+	loaded = true
 
 
-## Terrain elevation (can be below sea level), bilinear between grid samples.
+## Terrain elevation (metres above sea level), interpolated exactly as the terrain is drawn.
 func terrain_height(x: float, z: float) -> float:
-	if _tiles != null:
-		return _tiles.height(x, z)
-	if not loaded:
-		return 0.0
-	var col := (x + half_extent) / cell_size
-	var row := (half_extent - z) / cell_size
-	if col < 0.0 or row < 0.0 or col >= resolution - 1 or row >= resolution - 1:
-		return -75.0
-	var c0 := int(col)
-	var r0 := int(row)
-	var fx := col - c0
-	var fz := row - r0
-	var i := r0 * resolution + c0
-	var a := lerpf(_h[i], _h[i + 1], fx)
-	var b := lerpf(_h[i + resolution], _h[i + resolution + 1], fx)
-	return lerpf(a, b, fz)
+	return _tiles.height(x, z) if _tiles != null else 0.0
 
 
 ## Height of whatever you would hit: terrain or the sea surface.
@@ -209,25 +188,19 @@ func terrain_normal(x: float, z: float) -> Vector3:
 	return Vector3(-hx, 2.0 * e, -hz).normalized()
 
 
-func spawn_transform(index: int = 0) -> Transform3D:
-	if is_large():
-		# lined up on the first runway of the start airfield, 150 m in from its threshold
-		var a := airfield(start_airfield)
-		if a.is_empty() and not airfields.is_empty():
-			a = airfields[0]
-		if not a.is_empty():
-			var r: Dictionary = a.runways[0]
-			var A := Vector3(r.a[0], 0.0, r.a[2])
-			var dir := (Vector3(r.b[0], 0.0, r.b[2]) - A).normalized()
-			var p := A + dir * 150.0
-			p.y = ground_height(p.x, p.z) + 2.2
-			return Transform3D(Basis(Vector3.UP, atan2(-dir.x, -dir.z)), p)
-	if spawns.is_empty():
-		return Transform3D(Basis(), Vector3(0.0, 42.0, 7350.0))
-	var s: Dictionary = spawns[index % spawns.size()]
-	var p: Array = s.get("godot_pos", [0.0, 42.0, 7350.0])
-	var basis := Basis(Vector3.UP, deg_to_rad(-float(s.get("heading_deg", 0.0))))
-	return Transform3D(basis, Vector3(p[0], p[1], p[2]))
+## Offline start: lined up on the start airfield's first runway, 150 m in from its threshold (`--airfield=ICAO`).
+func spawn_transform(_index: int = 0) -> Transform3D:
+	var a := airfield(start_airfield)
+	if a.is_empty() and not airfields.is_empty():
+		a = airfields[0]
+	if a.is_empty():
+		return Transform3D(Basis(), Vector3(0.0, ground_height(0.0, 0.0) + 500.0, 0.0))
+	var r: Dictionary = a.runways[0]
+	var A := Vector3(r.a[0], 0.0, r.a[2])
+	var dir := (Vector3(r.b[0], 0.0, r.b[2]) - A).normalized()
+	var p := A + dir * 150.0
+	p.y = ground_height(p.x, p.z) + 2.2
+	return Transform3D(Basis(Vector3.UP, atan2(-dir.x, -dir.z)), p)
 
 
 ## ILS-style guidance to the runway the aircraft is lined up for (empty if none).

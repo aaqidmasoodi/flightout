@@ -21,7 +21,6 @@ const WHITE := Color(0.9, 0.95, 0.92)
 const RED := Color(1.0, 0.28, 0.22)
 const YEL := Color(1.0, 0.85, 0.25)
 const CYAN := Color(0.35, 0.85, 1.0)
-const HOME := Vector3.ZERO
 
 var ac: Node3D
 var id := "L"                   # "L", "C" or "R"
@@ -348,7 +347,7 @@ func _page_sa() -> void:
 		var v := Vector2(rel.x, rel.z) / rng * rr
 		return c + v.rotated(rot)
 	# home airfield
-	var hp: Vector2 = to_px.call(HOME)
+	var hp: Vector2 = to_px.call(WorldData.home_position())
 	if b.has_point(hp):
 		draw_rect(Rect2(hp - Vector2(8, 8), Vector2(16, 16)), WHITE, false, 2.0)
 		draw_line(hp - Vector2(0, 12), hp + Vector2(0, 12), WHITE, 2.0)

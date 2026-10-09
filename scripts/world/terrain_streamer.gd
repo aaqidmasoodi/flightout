@@ -1,7 +1,7 @@
 extends Node3D
 ## Streamed terrain (CDLOD: continuous distance-dependent level of detail).
 ##
-## The map is a quadtree of square tiles built offline by tools/terrain_tiles.py: level 0 is the finest, each level
+## The map is a quadtree of square tiles built offline by tools/build_kashmir.py: level 0 is the finest, each level
 ## up halves the resolution and doubles the tile size. Every frame the quadtree is walked from the root: a tile is
 ## split into its four children while the camera is within RANGE_K tile sizes of it, so detail is dense under the jet
 ## and coarse at the horizon, and the triangle count is the same whatever the size of the map.
@@ -119,7 +119,6 @@ func setup(path: String) -> bool:
 	material = ShaderMaterial.new()
 	material.shader = SHADER
 	material.set_shader_parameter("heights", _tex)
-	material.set_shader_parameter("has_cover", _lc_tex != null)
 	if _lc_tex:
 		material.set_shader_parameter("cover", _lc_tex)
 	material.set_shader_parameter("tile_quads", float(tile_quads))

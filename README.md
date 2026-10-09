@@ -98,19 +98,21 @@ Runway 36 (approach from the south over the sea) is the instrument runway; runwa
 
 **Aircraft are data**: `AircraftSpec` (`scripts/aircraft/aircraft_spec.gd`, 81 parameters) and one file per aircraft (`data/aircraft/su27.tres`). `scripts/aircraft/aircraft.gd` is a thin node that feeds controls in and drives visuals from the sim (actuator positions move the surfaces, gear transit drives the animation, strut compression moves the oleos).
 
-**Services (autoloads)**: `Settings` (saved, applied live), `Game` (menu and flight flow), `Audio` (mix buses, cockpit muffling, interface sounds), `WorldData` (heightmap, runways, shared atmosphere).
+**Services (autoloads)**: `Settings` (saved, applied live), `Game` (menu and flight flow), `Audio` (mix buses, cockpit muffling, interface sounds), `WorldData` (terrain heights, airfields, runways, shared atmosphere).
 
 **Sound**: `scripts/aircraft/aircraft_audio.gd` layers turbine whine, core roar, low rumble and afterburner (with a CC0 recording underneath) at the intakes and nozzles in 3D with distance, air absorption and Doppler; jet directivity makes the front whine and the rear roar. Wind follows dynamic pressure, buffet follows the stall model, tyre roll follows wheel speed, hydraulics follow the gear, canopy and airbrake. Touchdown, tyre chirp, gear locks, afterburner light-off, tail scrape and crash are event-driven. Cockpit warnings: pull up, stall, over-G, gear, low fuel. Credits in `assets/audio/CREDITS.md`.
 
 ## Project layout
 - `project.godot`, `scenes/`, `scripts/`, `shaders/` : Godot project
-- `scripts/world/world_data.gd` : autoload with the authoritative heightmap (ground height, sea, spawns). Render-free so a future dedicated server can share it
-- `scripts/world/world.gd` : visual world (terrain chunks, terrain and ocean shaders, forests)
+- `scripts/world/world_data.gd` : autoload with the authoritative map data (ground height from the terrain tiles, airfields, runways, floating origin). Render-free, so the dedicated server shares it
+- `scripts/world/world.gd` : visual world (streamed terrain, runways and lights, forests from the land cover)
+- `scripts/world/spawn_layout.gd` : the 16 multiplayer parking slots, spread over Srinagar, Leh and Skardu
 - `scenes/menu.tscn`, `scripts/ui/` : main menu, settings, about, pause menu
 - `assets/ui/` : FlightOut emblem, app icon, boot splash, Yembera mark; `assets/fonts/` : Rajdhani (SIL OFL)
 - `assets/su27.glb` : exported aircraft
-- `assets/world/world.glb`, `heightmap.r32`, `world_meta.json` : exported map, height data and metadata
-- `blender/su27.blend` : aircraft source; `blender/world.blend` : map source; `blender/textures/` : baked textures (Godot ignores this folder)
+- `assets/kashmir/` : the map's terrain and land cover tiles, about 1 GB, built locally and not in git (tools/fetch_kashmir.py downloads Copernicus DEM GLO-30 and ESA WorldCover; tools/build_kashmir.py, build_landcover.py, build_overview.py build the tiles)
+- `data/maps/kashmir/` : airfields (OurAirports), map chart
+- `blender/su27.blend` : aircraft source; `blender/textures/` : baked textures (Godot ignores this folder)
 
 ## Running
 Open the folder in Godot 4.7 (Import in the Project Manager) and press Play.

@@ -31,7 +31,6 @@ const HudDisplay = preload("res://scripts/avionics/hud_display.gd")
 const NEEDLE_RATE := 14.0             # 1/s: needle damping, real instruments lag a little
 const LAMP_RATE := 22.0               # 1/s: filament warm-up and fade
 const LAMP_HOLD := 0.6                # s: a lamp that came on stays on at least this long (no flicker at a threshold)
-const HOME := Vector3.ZERO            # the HSI bearing needle points home (the airbase)
 
 var ac: Node3D
 var _needles := {}                    # "IAS_0" -> [node, rest basis, shown angle (deg clockwise)]
@@ -400,7 +399,7 @@ func _process(delta: float) -> void:
 	var hdg := deg_to_rad(ac.heading_deg)
 	if _card:
 		_card.basis = _card_rest * Basis(Vector3.UP, hdg)
-	var d: Vector3 = HOME - ac.global_position
+	var d: Vector3 = WorldData.home_position() - ac.global_position     # the HSI needle points home
 	var brg := rad_to_deg(atan2(d.x, -d.z))
 	_needle("HSI_0", brg - ac.heading_deg, k, true)
 
