@@ -36,6 +36,12 @@ var _dir := 1.0
 var _t := 0.0
 
 
+## Track positions are scene positions: they move with the floating origin (scripts/world/world_data.gd).
+func _on_origin_shifted(delta: Vector3) -> void:
+	for id in tracks:
+		tracks[id].pos = (tracks[id].pos as Vector3) - delta
+
+
 func radar_on() -> bool:
 	return ac != null and bool(ac.get("radar_on"))
 
@@ -77,6 +83,8 @@ func _datalink_sources() -> Array:
 func update(delta: float) -> void:
 	if ac == null or not ac.is_inside_tree() or ac.get("fm") == null:
 		return
+	if not WorldData.origin_shifted.is_connected(_on_origin_shifted):
+		WorldData.origin_shifted.connect(_on_origin_shifted)
 	_t += delta
 	var on := radar_on()
 	var lim := az_limit()

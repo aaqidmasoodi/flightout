@@ -98,7 +98,7 @@ var g_load: float:
 var vertical_speed: float:
 	get: return fm.vel.y
 var altitude_agl: float:
-	get: return global_position.y - spec.gear_height - WorldData.ground_height(global_position.x, global_position.z)
+	get: return global_position.y - spec.gear_height - WorldData.scene_ground_height(global_position.x, global_position.z)
 var thrust_now: float:
 	get: return fm.thrust
 var stall_frac: float:
@@ -240,7 +240,7 @@ func _ready() -> void:
 		var t := model.find_child(n, true, false) as Node3D
 		if t:
 			_tires.append(t)
-	fm.respawn(global_transform)
+	fm.respawn(Transform3D(global_transform.basis, WorldData.to_world(global_position)))
 	_shown = _switches()
 
 
@@ -301,7 +301,8 @@ func _physics_process(delta: float) -> void:
 	var k := exp(-CORRECTION_RATE * delta)
 	_vis_pos *= k
 	_vis_rot = Quaternion.IDENTITY.slerp(_vis_rot, k)
-	global_transform = Transform3D(Basis(_vis_rot) * fm.rot, fm.pos + _vis_pos)
+	_follow_origin()
+	global_transform = Transform3D(Basis(_vis_rot) * fm.rot, _scene_pos() + _vis_pos)
 	_process_events()
 	_sync_switches()
 	_update_surfaces()
@@ -327,7 +328,7 @@ func step_sim() -> void:
 ## Server correction: restore its state for tick `ack`, replay our inputs since, and blend the difference out of
 ## the view over a few frames, so the jet never visibly jumps.
 func rewind(state: Array, ack: int, cmds: Dictionary, states: Dictionary, now: int) -> void:
-	var old_pos := fm.pos
+	var old_pos := fm.world_pos()
 	var old_rot := Quaternion(fm.rot.orthonormalized())
 	fm.set_state(state)
 	for t in range(ack + 1, now + 1):
@@ -337,12 +338,26 @@ func rewind(state: Array, ack: int, cmds: Dictionary, states: Dictionary, now: i
 			states[t] = fm.get_state()
 	fm.events.clear()
 	var new_rot := Quaternion(fm.rot.orthonormalized())
-	_vis_pos += old_pos - fm.pos
+	_vis_pos += old_pos - fm.world_pos()        # (world terms: the frames may differ by whole cells)
 	_vis_rot = ((_vis_rot * old_rot) * new_rot.inverse()).normalized()
 	if _vis_pos.length() > 40.0:          # a respawn or a big desync: cut, don't glide across the map
 		_vis_pos = Vector3.ZERO
 		_vis_rot = Quaternion.IDENTITY
 		reset_physics_interpolation()
+
+
+## The scene origin follows our own jet's simulation frame (floating origin, see scripts/world/world_data.gd).
+func _follow_origin() -> void:
+	if is_remote or not is_in_group("player_aircraft"):
+		return
+	if fm.ox != WorldData.origin_x or fm.oz != WorldData.origin_z:
+		WorldData.set_origin(fm.ox, fm.oz)
+		reset_physics_interpolation()
+
+
+## Where the simulation puts the jet in the scene (equal to fm.pos while the scene follows this jet).
+func _scene_pos() -> Vector3:
+	return fm.pos + Vector3(fm.ox - WorldData.origin_x, 0.0, fm.oz - WorldData.origin_z)
 
 
 ## Puts the jet at a spawn point, parked and configured (no input involved: used when the flight starts).
@@ -366,7 +381,8 @@ func _after_respawn() -> void:
 	_snap_gear_down()
 	_shown = _switches()
 	sim_event.emit("reset", 0.0)
-	global_transform = Transform3D(fm.rot, fm.pos)
+	_follow_origin()
+	global_transform = Transform3D(fm.rot, _scene_pos())
 	reset_physics_interpolation()
 
 
@@ -674,7 +690,8 @@ func practice_approach() -> void:
 	throttle = 0.6
 	autothrottle = true
 	at_target = 78.0
-	global_transform = Transform3D(fm.rot, fm.pos)
+	_follow_origin()
+	global_transform = Transform3D(fm.rot, _scene_pos())
 	reset_physics_interpolation()
 	_event("PRACTICE APPROACH  RWY 36")
 
@@ -688,7 +705,10 @@ func reset() -> void:
 
 # ---------------- remote jets ----------------
 ## Places a remote jet from the interpolated snapshot and drives its visuals and sound from it.
+## `pos` is a scene position; the remote's model lives in our scene frame.
 func apply_remote(pos: Vector3, q: Quaternion, vel: Vector3, omega: Vector3, d: Dictionary, delta: float) -> void:
+	fm.ox = WorldData.origin_x
+	fm.oz = WorldData.origin_z
 	fm.pos = pos
 	fm.rot = Basis(q)
 	fm.vel = vel
@@ -715,7 +735,7 @@ func apply_remote(pos: Vector3, q: Quaternion, vel: Vector3, omega: Vector3, d: 
 		e.n2 = d.n2
 		e.ab = d.ab
 	# air data the sound and effects use, estimated from the motion
-	var vb := fm.rot.inverse() * (vel - WorldData.atmosphere.wind_at(pos, 0.0, 0.0))
+	var vb := fm.rot.inverse() * (vel - WorldData.atmosphere.wind_at(WorldData.to_world(pos), 0.0, 0.0))
 	fm.tas = vb.length()
 	fm.alpha = atan2(-vb.y, maxf(-vb.z, 1.0))
 	var rho_ratio := exp(-maxf(pos.y, 0.0) / 9500.0)

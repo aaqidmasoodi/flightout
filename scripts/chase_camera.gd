@@ -294,7 +294,7 @@ func _keep_above_ground(pivot: Vector3, wanted: Vector3, delta: float) -> Vector
 		return wanted
 	# first settle the wanted point onto the surface, so a boom aimed into the ground glides instead of shrinking
 	var w := wanted
-	w.y = maxf(w.y, WorldData.ground_height(w.x, w.z) + GROUND_CLEARANCE)
+	w.y = maxf(w.y, WorldData.scene_ground_height(w.x, w.z) + GROUND_CLEARANCE)
 	var boom := w - pivot
 	var length := boom.length()
 	if length < 0.01:
@@ -307,7 +307,7 @@ func _keep_above_ground(pivot: Vector3, wanted: Vector3, delta: float) -> Vector
 		if f * length < 4.0:
 			continue
 		var q := pivot + boom * f
-		if q.y < WorldData.ground_height(q.x, q.z) - 0.5:
+		if q.y < WorldData.scene_ground_height(q.x, q.z) - 0.5:
 			clear = maxf(float(i - 1) / OCCLUSION_STEPS, 4.0 / length)
 			break
 	# buildings (shelters) on physics layer 2: the boom stops just short of the wall
@@ -323,9 +323,9 @@ func _keep_above_ground(pivot: Vector3, wanted: Vector3, delta: float) -> Vector
 	var p := pivot + boom * _reach
 
 	# surface under the lens, sampled across a small footprint
-	var g := WorldData.ground_height(p.x, p.z)
+	var g := WorldData.scene_ground_height(p.x, p.z)
 	for o in [Vector2(PROBE_RADIUS, 0.0), Vector2(-PROBE_RADIUS, 0.0), Vector2(0.0, PROBE_RADIUS), Vector2(0.0, -PROBE_RADIUS)]:
-		g = maxf(g, WorldData.ground_height(p.x + o.x, p.z + o.y))
+		g = maxf(g, WorldData.scene_ground_height(p.x + o.x, p.z + o.y))
 	# rise instantly, settle gently, so passing over a ridge never pops the view down
 	if g > _floor or _floor == -INF or absf(g - _floor) > 200.0:
 		_floor = g

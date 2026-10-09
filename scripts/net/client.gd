@@ -74,6 +74,19 @@ func _ready() -> void:
 			_log = FileAccess.open(arg.trim_prefix("--netlog="), FileAccess.WRITE)
 	process_physics_priority = 100   # after the jet has simulated this tick
 	process_priority = -10           # remote jets are placed before the camera reads anything
+	WorldData.origin_shifted.connect(_on_origin_shifted)
+
+
+## The scene origin moved (our jet crossed a cell): everything kept in scene coordinates moves with it.
+func _on_origin_shifted(delta: Vector3) -> void:
+	for id in _remotes:
+		var r: Dictionary = _remotes[id]
+		for sn in r.snaps:
+			sn[1].pos = (sn[1].pos as Vector3) - delta
+		r.shown_p = (r.shown_p as Vector3) - delta
+		if is_instance_valid(r.node):
+			(r.node as Node3D).global_position -= delta
+			(r.node as Node3D).reset_physics_interpolation()
 
 
 var online: bool:
@@ -270,7 +283,11 @@ func _snapshot(b: StreamPeerBuffer) -> void:
 	var n := b.get_u8()
 	var jets := []
 	for i in n:
-		jets.append(P.get_jet(b))
+		var jd: Dictionary = P.get_jet(b)
+		# to scene coordinates (the jet's frame minus ours; whole cells, so the difference is exact)
+		var lp: Vector3 = jd.pos
+		jd.pos = Vector3(float(jd.ox - WorldData.origin_x) + lp.x, lp.y, float(jd.oz - WorldData.origin_z) + lp.z)
+		jets.append(jd)
 	WorldData.time_of_day = tod
 	# clock: adopt earlier-arriving (less delayed) samples quickly, later ones slowly; track jitter
 	var sample := stick - _now_ticks()
@@ -331,7 +348,9 @@ func _reconcile(ack: int, server_state: Array) -> void:
 
 
 static func _differs(a: Array, s: Array) -> bool:
-	if (a[0] as Vector3).distance_to(s[0]) > 0.02:
+	# positions compared in world terms: the two frames may differ by whole cells (indices 56, 57: ox, oz)
+	var fa := Vector3(float(a[56]) - float(s[56]), 0.0, float(a[57]) - float(s[57])) if a.size() > 57 and s.size() > 57 else Vector3.ZERO
+	if ((a[0] as Vector3) + fa).distance_to(s[0]) > 0.02:
 		return true
 	if (a[1] as Vector3).distance_to(s[1]) > 0.05:
 		return true

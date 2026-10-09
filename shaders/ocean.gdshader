@@ -29,6 +29,8 @@ float haze_mean(float y0, float y1) {
 
 #include "res://shaders/include/cloud_cover.gdshaderinc"
 
+global uniform vec2 world_origin;     // floating origin (scripts/world/world_data.gd)
+
 varying vec3 wpos;
 
 vec2 nm(sampler2D tex, vec2 uv) {
@@ -40,7 +42,7 @@ void vertex() {
 }
 
 void fragment() {
-	vec2 p = wpos.xz + scroll;
+	vec2 p = wpos.xz + world_origin + scroll;
 	float t = TIME;
 	float dist = length(CAMERA_POSITION_WORLD - wpos);
 	float near_detail = 1.0 - smoothstep(600.0, 7000.0, dist);

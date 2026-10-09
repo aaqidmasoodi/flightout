@@ -12,17 +12,55 @@ var _env: Environment
 var _sun: DirectionalLight3D
 var _sky: Node3D
 var _cam: Camera3D
+var _world: Node3D
+
+
+func _on_origin_shifted(_delta: Vector3) -> void:
+	_world.position = Vector3(-WorldData.origin_x, 0.0, -WorldData.origin_z)
+	if _cam:
+		_cam.reset_physics_interpolation()
+	if _origin_shots != "":
+		_save_shift_frames()
+
+
+## Development: `--origin-shots=<folder>` saves the frame before and the frames after every origin shift, to check
+## that nothing in view jumps when the floating origin moves.
+var _origin_shots := ""
+var _last_frame: Image
+var _shift_n := 0
+
+
+func _process(_delta: float) -> void:
+	if _origin_shots != "":
+		_last_frame = get_viewport().get_texture().get_image()
+
+
+func _save_shift_frames() -> void:
+	var n := _shift_n
+	_shift_n += 1
+	if _last_frame:
+		_last_frame.save_png(_origin_shots.path_join("shift%02d_a.png" % n))
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(_origin_shots.path_join("shift%02d_b.png" % n))
 
 
 func _ready() -> void:
 	get_tree().paused = false
 	get_viewport().disable_3d = false
 	WorldData.load_world()
+	WorldData.reset_origin()
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--origin-shots="):
+			_origin_shots = arg.trim_prefix("--origin-shots=")
 	_build_environment()
 
 	var world: Node3D = preload("res://scripts/world/world.gd").new()
 	world.name = "World"
 	add_child(world)
+	# floating origin: the World node (terrain, airbase, forests, lights, anything fixed to the map) sits at minus
+	# the scene origin, so its children keep their world coordinates (scripts/world/world_data.gd)
+	_world = world
+	WorldData.origin_shifted.connect(_on_origin_shifted)
 
 	var aircraft: Node3D = preload("res://scripts/aircraft/aircraft.gd").new()
 	aircraft.spec = load("res://data/aircraft/su27.tres")
@@ -196,7 +234,7 @@ func _dev_bandits(aircraft: Node3D) -> void:
 		var e: Array = list[i]
 		var b: Node3D = Bandit.new()
 		b.name = "DevBandit%d" % i
-		add_child(b)
+		get_node("World").add_child(b)          # fixed to the map, so it moves with the floating origin
 		b.global_position = start.origin + fwd * float(e[0]) + right * float(e[1])
 		b.global_position.y = float(e[2])
 		var dir := fwd.rotated(Vector3.UP, -deg_to_rad(float(e[4])))
@@ -206,7 +244,7 @@ func _dev_bandits(aircraft: Node3D) -> void:
 		b.turn_rate = float(e[6])
 	var awacs := Node3D.new()
 	awacs.name = "DevAWACS"
-	add_child(awacs)
+	get_node("World").add_child(awacs)
 	awacs.global_position = start.origin - fwd * 60000.0 + Vector3.UP * 9000.0
 	awacs.set_meta("datalink_range", 400000.0)
 	awacs.add_to_group("awacs")

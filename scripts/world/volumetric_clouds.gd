@@ -50,6 +50,7 @@ var _has_history := false
 var _noise := {}
 var _frame := 0
 var _prev_wind := Vector2.ZERO
+var _shifted := false              # the floating origin moved: last frame's history is in the old frame
 var _prev_shape := Vector4.ZERO   # coverage, density, base, top last frame: weather changing -> trust history less
 var _layer := RID()             # full resolution: r = transmittance, g = cloud front distance (km)
 var _layer_size := Vector2i.ZERO
@@ -61,10 +62,17 @@ func _init() -> void:
 	# before the transparent pass: glass, the HUD, flames and particles then draw over the clouds instead of being
 	# painted over by them; far transparent things (the sea) hide behind clouds through the cloud layer texture
 	effect_callback_type = EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT
+	WorldData.origin_shifted.connect(_on_origin_shifted)
 	_rd = RenderingServer.get_rendering_device()
 	if _rd == null:
 		return   # headless (dedicated server): nothing to render
 	RenderingServer.call_on_render_thread(_setup)
+
+
+## The clouds are sampled at map positions (scene + origin), so they stay put when the origin moves; only the
+## reprojection history (kept in scene space) is dropped for a frame.
+func _on_origin_shifted(_delta: Vector3) -> void:
+	_shifted = true
 
 
 func _setup() -> void:
@@ -236,7 +244,7 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	data.append_array([sun_dir.x, sun_dir.y, sun_dir.z, light_intensity])
 	data.append_array([sun_color.r, sun_color.g, sun_color.b, ambient])
 	data.append_array([amb_top.r, amb_top.g, amb_top.b, wind_move.y])
-	data.append_array([amb_bottom.r, amb_bottom.g, amb_bottom.b, 0.0])
+	data.append_array([amb_bottom.r, amb_bottom.g, amb_bottom.b, WorldData.origin_x])   # w: floating origin x
 	data.append_array([fog_color.r, fog_color.g, fog_color.b, fog_density])
 	data.append_array([base, top, coverage, density])
 	data.append_array([stratus, darkness, wind.x, wind.y])
@@ -248,7 +256,8 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	var shape := Vector4(coverage, density, base * 0.001, top * 0.001)
 	var hw := history_weight if shape.distance_to(_prev_shape) < 0.0002 else minf(history_weight, 0.7)
 	_prev_shape = shape
-	data.append_array([1.0 if _has_history else 0.0, hw, height_variation, 0.0])
+	data.append_array([1.0 if _has_history and not _shifted else 0.0, hw, height_variation, WorldData.origin_z])   # w: origin z
+	_shifted = false
 	data.append_array([hor_toward.r, hor_toward.g, hor_toward.b, sun_xz.x])
 	data.append_array([hor_away.r, hor_away.g, hor_away.b, sun_xz.y])
 	var bytes := data.to_byte_array()

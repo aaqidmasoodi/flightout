@@ -20,6 +20,12 @@ var ground_height: Callable
 var is_water: Callable
 
 # ---------------- state ----------------
+## Local frame (floating origin, see scripts/world/world_data.gd): `pos` is relative to world (ox, 0, oz). When the
+## jet gets more than ORIGIN_CELL from it, the frame steps a whole cell along (_rebase), the same way on the
+## client and the server, so `pos` stays small and precise anywhere on a large map. World position = pos + (ox, 0, oz).
+const ORIGIN_CELL := 2000.0
+var ox := 0.0
+var oz := 0.0
 var pos := Vector3.ZERO
 var vel := Vector3.ZERO
 var rot := Basis.IDENTITY
@@ -152,7 +158,7 @@ func get_state() -> Array:
 		gear_comp[0], gear_comp[1], gear_comp[2], _prev_comp[0], _prev_comp[1], _prev_comp[2],
 		crashed, _air_time, _rock_t, _drop, alpha_crit_deg, rng.state,
 		in_pitch, in_roll, in_yaw, in_throttle, in_brake, canopy_open, radar_on, radome_open, lights_on, toggles,
-		tail_scrape, wheel_speed, thrust, fuel_flow, wind, e, master_mode]   # new fields go last: net/client.gd indexes this
+		tail_scrape, wheel_speed, thrust, fuel_flow, wind, e, master_mode, ox, oz]   # new fields go last: net/client.gd indexes this
 
 
 func set_state(s: Array) -> void:
@@ -217,6 +223,9 @@ func set_state(s: Array) -> void:
 		en.running = e[k * 5 + 4]
 	i += 1
 	master_mode = s[i] if i < s.size() else 0
+	i += 1
+	ox = float(s[i]) if i < s.size() else 0.0
+	oz = float(s[i + 1]) if i + 1 < s.size() else 0.0
 	_update_mass()
 
 
@@ -235,8 +244,11 @@ func setup(p_spec: AircraftSpec, p_atmo: Atmosphere, p_ground: Callable, p_water
 	_update_mass()
 
 
+## `xform` is in world coordinates.
 func reset(xform: Transform3D, speed: float = 0.0, on_ground: bool = true) -> void:
-	pos = xform.origin
+	ox = snappedf(xform.origin.x, ORIGIN_CELL)
+	oz = snappedf(xform.origin.z, ORIGIN_CELL)
+	pos = Vector3(xform.origin.x - ox, xform.origin.y, xform.origin.z - oz)
 	rot = xform.basis.orthonormalized()
 	vel = -rot.z * speed
 	omega = Vector3.ZERO
@@ -274,6 +286,32 @@ func set_engines_n2(n2: float) -> void:
 		e.n2 = n2
 
 
+## Ground queries in world coordinates (the world's callables take world x, z).
+func _gh(x: float, z: float) -> float:
+	return ground_height.call(x + ox, z + oz)
+
+
+func _wat(x: float, z: float) -> bool:
+	return is_water.call(x + ox, z + oz)
+
+
+func world_pos() -> Vector3:
+	return Vector3(pos.x + ox, pos.y, pos.z + oz)
+
+
+## Moves the local frame so `pos` stays within ORIGIN_CELL of it. Exact: whole-cell offsets subtract without
+## rounding, so client prediction and the server stay bit-identical.
+func _rebase() -> void:
+	if absf(pos.x) > ORIGIN_CELL:
+		var dx := snappedf(pos.x, ORIGIN_CELL)
+		pos.x -= dx
+		ox += dx
+	if absf(pos.z) > ORIGIN_CELL:
+		var dz := snappedf(pos.z, ORIGIN_CELL)
+		pos.z -= dz
+		oz += dz
+
+
 func _update_mass() -> void:
 	mass = spec.empty_mass + spec.misc_mass + fuel
 
@@ -284,6 +322,11 @@ func inertia() -> Vector3:
 
 # ======================================================================================
 func step(dt: float) -> void:
+	_step(dt)
+	_rebase()
+
+
+func _step(dt: float) -> void:
 	if crashed:
 		tas = 0.0; ias = 0.0; mach = 0.0; qbar = 0.0; alpha = 0.0; beta = 0.0
 		stall_frac = 0.0; buffet = 0.0; thrust = 0.0; fuel_flow = 0.0; nz = 1.0
@@ -297,8 +340,8 @@ func step(dt: float) -> void:
 	var I := inertia()
 
 	# ---- air data ----
-	var gh: float = ground_height.call(pos.x, pos.z)
-	wind = atmo.wind_at(pos, time, gh)
+	var gh: float = _gh(pos.x, pos.z)
+	wind = atmo.wind_at(world_pos(), time, gh)
 	var air := vel - wind
 	var rho := Atmosphere.density(pos.y)
 	var vb := rot.transposed() * air
@@ -517,7 +560,7 @@ func _ground_contacts(dt: float, gh: float) -> Array:
 	for i in 3:
 		var rb: Vector3 = spec.gear_contacts[i]
 		var pw := pos + rot * rb
-		var h: float = pw.y - (ground_height.call(pw.x, pw.z) as float)
+		var h: float = pw.y - (_gh(pw.x, pw.z) as float)
 		var comp := -h
 		gear_comp[i] = 0.0
 		if not locked or comp <= 0.0:
@@ -559,7 +602,7 @@ func _ground_contacts(dt: float, gh: float) -> Array:
 	# tail stinger
 	tail_scrape = false
 	var tp := pos + rot * spec.tail_probe
-	var th := tp.y - (ground_height.call(tp.x, tp.z) as float)
+	var th := tp.y - (_gh(tp.x, tp.z) as float)
 	if th < 0.0:
 		tail_scrape = true
 		var vtp := vel + rot * omega.cross(spec.tail_probe)
@@ -582,13 +625,13 @@ func _ground_contacts(dt: float, gh: float) -> Array:
 	# airframe (nose, wingtips, fins, belly when the gear is up) must not touch
 	for p in spec.crash_probes:
 		var cp := pos + rot * (p as Vector3)
-		if cp.y - (ground_height.call(cp.x, cp.z) as float) < 0.0:
-			_crash("WATER" if is_water.call(cp.x, cp.z) else "TERRAIN")
+		if cp.y - (_gh(cp.x, cp.z) as float) < 0.0:
+			_crash("WATER" if _wat(cp.x, cp.z) else "TERRAIN")
 	if not locked:
 		var belly := pos + rot * Vector3(0.0, -1.2, 0.0)
 		if belly.y - gh < 0.0:
-			_crash("WATER" if is_water.call(belly.x, belly.z) else ("BELLY LANDING" if gear_pos < 0.05 else "GEAR NOT LOCKED"))
-	if is_water.call(pos.x, pos.z) and pos.y - gh < spec.gear_height:
+			_crash("WATER" if _wat(belly.x, belly.z) else ("BELLY LANDING" if gear_pos < 0.05 else "GEAR NOT LOCKED"))
+	if _wat(pos.x, pos.z) and pos.y - gh < spec.gear_height:
 		_crash("WATER")
 	return [f_total, t_total]
 

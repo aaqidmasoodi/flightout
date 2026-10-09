@@ -27,11 +27,13 @@ float haze_mean(float y0, float y1) {
 	return abs(dy) < 1.0 ? a : H * (b - a) / dy;
 }
 
+global uniform vec2 world_origin;     // floating origin (scripts/world/world_data.gd): scene + origin = map
+
 varying vec3 wpos;
 varying vec3 wnorm;
 
 void vertex() {
-	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;     // scene position (distances, view)
 	wnorm = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
 }
 
@@ -39,7 +41,8 @@ void fragment() {
 	float h = wpos.y;
 	vec3 n = normalize(wnorm);
 	float slope = 1.0 - clamp(n.y, 0.0, 1.0);
-	vec2 p = wpos.xz;
+	vec3 mp = wpos + vec3(world_origin.x, 0.0, world_origin.y);   // map position (textures, masks)
+	vec2 p = mp.xz;
 	float dist = length(CAMERA_POSITION_WORLD - wpos);
 	float macro = texture(macro_tex, p / 14000.0).r;
 	float macro2 = texture(macro_tex, p / 3100.0 + 0.5).r;
@@ -48,7 +51,7 @@ void fragment() {
 	// triplanar detail for steep rock
 	vec3 bw = pow(abs(n), vec3(4.0));
 	bw /= (bw.x + bw.y + bw.z);
-	float rock_det = texture(detail_tex, wpos.zy / 35.0).r * bw.x + texture(detail_tex, wpos.xz / 35.0).r * bw.y + texture(detail_tex, wpos.xy / 35.0).r * bw.z;
+	float rock_det = texture(detail_tex, mp.zy / 35.0).r * bw.x + texture(detail_tex, mp.xz / 35.0).r * bw.y + texture(detail_tex, mp.xy / 35.0).r * bw.z;
 
 	vec2 muv = (p + vec2(map_half_extent)) / (2.0 * map_half_extent);
 	float forest = texture(forest_density, muv).r;

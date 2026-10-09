@@ -13,23 +13,26 @@ uniform float min_pixels = 2.5;      // trees shorter than this on screen are le
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 
+global uniform vec2 world_origin;     // floating origin (scripts/world/world_data.gd)
+
 void vertex() {
 	vec3 origin = MODEL_MATRIX[3].xyz;
+	vec2 mo = origin.xz + world_origin;   // map position: per-tree choices must not change when the origin moves
 	float d = length(origin - CAMERA_POSITION_WORLD);
-	float h = hash(origin.xz * 0.013);
+	float h = hash(mo * 0.013);
 	float edge = near_radius - band * h;
 	bool mine = far_set ? (d >= edge) : (d < edge);
 	// screen-size culling (as flight sims do): a tree only a few pixels tall adds speckle, not detail; thin those out
 	// gradually (each tree has its own threshold), and the terrain's canopy texture carries the forest from there
 	float tree_h = length(MODEL_MATRIX[1].xyz) * 14.0;
 	float px = tree_h * abs(PROJECTION_MATRIX[1][1]) * 0.5 * VIEWPORT_SIZE.y / max(d, 1.0);   // y scale is negative under Vulkan
-	if (px < mix(min_pixels, min_pixels * 2.5, h) || hash(origin.xz * 0.071 + 3.7) > density) {
+	if (px < mix(min_pixels, min_pixels * 2.5, h) || hash(mo * 0.071 + 3.7) > density) {
 		mine = false;
 	}
 	if (!mine) {
 		VERTEX = vec3(0.0);
 	} else {
-		float phase = (origin.x + origin.z) * 0.045;
+		float phase = (mo.x + mo.y) * 0.045;
 		float k = pow(max(VERTEX.y, 0.0) / 12.0, 2.0) * wind;
 		VERTEX.x += sin(TIME * 1.3 + phase) * 0.35 * k;
 		VERTEX.z += cos(TIME * 1.1 + phase * 1.3) * 0.25 * k;

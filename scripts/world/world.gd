@@ -251,7 +251,7 @@ func _update_near_trees(force: bool = false) -> void:
 	var cam := get_viewport().get_camera_3d()
 	if cam == null or _near_pool.is_empty():
 		return
-	var cp := cam.global_position
+	var cp := to_local(cam.global_position)       # map coordinates (this node sits at minus the floating origin)
 	if not force and Vector2(cp.x, cp.z).distance_to(_near_center) < 150.0:
 		return
 	_near_center = Vector2(cp.x, cp.z)

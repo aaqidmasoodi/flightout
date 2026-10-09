@@ -3,6 +3,24 @@ extends Node
 ## Gameplay, the flight model and (later) a dedicated multiplayer server all query
 ## the ground through this, so everyone agrees on where the terrain and sea are.
 ## Coordinates are Godot world space (metres, Y up, map centred on the origin).
+##
+## Floating origin. The world is far bigger than 32-bit floats can describe precisely (at 350 km a float only
+## resolves 3 cm), so nothing is ever simulated or drawn far from (0, 0):
+##   world    absolute map coordinates. Every query here (terrain_height, ground_height, is_water, runways,
+##            spawns) is in world coordinates. GDScript floats are 64-bit, so plain floats hold them exactly.
+##   scene    Godot positions on the client: world minus `origin`. The scene origin follows your own jet (a whole
+##            number of ORIGIN_CELL steps), so the jet and the camera always sit within a couple of km of (0, 0).
+##            Use scene_ground_height() etc. with node positions. When the origin moves, origin_shifted(delta)
+##            fires and everything holding scene positions moves by -delta (the World node, remote jets, tracks).
+##   sim      each FlightModel keeps its own local frame (its ox, oz), stepped the same way on the client and
+##            the server, so physics keeps millimetre precision anywhere on the map (scripts/sim/flight_model.gd).
+## Height (y) is never shifted: it stays metres above sea level everywhere.
+
+signal origin_shifted(delta: Vector3)
+const ORIGIN_CELL := 2000.0          # origins are whole multiples of this: exact even as 32-bit floats
+var origin_x := 0.0                  # scene origin in world coordinates
+var origin_z := 0.0
+var _log_origin := "--origin-log" in OS.get_cmdline_user_args()
 
 const HEIGHTMAP_PATH := "res://assets/world/heightmap.r32"
 const META_PATH := "res://assets/world/world_meta.json"
@@ -72,6 +90,47 @@ func ground_height(x: float, z: float) -> float:
 	return maxf(terrain_height(x, z), sea_level)
 
 
+# ---------------- floating origin ----------------
+## Moves the scene origin to world (x, z) (rounded to ORIGIN_CELL). Everything that holds scene positions
+## listens to origin_shifted and moves by -delta.
+func set_origin(x: float, z: float) -> void:
+	x = snappedf(x, ORIGIN_CELL)
+	z = snappedf(z, ORIGIN_CELL)
+	if x == origin_x and z == origin_z:
+		return
+	var delta := Vector3(x - origin_x, 0.0, z - origin_z)
+	origin_x = x
+	origin_z = z
+	RenderingServer.global_shader_parameter_set("world_origin", Vector2(origin_x, origin_z))
+	if _log_origin:
+		print("ORIGIN %.0f %.0f" % [origin_x, origin_z])
+	origin_shifted.emit(delta)
+
+
+## Back to the map centre with no notifications (a new flight builds its scene from scratch).
+func reset_origin() -> void:
+	origin_x = 0.0
+	origin_z = 0.0
+	RenderingServer.global_shader_parameter_set("world_origin", Vector2.ZERO)
+
+
+func to_world(scene_pos: Vector3) -> Vector3:
+	return Vector3(scene_pos.x + origin_x, scene_pos.y, scene_pos.z + origin_z)
+
+
+func to_scene(world_pos: Vector3) -> Vector3:
+	return Vector3(world_pos.x - origin_x, world_pos.y, world_pos.z - origin_z)
+
+
+## Ground under a scene position (node coordinates).
+func scene_ground_height(x: float, z: float) -> float:
+	return ground_height(x + origin_x, z + origin_z)
+
+
+func scene_is_water(x: float, z: float) -> bool:
+	return is_water(x + origin_x, z + origin_z)
+
+
 func is_water(x: float, z: float) -> bool:
 	return terrain_height(x, z) < sea_level
 
@@ -95,7 +154,9 @@ func spawn_transform(index: int = 0) -> Transform3D:
 
 ## ILS-style guidance to the runway the aircraft is lined up for (empty if none).
 ## loc_dev > 0: aircraft is right of the centreline. gs_dev > 0: aircraft is above the glideslope.
-func approach_guidance(pos: Vector3, heading: Vector3) -> Dictionary:
+## `pos` is a scene position.
+func approach_guidance(scene_pos: Vector3, heading: Vector3) -> Dictionary:
+	var pos := to_world(scene_pos)
 	var best := {}
 	var best_dist := INF
 	for r in runways:

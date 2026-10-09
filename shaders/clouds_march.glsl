@@ -48,6 +48,7 @@ float height_profile(float h) {
 }
 
 float cloud_density(vec3 pos, bool cheap, float detail_amt) {
+	pos.xz += vec2(p.amb_bottom.w, p.misc2.w);    // floating origin: sample the clouds at their map position
 	vec2 wind = p.shape.zw;
 	float hv = texture(weather_tex, (pos.xz + wind) / 9000.0 + vec2(0.37, 0.11)).r - 0.5;
 	float tv = texture(weather_tex, (pos.xz + wind) / 4200.0 + vec2(0.71, 0.53)).r - 0.5;

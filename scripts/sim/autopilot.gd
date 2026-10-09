@@ -326,7 +326,7 @@ static func tail_guard(fm, spec, pitch_in: float) -> float:
 	if pitch_in <= 0.0 or fm.crashed:
 		return pitch_in
 	var tp: Vector3 = fm.pos + fm.rot * spec.tail_probe
-	var th: float = tp.y - float(fm.ground_height.call(tp.x, tp.z))
+	var th: float = tp.y - float(fm._gh(tp.x, tp.z))
 	if th > 6.0:
 		return pitch_in
 	# lever arm: rotation is about the main wheels on the runway, about the centre of gravity in the air

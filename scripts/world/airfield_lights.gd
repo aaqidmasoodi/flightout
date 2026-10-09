@@ -89,7 +89,7 @@ func _process(_delta: float) -> void:
 	var ac := get_tree().get_first_node_in_group("player_aircraft") as Node3D
 	if ac == null:
 		return
-	var eye := ac.global_position + Vector3.UP * 1.3
+	var eye := WorldData.to_world(ac.global_position) + Vector3.UP * 1.3     # PAPI boxes are kept in map coordinates
 	for p in _papi:
 		var v: Vector3 = eye - p.pos
 		var elev := rad_to_deg(atan2(v.y, Vector2(v.x, v.z).length()))

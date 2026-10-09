@@ -7,7 +7,7 @@ extends RefCounted
 ##                     and the last input tick the server applied for it (for reconciliation).
 ## Channel 0 carries unreliable state (inputs, snapshots); channel 1 carries reliable events (join, leave, weather).
 
-const VERSION := 2                     # 2: avionics master mode in the input toggles and the state
+const VERSION := 3                     # 2: avionics master mode in the input toggles and the state; 3: floating origin (jet frames)
 const DEFAULT_PORT := 27015
 const MAX_PLAYERS := 16
 const TICK_RATE := 120                 # simulation ticks per second (2 substeps each = 240 Hz physics)
@@ -137,7 +137,7 @@ static func _get_val(b: StreamPeerBuffer):
 
 
 # ------------------------------------------------------------------ compact jet (everyone else)
-## About 56 bytes a jet: exact position and velocity, quantised orientation, rates and surfaces.
+## About 64 bytes a jet: exact position and velocity, quantised orientation, rates and surfaces.
 
 const FLAG_GEAR := 1
 const FLAG_WOW := 2
@@ -154,6 +154,7 @@ const FLAG_RADOME := 256
 static func put_jet(b: StreamPeerBuffer, id: int, sim_tick: int, fm) -> void:
 	b.put_u8(id)
 	b.put_u32(sim_tick)
+	b.put_32(roundi(fm.ox)); b.put_32(roundi(fm.oz))     # the jet's frame (whole ORIGIN_CELLs, exact as ints)
 	b.put_float(fm.pos.x); b.put_float(fm.pos.y); b.put_float(fm.pos.z)
 	b.put_float(fm.vel.x); b.put_float(fm.vel.y); b.put_float(fm.vel.z)
 	var q: Quaternion = fm.rot.get_rotation_quaternion()
@@ -192,7 +193,9 @@ static func get_jet(b: StreamPeerBuffer) -> Dictionary:
 	var d := {}
 	d.id = b.get_u8()
 	d.t = b.get_u32()
-	d.pos = Vector3(b.get_float(), b.get_float(), b.get_float())
+	d.ox = float(b.get_32())
+	d.oz = float(b.get_32())
+	d.pos = Vector3(b.get_float(), b.get_float(), b.get_float())     # in the jet's frame: world = pos + (ox, 0, oz)
 	d.vel = Vector3(b.get_float(), b.get_float(), b.get_float())
 	d.rot = Quaternion(b.get_16() / 32767.0, b.get_16() / 32767.0, b.get_16() / 32767.0, b.get_16() / 32767.0).normalized()
 	d.omega = Vector3(b.get_16() / 4096.0, b.get_16() / 4096.0, b.get_16() / 4096.0)

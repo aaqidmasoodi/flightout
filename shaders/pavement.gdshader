@@ -10,6 +10,8 @@ uniform float joint_width = 0.03;       // half width of a joint, metres
 uniform float roughness_base = 0.88;
 uniform sampler2D noise_tex : filter_linear_mipmap_anisotropic, repeat_enable;
 
+global uniform vec2 world_origin;     // floating origin (scripts/world/world_data.gd)
+
 varying vec3 wp;
 
 void vertex() {
@@ -23,7 +25,7 @@ float joint(float d, float w) {
 }
 
 void fragment() {
-	vec2 p = wp.xz;
+	vec2 p = wp.xz + world_origin;
 	float n1 = texture(noise_tex, p * 0.011).r;
 	float n2 = texture(noise_tex, p * 0.093 + 0.37).r;
 	float n3 = texture(noise_tex, p * 0.71 + 0.71).r;

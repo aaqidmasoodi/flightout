@@ -318,7 +318,7 @@ func _page_gnd() -> void:
 	var pos: Vector3 = ac.global_position
 	var v: Vector3 = ac.velocity
 	var g := 9.81
-	var ground: float = WorldData.ground_height(pos.x, pos.z)
+	var ground: float = WorldData.scene_ground_height(pos.x, pos.z)
 	var h := pos.y - ground
 	var t := 0.0
 	if h > 1.0:
