@@ -14,16 +14,23 @@ layout(push_constant, std430) uniform PC {
 	vec4 a;            // x size, y mode (0 shape, 1 detail), z seed
 } pc;
 
-float h31(vec3 c) {
-	c = fract(c * vec3(0.1031, 0.1030, 0.0973) + pc.a.z * 0.0137);
-	c += dot(c, c.yxz + 33.33);
-	return fract((c.x + c.y) * c.z);
+// integer hash (PCG 3D, Jarzynski & Olano): no correlation between the axes (the float hash before nearly shared
+// its x and y constants, which layered the noise along one axis)
+uvec3 pcg3d(uvec3 v) {
+	v = v * 1664525u + 1013904223u;
+	v.x += v.y * v.z;
+	v.y += v.z * v.x;
+	v.z += v.x * v.y;
+	v ^= v >> 16u;
+	v.x += v.y * v.z;
+	v.y += v.z * v.x;
+	v.z += v.x * v.y;
+	return v;
 }
 
 vec3 h33(vec3 c) {
-	c = fract(c * vec3(0.1031, 0.1030, 0.0973) + pc.a.z * 0.0137);
-	c += dot(c, c.yxz + 33.33);
-	return fract((c.xxy + c.yxx) * c.zyx);
+	uvec3 u = uvec3(ivec3(floor(c)) + 4096) + uvec3(uint(pc.a.z) * 7919u);
+	return vec3(pcg3d(u)) * (1.0 / 4294967295.0);
 }
 
 // tiling gradient noise with `period` cells across the volume

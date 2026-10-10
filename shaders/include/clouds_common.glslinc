@@ -102,8 +102,9 @@ float density_in(vec3 mp, Column c, float lod, float detail_amt, out float h_out
 	vec2 wq = qx * 0.15 + 0.13;
 	vec2 wv = textureLod(shape_tex, vec3(wq.x, 0.41, wq.y), 3.0).gb;
 	qx += (wv - 0.47) * 0.25;
-	// the noise stretched upright: convection builds towers taller than they are wide, not round blobs
-	vec3 q = vec3(qx.x, mp.y / (SHAPE_SCALE * ((p.ranges.w > 8.5 && p.ranges.w < 9.5) ? 1.0 : 1.5)), qx.y);   // (debug 9: not upright)
+	// (not stretched upright: that magnified the noise's layering along its height into ripples up every tower; the
+	// towers come from the profile and the clumping instead)
+	vec3 q = vec3(qx.x, mp.y / SHAPE_SCALE, qx.y);
 	vec4 s = textureLod(shape_tex, q, lod);
 	float wf = s.g * 0.625 + s.b * 0.25 + s.a * 0.125;
 	float base_shape = remap(s.r, wf - 1.0, 1.0, 0.0, 1.0);
