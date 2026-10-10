@@ -221,7 +221,7 @@ func _show_fold() -> void:
 	_fold_shown = _fold
 	var a := deg_to_rad(_fold_deg) * smoothstep(0.0, 1.0, _fold)
 	for m in _mirrors:
-		(m.pivot as Node3D).transform.basis = (m.basis as Basis) * Basis(Vector3.RIGHT, -a)
+		(m.pivot as Node3D).transform.basis = (m.basis as Basis) * Basis(Vector3.RIGHT, a)
 	var was := _on
 	_on = _fold < 0.999
 	if _on != was:
