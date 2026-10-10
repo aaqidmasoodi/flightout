@@ -2,8 +2,8 @@
 ; Build: run installer\build_windows.bat, or ISCC installer\flightout.iss after exporting the game to build\windows.
 
 #define AppName "FlightOut"
-#define AppVersion "0.3.0"
-#define AppVersionLabel "0.3.0 Alpha"
+#define AppVersion "0.3.1"
+#define AppVersionLabel "0.3.1 Alpha"
 #define AppPublisher "Yembera"
 #define AppURL "https://flightout.app"
 #define AppExe "FlightOut.exe"
