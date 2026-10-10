@@ -83,7 +83,9 @@ void main() {
 				if (has && hhas) {
 					match = 1.0 - smoothstep(0.04, 0.2, abs(hd - d.z) / max(d.z, 1.0));
 				} else if (has != hhas) {
-					match = 0.35;             // cloud edge appearing or leaving: clip, but keep some history
+					// at a cloud's edge the march hits or misses from frame to frame (that is the noise being
+					// averaged): keep the history; the colour clip still removes a cloud that really left
+					match = 0.8;
 				}
 				float k = mix(1.25, 3.5, match);
 				h = clip_box(h, m1 - k * sigma, m1 + k * sigma);

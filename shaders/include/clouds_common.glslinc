@@ -36,6 +36,7 @@ float layer_ground(vec2 map_xz) {
 
 // One column of the weather: where the layer is here, how much of it is cloud, and what kind.
 struct Column {
+	vec2 warp;             // where in the shape noise this column samples (see density)
 	float base;            // true heights
 	float top;
 	float cov;             // 0..1 share of the sky that is cloud here
@@ -62,6 +63,10 @@ Column column(vec2 map_xz) {
 	float tower = mix(mix(0.55, 1.3, w.a), 1.0, c.type);
 	c.top = c.base + depth * tower + hv * 0.4 * (1.0 - c.type);
 	c.dens = p.layer.w * mix(0.85, 1.15, w.b);
+	// the shape noise repeats every SHAPE_SCALE: seen from high up, dozens of repeats in a row read as a grid. Its
+	// coordinates are rotated off the map's axes and shifted by the slowly varying weather (a few tiles over tens of
+	// km, so no cloud is visibly stretched), so no two tiles in sight line up.
+	c.warp = (vec2(w.g, w.b) - 0.5) * 2.5;
 	return c;
 }
 
@@ -83,7 +88,9 @@ float density(vec3 mp, float lod, float detail_amt, out float h_out) {
 	if (h <= 0.0 || h >= 1.0 || c.cov <= 0.002) {
 		return 0.0;
 	}
-	vec3 q = vec3(mp.x + p.wind.x, mp.y, mp.z + p.wind.y) / SHAPE_SCALE;
+	vec2 qx = vec2(mp.x + p.wind.x, mp.z + p.wind.y) / SHAPE_SCALE;
+	qx = mat2(vec2(0.866, 0.5), vec2(-0.5, 0.866)) * qx + c.warp;
+	vec3 q = vec3(qx.x, mp.y / SHAPE_SCALE, qx.y);
 	vec4 s = textureLod(shape_tex, q, lod);
 	float wf = s.g * 0.625 + s.b * 0.25 + s.a * 0.125;
 	float base_shape = remap(s.r, wf - 1.0, 1.0, 0.0, 1.0);
@@ -97,7 +104,8 @@ float density(vec3 mp, float lod, float detail_amt, out float h_out) {
 		return 0.0;
 	}
 	if (detail_amt > 0.001) {
-		vec3 dq = vec3(mp.x + p.wind.x * 1.3, mp.y, mp.z + p.wind.y * 1.3) / DETAIL_SCALE;
+		vec2 dx = mat2(vec2(0.5, -0.866), vec2(0.866, 0.5)) * vec2(mp.x + p.wind.x * 1.3, mp.z + p.wind.y * 1.3) / DETAIL_SCALE;
+		vec3 dq = vec3(dx.x, mp.y / DETAIL_SCALE, dx.y);
 		vec4 dt = textureLod(detail_tex, dq, max(lod - 1.0, 0.0));
 		float df = dt.r * 0.625 + dt.g * 0.25 + dt.b * 0.125;
 		// wispy at the base, billowing towards the top
