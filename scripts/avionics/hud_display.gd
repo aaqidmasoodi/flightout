@@ -37,7 +37,14 @@ const DES_TOP := 4.6
 const DES_BOT := -5.3
 
 var ac: Node3D
+## The jet's attitude as drawn this frame (interpolated), set by the cockpit before each redraw: the combiner glass
+## maps the texture with exactly this basis, so every symbol drawn from it sits exactly on the world.
+var render_basis := Basis()
+var _have_basis := false
 var _t := 0.0
+var _fd_trk := 0.0                          # flight director: filtered commanded track and flight path angle (rad)
+var _fd_gam := 0.0
+var _fd_on := false
 var _font: Font
 var _font_b: Font
 
@@ -49,9 +56,25 @@ func _ready() -> void:
 	_font_b = UI.tabular("Bold")
 
 
-func tick(delta: float) -> void:
+func tick(delta: float, basis: Basis) -> void:
 	_t += delta
+	render_basis = basis
+	_have_basis = true
+	_update_fd(delta)
 	queue_redraw()
+
+
+func _rb() -> Basis:
+	return render_basis if _have_basis else (ac.fm.rot as Basis).orthonormalized()
+
+
+## A world direction -> degrees right / up of boresight, exactly as the combiner shader maps the texture
+## (INF when it is behind).
+func _dir_deg(d: Vector3) -> Vector2:
+	var l := _rb().transposed() * d
+	if l.z > -0.02:
+		return Vector2(INF, INF)
+	return Vector2(rad_to_deg(atan2(l.x, -l.z)), rad_to_deg(atan2(l.y, -l.z)))
 
 
 # ------------------------------------------------------------------ helpers
@@ -81,7 +104,7 @@ func _box(c: Vector2, w: float, h: float) -> void:
 
 
 func _attitude() -> Array:
-	var b: Basis = ac.fm.rot
+	var b: Basis = _rb()
 	var fwd := -b.z
 	var pitch := rad_to_deg(asin(clampf(fwd.y, -1.0, 1.0)))
 	var bank := rad_to_deg(atan2(-b.x.y, b.y.y))
@@ -93,8 +116,8 @@ func _fpm() -> Vector2:
 	var v: Vector3 = ac.velocity
 	if v.length() < 15.0:
 		return Vector2.ZERO
-	var l: Vector3 = ac.fm.rot.inverse() * v
-	return Vector2(rad_to_deg(atan2(l.x, -l.z)), rad_to_deg(atan2(l.y, -l.z)))
+	var f := _dir_deg(v.normalized())
+	return Vector2.ZERO if f.x == INF else f
 
 
 ## true when the player flies in knots and feet (the same setting the flight data panel follows)
@@ -164,40 +187,117 @@ func _heading_tape(el: float) -> void:
 	draw_line(c + Vector2(0, 22), c + Vector2(0, 40), GREEN, LW)
 
 
-func _pitch_ladder(step := 5.0, max_lines := 12) -> void:
-	var at: Array = _attitude()
-	var pitch: float = at[0]
-	var bank: float = at[1]
-	var c := _deg(0.0, 0.0)
-	draw_set_transform(c, deg_to_rad(-bank), Vector2.ONE)
-	var p0 := floorf((pitch - 12.0) / step) * step
-	var p := p0
-	while p <= pitch + 12.0:
-		var y := -(p - pitch) * PPD
+## Pitch ladder and horizon, conformal and exact: each rung is placed where the real world direction at that
+## elevation (on the nose's heading) is seen through the combiner, and laid along the true horizontal there, so the
+## horizon line lies on the real horizon at any pitch and bank.
+func _pitch_ladder(step := 5.0, _max_lines := 12) -> void:
+	var b := _rb()
+	var fwd := -b.z
+	var pitch := rad_to_deg(asin(clampf(fwd.y, -1.0, 1.0)))
+	# the nose's heading (near the vertical: the way the canopy faces over the top)
+	var hv := Vector2(fwd.x, fwd.z)
+	if hv.length() < 0.05:
+		var t := -b.y if fwd.y > 0.0 else b.y
+		hv = Vector2(t.x, t.z)
+	var psi := atan2(hv.x, -hv.y)
+	var right := Vector3(cos(psi), 0.0, sin(psi))
+	var p := floorf((pitch - 14.0) / step) * step
+	while p <= pitch + 14.0:
+		if absf(p) >= 90.0:
+			p += step
+			continue
+		var pr := deg_to_rad(p)
+		var c := Vector3(sin(psi) * cos(pr), sin(pr), -cos(psi) * cos(pr))
+		var dc := _dir_deg(c)
+		var de := _dir_deg((c + right * 0.004).normalized())
+		var dt := _dir_deg(Vector3(sin(psi) * cos(pr - signf(p) * 0.004), sin(pr - signf(p) * 0.004), -cos(psi) * cos(pr - signf(p) * 0.004)).normalized()) if p != 0.0 else dc
+		if dc.x == INF or de.x == INF or dt.x == INF:
+			p += step
+			continue
+		var P := _deg(dc.x, dc.y)
+		var u := (_deg(de.x, de.y) - P).normalized()           # along the rung, to the right
+		var tk := (_deg(dt.x, dt.y) - P).normalized() if p != 0.0 else Vector2.ZERO   # towards the horizon
 		if p == 0.0:
-			# horizon: long line with a gap
-			draw_line(Vector2(-4.6 * PPD, y), Vector2(-1.2 * PPD, y), GREEN, LW)
-			draw_line(Vector2(1.2 * PPD, y), Vector2(4.6 * PPD, y), GREEN, LW)
+			draw_line(P - u * 4.6 * PPD, P - u * 1.2 * PPD, GREEN, LW)
+			draw_line(P + u * 1.2 * PPD, P + u * 4.6 * PPD, GREEN, LW)
 		else:
 			var w := 2.2 * PPD
 			var gap := 0.9 * PPD
-			var tick := 10.0 if p > 0 else -10.0
-			if p > 0:
-				draw_line(Vector2(-w, y), Vector2(-gap, y), GREEN, LW)
-				draw_line(Vector2(gap, y), Vector2(w, y), GREEN, LW)
+			if p > 0.0:
+				draw_line(P - u * w, P - u * gap, GREEN, LW)
+				draw_line(P + u * gap, P + u * w, GREEN, LW)
 			else:
 				# below the horizon: dashed
 				for k in 3:
-					var a := -w + k * (w - gap) / 3.0
-					draw_line(Vector2(a, y), Vector2(a + (w - gap) / 5.0, y), GREEN, LW)
-					draw_line(Vector2(-a - (w - gap) / 5.0, y), Vector2(-a, y), GREEN, LW)
-			draw_line(Vector2(-gap, y), Vector2(-gap, y + tick), GREEN, LW)
-			draw_line(Vector2(gap, y), Vector2(gap, y + tick), GREEN, LW)
+					var a := w - k * (w - gap) / 3.0
+					var dl := (w - gap) / 5.0
+					draw_line(P - u * a, P - u * (a - dl), GREEN, LW)
+					draw_line(P + u * a, P + u * (a - dl), GREEN, LW)
+			draw_line(P - u * gap, P - u * gap + tk * 10.0, GREEN, LW)
+			draw_line(P + u * gap, P + u * gap + tk * 10.0, GREEN, LW)
 			var lbl := str(int(absf(p)))
-			_text(Vector2(-w - 30, y), lbl, 28)
-			_text(Vector2(w + 30, y), lbl, 28)
+			_text(P - u * (w + 30.0), lbl, 28)
+			_text(P + u * (w + 30.0), lbl, 28)
 		p += step
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Boresight (the "W"): where the nose points. The flight path marker's offset from it is your angle of attack
+## (below) and sideslip and wind drift (to the side).
+func _boresight() -> void:
+	var c := _deg(0.0, 0.0)
+	draw_polyline(PackedVector2Array([c + Vector2(-30, 0), c + Vector2(-16, 0), c + Vector2(-8, 10), c,
+		c + Vector2(8, 10), c + Vector2(16, 0), c + Vector2(30, 0)]), GREEN, LW * 0.8)
+
+
+## Flight director (landing): on an ILS approach with the gear down, a cue showing the flight path to fly to join and
+## hold the localizer and the 3 degree glideslope. Put the flight path marker on the cue and keep it there: the
+## cue leads you onto the centreline and the slope smoothly, and sits on the glideslope's own path once you are on it.
+## Computed from where you are against the beam (not from the needles alone), so it does not wander or overshoot.
+const FD_T_LAT := 14.0            # s to take out a lateral offset (sets how firmly it turns you onto the centreline)
+const FD_T_VERT := 7.0            # s to take out a height error against the slope
+const FD_MAX_INTERCEPT := deg_to_rad(30.0)
+
+
+func _update_fd(delta: float) -> void:
+	var g: Dictionary = {}
+	if ac.get("gear_down") and not ac.get("wow"):
+		g = WorldData.approach_guidance(ac.global_position, -_rb().z)
+	if g.is_empty():
+		_fd_on = false
+		return
+	var v: float = maxf((ac.velocity as Vector3).length(), 50.0)
+	var dir: Vector3 = g.dir
+	var course := atan2(dir.x, -dir.z)
+	var along: float = g.dist
+	var herr: float = float(g.height) - along * tan(deg_to_rad(WorldData.GLIDESLOPE_DEG))
+	var trk := course - clampf(atan(float(g.lateral) / (v * FD_T_LAT)), -FD_MAX_INTERCEPT, FD_MAX_INTERCEPT)
+	var gam := deg_to_rad(-WorldData.GLIDESLOPE_DEG) - clampf(atan(herr / (v * FD_T_VERT)), deg_to_rad(-3.0), deg_to_rad(4.0))
+	if not _fd_on:
+		_fd_trk = trk
+		_fd_gam = gam
+		_fd_on = true
+	var k := 1.0 - exp(-delta / 0.4)      # a little smoothing against height and position noise
+	_fd_trk += wrapf(trk - _fd_trk, -PI, PI) * k
+	_fd_gam += (gam - _fd_gam) * k
+	set_meta("fd", g)
+
+
+func _flight_director() -> void:
+	if not _fd_on:
+		return
+	var d := Vector3(sin(_fd_trk) * cos(_fd_gam), sin(_fd_gam), -cos(_fd_trk) * cos(_fd_gam))
+	var f := _dir_deg(d)
+	if f.x == INF:
+		return
+	var p := _deg(clampf(f.x, -WIN_AZ + 0.6, WIN_AZ - 0.6), clampf(f.y, WIN_BOT + 0.6, WIN_TOP - 0.6))
+	draw_arc(p, 6.5, 0, TAU, 20, GREEN, LW)
+	draw_circle(p, 2.2, GREEN)
+	var g: Dictionary = get_meta("fd", {})
+	if not g.is_empty():
+		var dist: float = g.dist
+		var txt := ("%.1f NM" % (dist / 1852.0)) if _imperial() else ("%.1f KM" % (dist / 1000.0))
+		_text(_dp(4.6, -4.2), "ILS %s" % g.name, 26, HORIZONTAL_ALIGNMENT_CENTER, true)
+		_text(_dp(4.6, -3.6), txt, 24)
 
 
 func _fpm_symbol() -> Vector2:
@@ -244,6 +344,8 @@ func _mode_label(s: String) -> void:
 func _page_nav() -> void:
 	_heading_tape(WIN_TOP - 0.75)
 	_pitch_ladder(5.0)
+	_boresight()
+	_flight_director()
 	_fpm_symbol()
 	_common_boxes()
 	_readouts(-WIN_AZ, -2.4)
@@ -313,6 +415,7 @@ func _page_wvr() -> void:
 func _page_gnd() -> void:
 	_heading_tape(WIN_TOP - 0.75)
 	_pitch_ladder(5.0)
+	_boresight()
 	var fp := _fpm_symbol()
 	# CCIP: where a released bomb would hit the ground (vacuum ballistics), drawn with its fall line
 	var pos: Vector3 = ac.global_position
@@ -325,7 +428,7 @@ func _page_gnd() -> void:
 		# solve h + v.y t - g t^2 / 2 = 0 for the positive root
 		t = (v.y + sqrt(maxf(v.y * v.y + 2.0 * g * h, 0.0))) / g
 	var impact := pos + Vector3(v.x * t, -h, v.z * t)
-	var l: Vector3 = ac.fm.rot.inverse() * (impact - pos)
+	var l: Vector3 = _rb().transposed() * (impact - pos)
 	if l.z < -1.0:
 		var az := rad_to_deg(atan2(l.x, -l.z)); var el := rad_to_deg(atan2(l.y, -l.z))
 		var pip := _deg(clampf(az, -WIN_AZ + 0.5, WIN_AZ - 0.5), clampf(el, WIN_BOT + 0.5, WIN_TOP - 0.5))

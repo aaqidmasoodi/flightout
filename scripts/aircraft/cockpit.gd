@@ -1260,10 +1260,12 @@ func _update_hud(delta: float) -> void:
 		return
 	# full rate in the cockpit; from outside the HUD is a few pixels, a few updates a second is plenty
 	_hud_timer += delta
+	# the interpolated basis, the same one the cockpit and the eye are drawn with, so symbols never swim; the
+	# symbology is drawn from this same basis, so the two agree exactly
+	var b: Basis = ac.get_global_transform_interpolated().basis if ac.is_physics_interpolated_and_enabled() else ac.global_basis
+	b = b.orthonormalized()
 	if _inside or _hud_timer > 0.25:
-		_hud.tick(_hud_timer)
+		_hud.tick(_hud_timer, b)
 		_hud_timer = 0.0
 		_hud_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
-	# the interpolated basis, the same one the cockpit and the eye are drawn with, so symbols never swim
-	var b: Basis = ac.get_global_transform_interpolated().basis if ac.is_physics_interpolated_and_enabled() else ac.global_basis
-	_hud_mat.set_shader_parameter("to_aircraft", b.orthonormalized().inverse())
+		_hud_mat.set_shader_parameter("to_aircraft", b.inverse())

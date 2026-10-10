@@ -238,7 +238,8 @@ func approach_guidance(scene_pos: Vector3, heading: Vector3) -> Dictionary:
 		var gs := atan2(height, along)
 		if along < best_dist:
 			best_dist = along
-			best = {"name": r.name, "dist": along, "loc_dev": rad_to_deg(loc), "gs_dev": rad_to_deg(gs) - GLIDESLOPE_DEG, "height": height}
+			best = {"name": r.name, "dist": along, "loc_dev": rad_to_deg(loc), "gs_dev": rad_to_deg(gs) - GLIDESLOPE_DEG, "height": height,
+				"dir": dir, "lateral": lateral}
 	return best
 
 

@@ -735,7 +735,8 @@ func _snap_gear_down() -> void:
 
 ## Puts the jet on a 3 degree final approach, 7 km out, configured to land, to the runway end nearest to the jet.
 ## (To be reworked: the player picks the airfield and runway.)
-func practice_approach() -> void:
+## offset: development only (--dev-approach=right,up in metres), starts off the beam to test the flight director.
+func practice_approach(offset := Vector2.ZERO) -> void:
 	if WorldData.runways.is_empty():
 		return
 	var rwy: Dictionary = WorldData.runways[0]
@@ -749,6 +750,7 @@ func practice_approach() -> void:
 	var dir: Vector3 = rwy.dir
 	var aim: Vector3 = rwy.threshold + dir * WorldData.AIM_DISTANCE
 	var start := aim - dir * PRACTICE_DISTANCE + Vector3(0.0, PRACTICE_DISTANCE * tan(GLIDESLOPE) + spec.gear_height, 0.0)
+	start += dir.cross(Vector3.UP).normalized() * offset.x + Vector3(0.0, offset.y, 0.0)
 	var path := dir * cos(GLIDESLOPE) + Vector3(0.0, -sin(GLIDESLOPE), 0.0)
 	var yaw := atan2(-dir.x, -dir.z)
 	fm.reset(Transform3D(Basis(Vector3.UP, yaw) * Basis.from_euler(Vector3(deg_to_rad(5.0), 0.0, 0.0)), start), 0.0, false)

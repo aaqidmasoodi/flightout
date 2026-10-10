@@ -80,6 +80,11 @@ func _ready() -> void:
 	aircraft.place(aircraft.spawn)
 	if "--air-start" in OS.get_cmdline_user_args():   # development: start flying (with --start-pos / --alt / --start-hdg)
 		aircraft.air_start.call_deferred(aircraft.spawn, 230.0)
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--dev-approach"):          # development: start on a practice approach (=right,up offset in m)
+			var v := arg.trim_prefix("--dev-approach").trim_prefix("=").split(",")
+			var off := Vector2(v[0].to_float(), v[1].to_float()) if v.size() == 2 else Vector2.ZERO
+			aircraft.practice_approach.call_deferred(off)
 	if Game.online:
 		Game.client.aircraft = aircraft
 		Game.client.world_root = self
