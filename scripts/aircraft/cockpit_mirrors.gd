@@ -8,7 +8,11 @@ extends Node
 ## The pictures are taken from the design eye point and do not move when you look around (only when the jet moves),
 ## and they are slightly convex (wider than a flat mirror of that size would show) so the wingtips fit in. Only the
 ## world and the jet's outside are reflected, never the cockpit interior. The pictures are re-rendered in turn, 12
-## times a second each, and only while you are in the cockpit, the mirrors are switched on and the mirror is on screen.
+## times a second each, and only while you are in the cockpit, the mirrors are unfolded and the mirror is on screen.
+##
+## Folding: like the HUD sun shade, each mirror swings up on a hinge along its outer edge, out of the way against the
+## canopy (key: toggle_mirrors; the graphics setting decides whether they start unfolded, folded on Low and Medium).
+## Folded, nothing is rendered for them at all.
 
 const GLASS_SHADER := preload("res://shaders/cockpit/mirror_glass.gdshader")
 const PIXELS_PER_M := 1100.0                 # reflection picture resolution (a 22 cm mirror: 242 pixels)
@@ -28,10 +32,12 @@ const BEZEL := 0.006
 # From the eye (0, 1.18, -5.5) the fin tips are about 13 degrees out and 16 up, the wingtips 49 out and 8 down.
 const MIRRORS := [
 	[0.0, 0.26, 0.075, Vector3(0.0, 0.09, 1.0), 46.0],     # both fins and the spine, the sky above and behind
-	[-62.0, 0.22, 0.07, Vector3(-0.64, 0.0, 1.0), 46.0], # left: from the left fin out to the left wingtip
-	[62.0, 0.22, 0.07, Vector3(0.64, 0.0, 1.0), 46.0],   # right: from the right fin out to the right wingtip
+	[-62.0, 0.22, 0.07, Vector3(-0.70, -0.05, 1.0), 60.0], # left: from the left fin out to the left wingtip
+	[62.0, 0.22, 0.07, Vector3(0.70, -0.05, 1.0), 60.0],   # right: from the right fin out to the right wingtip
 ]
 const NEAR := 0.35                           # clears the pilot's own head and shoulders
+const FOLD_DEG := 95.0                       # how far a mirror swings up when folded
+const FOLD_TIME := 0.6                       # seconds to fold or unfold
 
 var ac: Node3D
 var _mirrors: Array = []                     # {glass, viewport, camera, material, centre, x, y, n (canopy-root space), size}
@@ -42,6 +48,8 @@ var _on := true
 var _dev_dir := ""                           # development: --dev-mirror-shot=<dir> saves each mirror's picture
 var _dev_t := 0.0
 var _eye := Vector3.ZERO                     # design eye point (aircraft space): where the pictures are taken from
+var _fold := 0.0                             # 0 unfolded .. 1 folded (shown)
+var _fold_shown := -1.0
 
 
 ## Middle of the arch's band at an angle from the top (metres from its centre line).
@@ -85,22 +93,29 @@ func build(aircraft: Node3D, root: Node3D, pads: MeshInstance3D, eye: Vector3, m
 		# in the canopy root's space, so the mirrors move with the canopy
 		var rb := to_root.basis * basis
 		var rc := to_root * mount
-		var m := {"centre": rc, "size": size, "look": look, "fov": float(spec[4])}
+		# the picture's "up" is the glass's own up (as in a real mirror, a tilted mirror shows a tilted slice)
+		var m := {"centre": rc, "size": size, "look": look, "up": y, "fov": float(spec[4]), "basis": rb}
 		# housing: a dark bezel around and behind the glass, deep enough to reach back to the arch at both ends
 		var frame := MeshInstance3D.new()
 		var depth := STANDOFF + 0.022
 		frame.mesh = _rounded_box(size.x + BEZEL * 2.0, size.y + BEZEL * 2.0, depth, CORNER + BEZEL)
-		frame.transform = Transform3D(rb, rc - rb.z.normalized() * (depth * 0.5 + 0.0005))
+		# the hinge: along the housing's outer edge, halfway back; the mirror swings up about it
+		var hinge := Vector3(0.0, size.y * 0.5 + BEZEL, -depth * 0.5)
+		var pivot := Node3D.new()
+		pivot.transform = Transform3D(rb, rc + rb * hinge)
+		_root.add_child(pivot)
+		m.pivot = pivot
+		frame.transform = Transform3D(Basis(), Vector3(0.0, 0.0, -(depth * 0.5 + 0.0005)) - hinge)
 		frame.set_surface_override_material(0, material_of.call("CP_PaintDark"))
 		var glass := MeshInstance3D.new()
 		var q := QuadMesh.new()
 		q.size = size
 		glass.mesh = q
-		glass.transform = Transform3D(rb, rc + rb.z.normalized() * 0.0005)
+		glass.transform = Transform3D(Basis(), Vector3(0.0, 0.0, 0.0005) - hinge)
 		for mi in [frame, glass]:
 			(mi as MeshInstance3D).layers = layer
 			(mi as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			_root.add_child(mi)
+			pivot.add_child(mi)
 			made.append(mi)
 		# the reflection's own small view of the world
 		var vp := SubViewport.new()
@@ -137,24 +152,43 @@ func build(aircraft: Node3D, root: Node3D, pads: MeshInstance3D, eye: Vector3, m
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--dev-mirror-shot="):
 			_dev_dir = arg.trim_prefix("--dev-mirror-shot=")
-	_apply_setting()
-	Settings.changed.connect(func(k, _v):
-		if k == "graphics/mirrors":
-			_apply_setting())
+	# the setting decides how they start (and folds or unfolds them when it is changed); the key does it in flight
+	ac.set("mirrors_folded", not bool(Settings.get_value("graphics/mirrors")))
+	_fold = 1.0 if ac.get("mirrors_folded") else 0.0
+	_show_fold()
+	Settings.changed.connect(func(k, v):
+		if k == "graphics/mirrors" and is_instance_valid(ac):
+			ac.set("mirrors_folded", not bool(v)))
 	return made
 
 
-func _apply_setting() -> void:
-	_on = bool(Settings.get_value("graphics/mirrors"))
+## The mirrors swung up about their hinges by the fold amount (eased, like the sun shade).
+func _show_fold() -> void:
+	if _fold == _fold_shown:
+		return
+	_fold_shown = _fold
+	var a := deg_to_rad(FOLD_DEG) * smoothstep(0.0, 1.0, _fold)
 	for m in _mirrors:
-		(m.material as ShaderMaterial).set_shader_parameter("live", _on)
-		if not _on:
-			(m.viewport as SubViewport).render_target_update_mode = SubViewport.UPDATE_DISABLED
+		var pv := m.pivot as Node3D
+		pv.transform.basis = (m.basis as Basis) * Basis(Vector3.RIGHT, -a)
+	var was := _on
+	_on = _fold < 0.999
+	if _on != was:
+		for m in _mirrors:
+			(m.material as ShaderMaterial).set_shader_parameter("live", _on)
+			if not _on:
+				(m.viewport as SubViewport).render_target_update_mode = SubViewport.UPDATE_DISABLED
 
 
-## Every frame from the cockpit: renders one mirror's reflection when its turn is due.
+## Every frame from the cockpit: folds or unfolds the mirrors, and renders one mirror's picture when its turn is due.
 func update(inside: bool, cam: Camera3D, delta: float) -> void:
-	if not _on or not inside or cam == null or _mirrors.is_empty():
+	if _mirrors.is_empty():
+		return
+	var want := 1.0 if ac.get("mirrors_folded") else 0.0
+	if _fold != want:
+		_fold = move_toward(_fold, want, delta / FOLD_TIME)
+		_show_fold()
+	if not _on or not inside or cam == null:
 		return
 	if _dev_dir != "":
 		_dev_t += delta
@@ -184,7 +218,7 @@ func update(inside: bool, cam: Camera3D, delta: float) -> void:
 func _place(m: Dictionary) -> void:
 	var air: Transform3D = ac.get_global_transform_interpolated() if ac.is_physics_interpolated_and_enabled() else ac.global_transform
 	air.basis = air.basis.orthonormalized()
-	var local := Transform3D(Basis.looking_at(m.look as Vector3, Vector3.UP), _eye)
+	var local := Transform3D(Basis.looking_at(m.look as Vector3, m.up as Vector3), _eye)
 	(m.camera as Camera3D).global_transform = air * local
 
 

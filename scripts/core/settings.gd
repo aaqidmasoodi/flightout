@@ -30,7 +30,7 @@ const DEFAULTS := {
 	"graphics/vapour": true,         # wingtip vortices, wing vapour and contrails
 	"graphics/volumetric_clouds": true,   # off: the sky's thin cloud layer only (big saving on weak GPUs)
 	"graphics/display_res": 2,       # cockpit screens' picture size: 0 low (half), 1 medium, 2 high (full)
-	"graphics/mirrors": true,        # cockpit rear-view mirrors (each is a small extra view of the world)
+	"graphics/mirrors": true,        # cockpit rear-view mirrors unfolded at the start (each is a small extra view of the world)
 	"graphics/terrain_detail": 1,    # 0 low (lighter ground shader), 1 high
 	"graphics/draw_distance": 1,     # 0 near, 1 medium, 2 far
 	"hud/telemetry": true,
@@ -214,7 +214,7 @@ const PRESETS := [
 	{"display/render_scale": 0.85, "display/upscaler": 1, "graphics/msaa": 1, "graphics/anisotropic": 3,
 		"graphics/shadows": true, "graphics/shadow_quality": 1, "graphics/ssao": false, "graphics/glow": true,
 		"graphics/trees": true, "graphics/tree_detail": 1, "graphics/forest_density": 1, "graphics/draw_distance": 1, "graphics/clouds": 1,
-		"graphics/volumetric_clouds": true, "graphics/display_res": 1, "graphics/mirrors": true, "graphics/terrain_detail": 1},
+		"graphics/volumetric_clouds": true, "graphics/display_res": 1, "graphics/mirrors": false, "graphics/terrain_detail": 1},
 	# High: the intended look at native resolution.
 	{"display/render_scale": 1.0, "display/upscaler": 0, "graphics/msaa": 1, "graphics/anisotropic": 4,
 		"graphics/shadows": true, "graphics/shadow_quality": 2, "graphics/ssao": true, "graphics/glow": true,
@@ -261,7 +261,7 @@ const DEFAULT_BINDINGS := {
 	"toggle_radar": [KEY_R], "toggle_radome": [KEY_T], "toggle_view": [KEY_V], "toggle_hud": [KEY_H],
 	"practice_approach": [KEY_P], "reset": [KEY_BACKSPACE],
 	"mode_nav": [KEY_1], "mode_bvr": [KEY_2], "mode_wvr": [KEY_3], "mode_gnd": [KEY_4],
-	"toggle_hud_shade": [KEY_U], "toggle_cabin_lights": [KEY_N], "toggle_torch": [KEY_O], "toggle_map": [KEY_M],
+	"toggle_hud_shade": [KEY_U], "toggle_cabin_lights": [KEY_N], "toggle_torch": [KEY_O], "toggle_map": [KEY_M], "toggle_mirrors": [KEY_I],
 	"toggle_names": [KEY_F9], "dev_weapons": [KEY_F5],
 	"ap_master": [KEY_J], "ap_level": [KEY_Y],
 	"ap_alt_up": [KEY_PAGEUP], "ap_alt_down": [KEY_PAGEDOWN],
@@ -279,7 +279,7 @@ const BINDABLE := [
 	["AVIONICS"], ["mode_nav", "Master mode: NAV"], ["mode_bvr", "Master mode: BVR"], ["mode_wvr", "Master mode: WVR"],
 	["mode_gnd", "Master mode: GND (ground attack)"],
 	["toggle_hud_shade", "HUD sun shade"], ["toggle_cabin_lights", "Cockpit lights (instruments and floodlights)"],
-	["toggle_torch", "Flashlight (points where you look)"],
+	["toggle_torch", "Flashlight (points where you look)"], ["toggle_mirrors", "Rear-view mirrors: fold / unfold"],
 	["AUTOPILOT"], ["ap_master", "Autopilot on / off (holds speed, heading and altitude)"], ["ap_level", "Level flight (horizon recovery)"],
 	["ap_alt_up", "Selected altitude up"], ["ap_alt_down", "Selected altitude down"],
 	["ap_hdg_left", "Selected heading left"], ["ap_hdg_right", "Selected heading right"],

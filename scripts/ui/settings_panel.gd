@@ -81,7 +81,7 @@ func _ready() -> void:
 	_choice(p, "Cloud quality", "graphics/clouds", ["Low", "Medium", "High", "Ultra"], [0, 1, 2, 3])
 	_choice(p, "Terrain detail", "graphics/terrain_detail", ["Low", "High"], [0, 1])
 	_choice(p, "Cockpit screens", "graphics/display_res", ["Low", "Medium", "High"], [0, 1, 2])
-	_toggle(p, "Rear-view mirrors", "graphics/mirrors")
+	_toggle(p, "Rear-view mirrors (unfolded)", "graphics/mirrors")
 	Settings.changed.connect(func(key, _v):
 		if String(key).begins_with("graphics/"):
 			for r in _refreshers:
