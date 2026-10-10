@@ -256,6 +256,9 @@ func update(inside: bool, cam: Camera3D, delta: float) -> void:
 		if _dev_t > 2.8:
 			var img := _vp.get_texture().get_image()
 			if img:
+				img.convert(Image.FORMAT_RGBAF)
+				img.linear_to_srgb()
+				img.convert(Image.FORMAT_RGBA8)
 				img.save_png(_dev_dir.path_join("mirror_capture.png"))
 			_dev_dir = ""
 
