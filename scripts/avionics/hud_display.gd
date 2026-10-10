@@ -289,6 +289,8 @@ func _flight_director() -> void:
 	var f := _dir_deg(d)
 	if f.x == INF:
 		return
+	if bool(ac.get("fpm_caged")):
+		f.x -= _fpm().x                    # caged: steer the caged marker onto it (the drift is taken out of both)
 	var p := _deg(clampf(f.x, -WIN_AZ + 0.6, WIN_AZ - 0.6), clampf(f.y, WIN_BOT + 0.6, WIN_TOP - 0.6))
 	draw_arc(p, 6.5, 0, TAU, 20, GREEN, LW)
 	draw_circle(p, 2.2, GREEN)
@@ -300,8 +302,20 @@ func _flight_director() -> void:
 		_text(_dp(4.6, -3.6), txt, 24)
 
 
+## Flight path marker: where the jet is really going over the ground, so in a crosswind it sits off to the
+## downwind side of the boresight by the drift angle (and below it by the angle of attack). Caged (key, as the
+## CAGE switch on real HUDs) it is held on the centre line, showing only the climb or descent, which is easier to
+## read in a strong crosswind; a small ghost marker then shows the real one when the two are more than a degree
+## and a half apart.
 func _fpm_symbol() -> Vector2:
 	var f := _fpm()
+	if bool(ac.get("fpm_caged")):
+		if absf(f.x) > 1.5:
+			var gp := _deg(clampf(f.x, -WIN_AZ + 0.6, WIN_AZ - 0.6), clampf(f.y, WIN_BOT + 0.6, WIN_TOP - 0.6))
+			draw_arc(gp, 7, 0, TAU, 16, GREEN, LW * 0.7)
+			draw_line(gp + Vector2(7, 0), gp + Vector2(16, 0), GREEN, LW * 0.7)
+			draw_line(gp - Vector2(7, 0), gp - Vector2(16, 0), GREEN, LW * 0.7)
+		f.x = 0.0
 	var p := _deg(clampf(f.x, -WIN_AZ + 0.6, WIN_AZ - 0.6), clampf(f.y, WIN_BOT + 0.6, WIN_TOP - 0.6))
 	draw_arc(p, 11, 0, TAU, 24, GREEN, LW)
 	draw_line(p + Vector2(11, 0), p + Vector2(32, 0), GREEN, LW)

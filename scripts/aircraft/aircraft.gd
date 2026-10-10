@@ -65,6 +65,7 @@ var stores = null                      # external stores on the stations (script
 var sensors = null                     # radar and datalink picture for the displays (scripts/avionics/sensors.gd)
 var hud_shade := false                 # HUD sun shade deployed (cockpit only, not simulated)
 var mirrors_folded := false            # rear-view mirrors folded up out of use (cockpit only, not simulated)
+var fpm_caged := false                 # HUD flight path marker caged to the centre line (cockpit only, not simulated)
 var cabin_lights := false              # cockpit night lighting: instrument backlighting and floodlights
 var torch := false                     # the pilot's handheld flashlight (cockpit only, follows the view)
 var _man_pitch := 0.0                  # the pilot's own (smoothed) stick, before the autopilot and tail guard
@@ -493,6 +494,9 @@ func _read_inputs(delta: float) -> void:
 		sim_event.emit("switch", 0.0)
 	if not typing and Input.is_action_just_pressed("toggle_hud_shade"):
 		hud_shade = not hud_shade
+		sim_event.emit("switch", 0.0)
+	if not typing and Input.is_action_just_pressed("toggle_fpm_cage"):
+		fpm_caged = not fpm_caged
 		sim_event.emit("switch", 0.0)
 	if not typing and Input.is_action_just_pressed("toggle_mirrors"):
 		mirrors_folded = not mirrors_folded
