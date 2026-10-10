@@ -321,7 +321,7 @@ void main() {
 				// the shadow map for the rest of the way up
 				float od = 0.0;
 				float reach_l = 0.0;
-				if (t < near_end) {
+				if (t < near_end && (p.ranges.w < 6.5 || p.ranges.w > 7.5)) {     // (debug 7: without the light march)
 					float ls = 60.0;
 					// each sample's own offset along the way (fixed offsets showed as bands at fixed heights)
 					float lj = fract(jitter * 7.13 + float(expensive) * 0.618);
@@ -332,7 +332,9 @@ void main() {
 						ls *= 2.0;
 					}
 				}
-				od += shadow_od(mp + L * reach_l, L);
+				if (p.ranges.w < 5.5 || p.ranges.w > 6.5) {
+					od += shadow_od(mp + L * reach_l, L);     // (debug 6: without the shadow map)
+				}
 				float sl = sun_light(od, cos_t, dens);
 				float self_occ = exp(-dens * 1.4);
 				vec3 amb = mix(p.amb_bottom.rgb, p.amb_top.rgb, hgt) * p.sun_color.w * mix(0.55, 1.0, self_occ);
