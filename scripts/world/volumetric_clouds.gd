@@ -29,7 +29,7 @@ const WEATHER_SEED := 808.0       # fixed: every player sees the same clouds
 const SH0_N := 1024
 const SH0_HALF := 51200.0         # cascade 0: 102 km square, 100 m texels (every cloud the march draws in detail)
 const SH0_ROWS := 64              # cascade 0 is rebuilt continuously into a second copy, 64 rows a frame (a new one
-                                  # every 16 frames), and swapped in whole: no frame rebuilds all of it at once
+                                  # every 16 frames), and copied in whole: no frame rebuilds all of it at once
 const SH1_N := 256
 const SH1_HALF := 204800.0        # cascade 1: 410 km, 1.6 km texels
 const SH_ROWS := 4                # cascade 1 updates a quarter of its rows per frame
@@ -95,11 +95,11 @@ var _shape := RID()
 var _detail := RID()
 var _weather := RID()
 var _generated := false
-var _sh := [RID(), RID()]       # the cascades in use: [0] is the front copy of cascade 0
-var _sh0 := [RID(), RID()]      # cascade 0's two copies: the one in use and the one being built
-var _sh0_front := 0
+var _sh := [RID(), RID()]       # the cascades in use (what the march and the engine's shaders read)
+var _sh0_build := RID()         # cascade 0 being built; copied into _sh[0] when complete (the engine's materials
+                                # hold _sh[0]: swapping the texture under them broke their uniform sets)
 var _sh0_row := 0               # next row of the copy being built
-var _sh0_centre := [Vector2(INF, INF), Vector2(INF, INF)]
+var _sh0_build_centre := Vector2(INF, INF)
 var _sh0_valid := false
 var _sh_info := RID()
 var _sh_centre := [Vector2(INF, INF), Vector2(INF, INF)]
@@ -205,14 +205,11 @@ func _setup() -> void:
 	wf.height = WEATHER_N
 	wf.usage_bits = u | RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT
 	_weather = _rd.texture_create(wf, RDTextureView.new())
-	for i in 2:
-		_sh0[i] = _target(RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, Vector2i(SH0_N, SH0_N))
-	_sh[0] = _sh0[0]
+	_sh[0] = _target(RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, Vector2i(SH0_N, SH0_N))
+	_sh0_build = _target(RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, Vector2i(SH0_N, SH0_N), true)
 	_sh[1] = _target(RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, Vector2i(SH1_N, SH1_N))
 	for i in 2:
-		_rd.texture_clear(_sh0[i], Color(0.0, 0.0, 0.0, 1.0), 0, 1, 0, 1)
-		if i == 1:
-			_rd.texture_clear(_sh[1], Color(0.0, 0.0, 0.0, 1.0), 0, 1, 0, 1)
+		_rd.texture_clear(_sh[i], Color(0.0, 0.0, 0.0, 1.0), 0, 1, 0, 1)
 		for c in 2:
 			var ff := RDTextureFormat.new()
 			ff.format = RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT
@@ -307,7 +304,7 @@ func _notification(what: int) -> void:
 			if (lv as RID).is_valid() and _rd.texture_is_valid(lv):
 				_rd.free_rid(lv)
 		var rids: Array = [_raw_color, _raw_depth, _hist_color[0], _hist_color[1], _hist_depth[0], _hist_depth[1], _repeat_sampler, _clamp_sampler, _point_sampler, _ubo, _layer, _overlay,
-			_shape, _detail, _weather, _sh0[0], _sh0[1], _sh[1], _sh_info, _far[0][0], _far[0][1], _far[1][0], _far[1][1]]
+			_shape, _detail, _weather, _sh[0], _sh0_build, _sh[1], _sh_info, _far[0][0], _far[0][1], _far[1][0], _far[1][1]]
 		if not _cam_pending:
 			rids.append(_cam_buf)      # (a readback may still be reading it: then it goes with the device)
 		for k in _pipes:
@@ -318,13 +315,15 @@ func _notification(what: int) -> void:
 				_rd.free_rid(r)
 
 
-func _target(fmt: int, size: Vector2i) -> RID:
+func _target(fmt: int, size: Vector2i, copy_from := false) -> RID:
 	var f := RDTextureFormat.new()
 	f.format = fmt
 	f.width = size.x
 	f.height = size.y
 	f.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT \
 		| RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT
+	if copy_from:
+		f.usage_bits |= RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT
 	return _rd.texture_create(f, RDTextureView.new())
 
 
@@ -498,21 +497,18 @@ func _shadow_callback(render_data: RenderData) -> void:
 	# so the texels of every copy sit on the same grid and a cloud's shading does not shift when they swap). After a
 	# jump (a respawn), or at the start, the copy is built whole in one frame.
 	var snap0 := 2.0 * SH0_HALF / SH0_N * 32.0
-	if not _sh0_valid or cam_map.distance_to(_sh0_centre[_sh0_front]) > SH0_HALF * 0.5:
-		var bk: int = 1 - _sh0_front
-		_sh0_centre[bk] = (cam_map / snap0).round() * snap0
-		_dispatch("shadow", _model_uniforms() + [_u_image(6, _sh0[bk]), _u_buf(7, _cam_buf)], Vector2i(SH0_N, SH0_N),
-			PackedFloat32Array([0.0, 0.0, 1.0, 0.0, _sh0_centre[bk].x, _sh0_centre[bk].y, SH0_HALF, float(SH0_N)]))
+	if not _sh0_valid or cam_map.distance_to(_sh_centre[0]) > SH0_HALF * 0.5:
+		_sh0_build_centre = (cam_map / snap0).round() * snap0
+		_dispatch("shadow", _model_uniforms() + [_u_image(6, _sh0_build), _u_buf(7, _cam_buf)], Vector2i(SH0_N, SH0_N),
+			PackedFloat32Array([0.0, 0.0, 1.0, 0.0, _sh0_build_centre.x, _sh0_build_centre.y, SH0_HALF, float(SH0_N)]))
 		_sh0_row = SH0_N
 	if _sh0_row >= SH0_N:
-		_sh0_front = 1 - _sh0_front
+		_rd.texture_copy(_sh0_build, _sh[0], Vector3.ZERO, Vector3.ZERO, Vector3(SH0_N, SH0_N, 1), 0, 0, 0, 0)
+		_sh_centre[0] = _sh0_build_centre
 		_sh0_row = 0
 		_sh0_valid = true
-		_sh[0] = _sh0[_sh0_front]
-		shadow0_texture.texture_rd_rid = _sh[0]
 	if _sh0_row == 0:
-		_sh0_centre[1 - _sh0_front] = (cam_map / snap0).round() * snap0
-	_sh_centre[0] = _sh0_centre[_sh0_front]
+		_sh0_build_centre = (cam_map / snap0).round() * snap0
 	# the far-cloud maps: a finished copy takes over, then the next is begun around where the camera is now
 	for c in 2:
 		if _far_row[c] >= FAR_N:
@@ -551,9 +547,8 @@ func _shadow_callback(render_data: RenderData) -> void:
 		_cam_pending = false               # (a readback that never came back: ask again)
 	var read_cam := not _cam_pending and not _no_readback
 	# cascade 0: the next rows of the copy being built (with the camera's own sunlight)
-	var b0: Vector2 = _sh0_centre[1 - _sh0_front]
-	_dispatch("shadow", _model_uniforms() + [_u_image(6, _sh0[1 - _sh0_front]), _u_buf(7, _cam_buf)], Vector2i(SH0_N, SH0_ROWS),
-		PackedFloat32Array([0.0, float(_sh0_row), 1.0, 1.0 if read_cam else 0.0, b0.x, b0.y, SH0_HALF, float(SH0_N)]))
+	_dispatch("shadow", _model_uniforms() + [_u_image(6, _sh0_build), _u_buf(7, _cam_buf)], Vector2i(SH0_N, SH0_ROWS),
+		PackedFloat32Array([0.0, float(_sh0_row), 1.0, 1.0 if read_cam else 0.0, _sh0_build_centre.x, _sh0_build_centre.y, SH0_HALF, float(SH0_N)]))
 	_sh0_row += SH0_ROWS
 	# cascade 1: a quarter of its rows (all of them when it re-centres)
 	var rows1 := 1 if full1 else SH_ROWS
