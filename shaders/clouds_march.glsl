@@ -285,7 +285,7 @@ void main() {
 					continue;
 				}
 			}
-			float cheap = density_in(mp, col, lod, 0.0, hh);
+			float cheap = density_in(mp, col, lod, -1.0, hh);
 			if (fine_left == 0) {
 				if (cheap > 0.0 && t - big > t0 - 1.0) {
 					t = max(t - big, t0);       // step back to the last empty sample, then walk in finely
@@ -308,9 +308,8 @@ void main() {
 			}
 			fine_left = 6;
 			expensive++;
-			float detail_amt = 1.0 - smoothstep(near_end * 0.55, near_end, t);
 			float hgt;
-			float dens = density_in(mp, col, lod, detail_amt, hgt);
+			float dens = density_in(mp, col, lod, 1.0, hgt);
 			// approaching the end of the march, hand over to the far-cloud map (which fades in over the same band)
 			dens *= 1.0 - smoothstep(p.ranges.y * 0.5, p.ranges.y, t);
 			if (dens > 0.0) {

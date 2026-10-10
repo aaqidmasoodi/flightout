@@ -111,26 +111,38 @@ float density_in(vec3 mp, Column c, float lod, float detail_amt, out float h_out
 	base_shape = saturate((base_shape - 0.65) * 4.0);
 	float d = base_shape * profile(h, c.type);
 	// coverage (Nubis): the more cover, the more of the shape becomes cloud
-	d = remap(d, 1.0 - c.cov, 1.0, 0.0, 1.0) * c.cov;
+	// (the shape's share of the cover, 0..1; it is scaled by the cover after the erosion below: eroding the scaled
+	// value ate thin cover away entirely, so scattered cumulus only survived where the erosion was faded out)
+	d = remap(d, 1.0 - c.cov, 1.0, 0.0, 1.0);
 	if (d <= 0.0) {
 		return 0.0;
 	}
-	if (detail_amt > 0.001) {
-		// the detail drifts with the cloud it belongs to (each cloud a rigid shape carried by the wind: detail
-		// sliding over the body read as the clouds jiggling), and rises through it very slowly (p.cam_pos.w: about
-		// 0.1 m/s, a few metres a minute), so the billows still evolve, almost too slowly to notice
+	// Edge erosion by the detail noise, at EVERY distance and in every pass (march, far map, shadow map, light
+	// march), so a cloud has one size and shape whoever looks at it, from wherever: only the sharpness of its edges
+	// changes with distance. Up close the erosion follows the detail's own pattern; as that gets too fine for the
+	// pixel, it blends into the pattern's average (the same amount of cloud eaten away, no pattern). Before, the
+	// erosion faded out with distance instead: far clouds were bigger than near ones, and as you approached a small
+	// cloud it frayed and vanished in front of you.
+	// detail_amt: 1 the real detail where it is sharp; 0 the average only (passes that never resolve it); -1 a
+	// lighter erosion for the march's quick "is there cloud here" test, so it never misses an edge the full sample
+	// would keep.
+	const float M_MEAN = 0.5;             // the detail pattern's average erosion (it lies around 0.47 .. 0.53)
+	float m = M_MEAN;
+	float dlod = lod + 2.0;               // its texels are a quarter of the shape's (420 m / 64 against 3400 m / 128)
+	if (detail_amt > 0.5 && dlod < 2.25) {
+		// the detail drifts with the cloud it belongs to (each cloud a rigid shape carried by the wind), and rises
+		// through it very slowly (p.cam_pos.w: about 0.1 m/s), so the billows still evolve, almost too slowly to see
 		vec2 dx = mat2(vec2(0.5, -0.866), vec2(0.866, 0.5)) * vec2(mp.x + p.wind.x, mp.z + p.wind.y) / DETAIL_SCALE;
 		vec3 dq = vec3(dx.x, (mp.y - p.cam_pos.w) / DETAIL_SCALE, dx.y);
-		// its own level: its texels are a quarter of the shape's (420 m / 64 against 3400 m / 128), so the same
-		// footprint is two levels further down (a sharper level than that aliased into grain at the cloud edges)
-		vec4 dt = textureLod(detail_tex, dq, lod + 2.0);
+		vec4 dt = textureLod(detail_tex, dq, max(dlod, 0.0));
 		float df = dt.r * 0.625 + dt.g * 0.25 + dt.b * 0.125;
 		// wispy at the base, billowing towards the top
-		float m = mix(df, 1.0 - df, saturate(h * 6.0));
-		// erosion only while the detail is sharp: blurred (a coarse mip level), it carves smooth folds, not billows
-		float keep = 1.0 - smoothstep(0.75, 2.25, lod + 2.0);
-		d = remap(d, m * 0.5 * detail_amt * keep, 1.0, 0.0, 1.0);
+		float mp_ = mix(df, 1.0 - df, saturate(h * 6.0));
+		// the real pattern while it is sharp; blurred (a coarse level), it would carve smooth folds: its average
+		m = mix(mp_, M_MEAN, smoothstep(0.75, 2.25, dlod));
 	}
+	float amt = detail_amt < -0.5 ? 0.25 : 0.4;
+	d = remap(d, m * amt, 1.0, 0.0, 1.0) * c.cov;
 	return max(d, 0.0) * c.dens;
 }
 
@@ -145,7 +157,7 @@ float density_far(vec3 mp, out float h_out) {
 	}
 	// the mean of the near-field density over its noise, fitted to it (tools: cover and profile from 0 to 1)
 	float pr = profile(h, c.type);
-	float d = 0.53 * pow(c.cov, 2.3) * pow(pr, 1.0 + 4.0 * (1.0 - c.cov));
+	float d = 0.43 * pow(c.cov, 2.33) * pow(pr, 1.7 + 8.5 * pow(1.0 - c.cov, 1.2));
 	return d * c.dens;
 }
 
