@@ -82,7 +82,12 @@ func _ready() -> void:
 		aircraft.air_start.call_deferred(aircraft.spawn, 230.0)
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--dev-throttle="):          # development: start with this throttle (1.0: full afterburner)
-			aircraft.set.call_deferred("throttle", arg.trim_prefix("--dev-throttle=").to_float())
+			var thr := arg.trim_prefix("--dev-throttle=").to_float()
+			get_tree().create_timer(1.0).timeout.connect(func():
+				if aircraft.autopilot:
+					aircraft.autopilot.spd_on = false
+				aircraft.autothrottle = false
+				aircraft.throttle = thr)
 		if arg.begins_with("--dev-approach"):          # development: start on a practice approach (=right,up offset in m)
 			var v := arg.trim_prefix("--dev-approach").trim_prefix("=").split(",")
 			var off := Vector2(v[0].to_float(), v[1].to_float()) if v.size() == 2 else Vector2.ZERO
