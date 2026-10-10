@@ -69,6 +69,11 @@ var hor_toward := Color(0.6, 0.7, 0.8)   # sky colour at the horizon towards the
 var hor_away := Color(0.6, 0.7, 0.8)
 var sun_xz := Vector2(0.0, -1.0)
 var history_weight := 0.94
+## How fast the detail of the clouds rises through them (m/s): the billows evolve, very slowly. The clouds as a
+## whole drift with the wind (`wind`), rigidly.
+var evolve_rate := 0.1
+var _evolve := 0.0
+var _evolve_ms := -1
 ## The optical depth of cloud between the camera and the sun (read back from the GPU, a frame or two late).
 var cam_od := 0.0
 var cam_od_valid := false
@@ -455,6 +460,11 @@ func _shadow_callback(render_data: RenderData) -> void:
 	var cam_xf := sd.get_cam_transform()
 	var proj := sd.get_cam_projection()
 	_frame += 1
+	# (wall time, as the drift of the clouds: it wraps with the detail noise's own repeat, 420 m, so seamlessly)
+	var ms := Time.get_ticks_msec()
+	if _evolve_ms >= 0:
+		_evolve = fmod(_evolve + evolve_rate * float(ms - _evolve_ms) * 0.001, 420.0)
+	_evolve_ms = ms
 	if _shift != Vector3.ZERO:
 		# a point at new scene position p was at p + shift in last frame's scene
 		_prev_vp = _prev_vp * Projection(Transform3D(Basis(), _shift))
@@ -549,7 +559,7 @@ func _write_params(cam_xf: Transform3D, proj: Projection, size: Vector2i) -> voi
 	var shape := Vector4(coverage, density, base * 0.001, top * 0.001)
 	var hw := history_weight if shape.distance_to(_prev_shape) < 0.0002 else minf(history_weight, 0.7)
 	_prev_shape = shape
-	data.append_array([cam_xf.origin.x, cam_xf.origin.y, cam_xf.origin.z, 0.0])
+	data.append_array([cam_xf.origin.x, cam_xf.origin.y, cam_xf.origin.z, _evolve])
 	data.append_array([WorldData.origin_x, WorldData.origin_z, float(_frame % 4096), 1.0 if _has_history else 0.0])
 	data.append_array([sun_dir.x, sun_dir.y, sun_dir.z, light_intensity])
 	data.append_array([sun_color.r, sun_color.g, sun_color.b, ambient])

@@ -110,8 +110,11 @@ float density_in(vec3 mp, Column c, float lod, float detail_amt, out float h_out
 		return 0.0;
 	}
 	if (detail_amt > 0.001) {
-		vec2 dx = mat2(vec2(0.5, -0.866), vec2(0.866, 0.5)) * vec2(mp.x + p.wind.x * 1.3, mp.z + p.wind.y * 1.3) / DETAIL_SCALE;
-		vec3 dq = vec3(dx.x, mp.y / DETAIL_SCALE, dx.y);
+		// the detail drifts with the cloud it belongs to (each cloud a rigid shape carried by the wind: detail
+		// sliding over the body read as the clouds jiggling), and rises through it very slowly (p.cam_pos.w: about
+		// 0.1 m/s, a few metres a minute), so the billows still evolve, almost too slowly to notice
+		vec2 dx = mat2(vec2(0.5, -0.866), vec2(0.866, 0.5)) * vec2(mp.x + p.wind.x, mp.z + p.wind.y) / DETAIL_SCALE;
+		vec3 dq = vec3(dx.x, (mp.y - p.cam_pos.w) / DETAIL_SCALE, dx.y);
 		// its own level: its texels are a quarter of the shape's (420 m / 64 against 3400 m / 128), so the same
 		// footprint is two levels further down (a sharper level than that aliased into grain at the cloud edges)
 		vec4 dt = textureLod(detail_tex, dq, lod + 2.0);

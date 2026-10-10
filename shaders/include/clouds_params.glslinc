@@ -4,7 +4,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	mat4 inv_proj;
 	mat4 cam_xform;        // camera to scene
 	mat4 prev_vp;          // last frame's view-projection, for reprojection
-	vec4 cam_pos;          // xyz scene, w time
+	vec4 cam_pos;          // xyz scene, w how far the detail has risen through the clouds (m, wraps every 420 m)
 	vec4 origin;           // xy floating origin (map = scene + origin, on x / z), z frame, w history valid
 	vec4 sun_dir;          // xyz towards the light, w light intensity
 	vec4 sun_color;        // rgb, w ambient strength
