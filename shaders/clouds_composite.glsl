@@ -26,12 +26,19 @@ vec4 trimmed(ivec2 hp, float dist) {
 	ivec2 hsize = ivec2(p.sizes.xy);
 	hp = clamp(hp, ivec2(0), hsize - 1);
 	vec4 c = texelFetch(cloud_color, hp, 0);
-	vec2 d = texelFetch(cloud_depth, hp, 0).xy;
+	vec4 d = texelFetch(cloud_depth, hp, 0);
+	// The sample marched only as far as the nearest surface it covered (d.w; clouds_march.glsl): all of its cloud
+	// lies in front of that, so a pixel at or beyond it takes the whole sample. Trimming there by the sample's cloud
+	// start and end (this frame's own march, which jitters from frame to frame) flipped the pixels where a mountain
+	// meets a cloud between "in front" and "behind": a line at every contact, sliding as the view moved.
+	if (dist >= d.w * 0.98) {
+		return c;
+	}
 	if (d.x >= 1e8) {
 		// no depth for it (rare: see clouds_resolve.glsl): against the sky the accumulated cloud is still right
 		return dist >= 1e8 ? c : vec4(0.0, 0.0, 0.0, 1.0);
 	}
-	// fraction of this sample's cloud that lies in front of the pixel's surface
+	// nearer than where the sample stopped (the jet in front of the clouds): the share of its cloud in front of it
 	float k = clamp((dist - d.x) / max(d.y - d.x, 30.0), 0.0, 1.0);
 	return vec4(c.rgb * k, mix(1.0, c.a, k));
 }
