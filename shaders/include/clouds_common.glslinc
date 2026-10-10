@@ -85,6 +85,9 @@ float density(vec3 mp, float lod, float detail_amt, out float h_out) {
 	vec4 s = textureLod(shape_tex, q, lod);
 	float wf = s.g * 0.625 + s.b * 0.25 + s.a * 0.125;
 	float base_shape = remap(s.r, wf - 1.0, 1.0, 0.0, 1.0);
+	// spread to 0..1: the Perlin-Worley shape lies between about 0.65 and 0.9 (measured: 5th to 95th percentile),
+	// so that `coverage` is close to the share of the sky that is cloud
+	base_shape = saturate((base_shape - 0.65) * 4.0);
 	float d = base_shape * profile(h, c.type);
 	// coverage (Nubis): the more cover, the more of the shape becomes cloud
 	d = remap(d, 1.0 - c.cov, 1.0, 0.0, 1.0) * c.cov;
@@ -111,7 +114,9 @@ float density_far(vec3 mp, out float h_out) {
 	if (h <= 0.0 || h >= 1.0) {
 		return 0.0;
 	}
-	float d = smoothstep(0.08, 0.95, c.cov) * c.cov * profile(h, c.type) * 0.62;
+	// the mean of the near-field density over its noise, fitted to it (tools: cover and profile from 0 to 1)
+	float pr = profile(h, c.type);
+	float d = 0.53 * pow(c.cov, 2.3) * pow(pr, 1.0 + 4.0 * (1.0 - c.cov));
 	return d * c.dens;
 }
 
