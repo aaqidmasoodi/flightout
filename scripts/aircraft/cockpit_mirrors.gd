@@ -15,8 +15,8 @@ extends Node
 ##   while you are in the cockpit, the mirrors are unfolded and at least one is on screen, and it never includes the
 ##   cockpit interior (that is drawn for the main view only).
 ##
-## Folding: like the HUD sun shade, each mirror swings up on a hinge along its outer edge, out of the way against the
-## canopy (key: toggle_mirrors; the graphics setting decides whether they start unfolded, folded on Low and Medium).
+## Stowing: each mirror slides back off the bow into the gap between the bow and the canopy glass, lying flat against
+## the glass (key: toggle_mirrors; the graphics setting decides whether they start unfolded, folded on Low and Medium).
 ## Folded, nothing is rendered for them at all.
 
 const GLASS_SHADER := preload("res://shaders/cockpit/mirror_glass.gdshader")
@@ -45,7 +45,6 @@ const MIRRORS := [
 	[-62.0, 0.22, 0.07, Vector3(-0.50, -0.06, 1.0)],  # left: from the left fin out to the left wingtip
 	[62.0, 0.22, 0.07, Vector3(0.50, -0.06, 1.0)],    # right: from the right fin out to the right wingtip
 ]
-const FOLD_DEG := 95.0                       # how far a mirror swings up when folded
 const FOLD_TIME := 0.6                       # seconds to fold or unfold
 
 var ac: Node3D
@@ -61,7 +60,16 @@ var _fold_shown := -1.0
 var _dev_dir := ""                           # development: --dev-mirror-shot=<dir> saves the shared picture
 var _dev_t := 0.0
 var _frame_n := 0
-var _fold_deg := FOLD_DEG
+
+
+## The arch band's inner and outer edge at an angle from the top (metres from its centre line).
+static func _arch_band(deg: float) -> Vector2:
+	var a := absf(deg)
+	for i in ARCH_R.size() - 1:
+		if a <= float(ARCH_R[i + 1][0]):
+			var k := (a - float(ARCH_R[i][0])) / (float(ARCH_R[i + 1][0]) - float(ARCH_R[i][0]))
+			return Vector2(lerpf(float(ARCH_R[i][1]), float(ARCH_R[i + 1][1]), k), lerpf(float(ARCH_R[i][2]), float(ARCH_R[i + 1][2]), k))
+	return Vector2(float(ARCH_R[-1][1]), float(ARCH_R[-1][2]))
 
 
 ## Middle of the arch's band at an angle from the top (metres from its centre line).
@@ -115,17 +123,26 @@ func build(aircraft: Node3D, root: Node3D, pads: MeshInstance3D, eye: Vector3, m
 		var frame := MeshInstance3D.new()
 		frame.mesh = _rounded_box(size.x + BEZEL * 2.0, size.y + BEZEL * 2.0, depth, CORNER + BEZEL)
 		frame.set_surface_override_material(0, material_of.call("CP_PaintDark"))
-		# the hinge: along the housing's outer edge, at its back; the mirror swings up about it
-		var hinge := Vector3(0.0, size.y * 0.5 + BEZEL, -depth)
+		# stowed: slid back behind the bow into the gap against the canopy glass, lying flat along it with the glass
+		# turned to the canopy (the dark back towards you). Far enough inside the glass that the flat mirror's ends
+		# clear its curve.
+		var r_glass := float(_arch_band(deg).y)
+		var half := size.x * 0.5 + BEZEL
+		var r_stow := r_glass - half * half / (2.0 * r_glass) - 0.006
+		var sn := radial
+		var sx := (x - sn * x.dot(sn)).normalized()
+		var sy := sn.cross(sx).normalized()
+		var s_centre := Vector3(0.0, ARCH_Y, ARCH_FACE + size.y * 0.5 + BEZEL + 0.012) + radial * r_stow
+		var stowed := Transform3D(to_root.basis * Basis(sx, sy, sn), to_root * s_centre)
 		var pivot := Node3D.new()
-		pivot.transform = Transform3D(rb, rc + rb * hinge)
+		pivot.transform = Transform3D(rb, rc)
 		_root.add_child(pivot)
-		frame.transform = Transform3D(Basis(), Vector3(0.0, 0.0, -(depth * 0.5 + 0.0005)) - hinge)
+		frame.transform = Transform3D(Basis(), Vector3(0.0, 0.0, -(depth * 0.5 + 0.0005)))
 		var glass := MeshInstance3D.new()
 		var q := QuadMesh.new()
 		q.size = size
 		glass.mesh = q
-		glass.transform = Transform3D(Basis(), Vector3(0.0, 0.0, 0.0005) - hinge)
+		glass.transform = Transform3D(Basis(), Vector3(0.0, 0.0, 0.0005))
 		glass.set_surface_override_material(0, _material)
 		glass.set_instance_shader_parameter("size_m", size)
 		glass.set_instance_shader_parameter("corner_m", CORNER)
@@ -134,7 +151,8 @@ func build(aircraft: Node3D, root: Node3D, pads: MeshInstance3D, eye: Vector3, m
 			(mi as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			pivot.add_child(mi)
 			made.append(mi)
-		_mirrors.append({"pivot": pivot, "glass": glass, "basis": rb})
+		_mirrors.append({"pivot": pivot, "glass": glass, "deployed": Transform3D(rb, rc), "stowed": stowed,
+			"lift": (to_root.basis * (radial * 0.25 + Vector3(0.0, 0.0, 1.0)).normalized()) * 0.02})
 	# the shared picture: from the middle of the arch, looking straight aft (the way the jet points)
 	var centre := Vector3(0.0, ARCH_Y + _arch_r(0.0) * 0.5, ARCH_FACE)
 	_capture_local = to_root * Transform3D(Basis.looking_at(Vector3(0.0, 0.0, 1.0), Vector3.UP), centre)
@@ -162,8 +180,6 @@ func build(aircraft: Node3D, root: Node3D, pads: MeshInstance3D, eye: Vector3, m
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--dev-mirror-shot="):
 			_dev_dir = arg.trim_prefix("--dev-mirror-shot=")
-		elif arg.begins_with("--dev-mirror-fold="):        # development: try another fold angle
-			_fold_deg = arg.trim_prefix("--dev-mirror-fold=").to_float()
 	# the setting decides how they start (and folds or unfolds them when it is changed); the key does it in flight
 	ac.set("mirrors_folded", not bool(Settings.get_value("graphics/mirrors")))
 	_fold = 1.0 if ac.get("mirrors_folded") else 0.0
@@ -214,14 +230,17 @@ func _sync_env() -> void:
 			_env.set(key, v)
 
 
-## The mirrors swung up about their hinges by the fold amount (eased, like the sun shade).
+## Stowing: each mirror first eases off the bow towards you a little, then turns and slides back into the gap
+## between the bow and the canopy glass (and the reverse to deploy).
 func _show_fold() -> void:
 	if _fold == _fold_shown:
 		return
 	_fold_shown = _fold
-	var a := deg_to_rad(_fold_deg) * smoothstep(0.0, 1.0, _fold)
+	var k := smoothstep(0.0, 1.0, _fold)
 	for m in _mirrors:
-		(m.pivot as Node3D).transform.basis = (m.basis as Basis) * Basis(Vector3.RIGHT, a)
+		var t := (m.deployed as Transform3D).interpolate_with(m.stowed as Transform3D, k)
+		t.origin += (m.lift as Vector3) * sin(PI * k)
+		(m.pivot as Node3D).transform = t
 	var was := _on
 	_on = _fold < 0.999
 	if _on != was:
