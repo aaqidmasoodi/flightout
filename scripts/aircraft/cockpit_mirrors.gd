@@ -22,8 +22,8 @@ extends Node
 const GLASS_SHADER := preload("res://shaders/cockpit/mirror_glass.gdshader")
 const TERRAIN := preload("res://scripts/world/terrain_streamer.gd")
 # the shared picture: from the middle of the arch, looking aft; wide enough for every mirror from any head position
-const CAPTURE_FOV := Vector2(130.0, 64.0)     # degrees across, up
-const CAPTURE_HEIGHT := [300, 360, 420]      # pixels (display resolution setting: low, medium, full)
+const CAPTURE_FOV := Vector2(124.0, 46.0)     # degrees across, up
+const CAPTURE_HEIGHT := [240, 300, 340]      # pixels (display resolution setting: low, medium, full)
 const CAPTURE_NEAR := 1.6                    # m: clears the seat and the pilot behind the arch
 # the arch's face towards the pilot (aircraft space, z = ARCH_FACE): its band's inner and outer edge, as distances
 # from the arch's centre line (x = 0, y = ARCH_Y), by angle from the top (measured from the cockpit model)
