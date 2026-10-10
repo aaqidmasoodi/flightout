@@ -129,6 +129,13 @@ func terrain_height(x: float, z: float) -> float:
 	return _tiles.height(x, z) if _tiles != null else 0.0
 
 
+## Reads the ground tiles where a jet at `world_pos` moving at `vel` will be in a couple of seconds, on a worker
+## thread, so its simulation never waits for the disk (see TerrainHeights.prefetch).
+func prefetch_ahead(world_pos: Vector3, vel: Vector3) -> void:
+	if _tiles != null:
+		_tiles.prefetch(world_pos.x + vel.x * 2.0, world_pos.z + vel.z * 2.0)
+
+
 ## Height of whatever you would hit: terrain or the sea surface.
 func ground_height(x: float, z: float) -> float:
 	return maxf(terrain_height(x, z), sea_level)

@@ -557,13 +557,20 @@ func _ground_contacts(dt: float, gh: float) -> Array:
 	var steer_lim := lerpf(deg_to_rad(spec.max_steer_deg), deg_to_rad(4.0), clampf(gs / 40.0, 0.0, 1.0))
 	steer = move_toward(steer, in_yaw * steer_lim, 1.2 * dt)
 	wheel_speed = 0.0
+	# Far above the ground nothing on the airframe can touch it (the gear legs, the tail and the probes are all
+	# within 15 m of the centre, and no slope in the map rises 300 m in that distance): the ground checks below
+	# would all come out clear, so they are skipped. The result is exactly the same, so client and server agree.
+	var near_ground := pos.y - gh < 300.0
 	for i in 3:
+		gear_comp[i] = 0.0
+		if not locked or not near_ground:
+			_prev_comp[i] = 0.0
+			continue
 		var rb: Vector3 = spec.gear_contacts[i]
 		var pw := pos + rot * rb
 		var h: float = pw.y - (_gh(pw.x, pw.z) as float)
 		var comp := -h
-		gear_comp[i] = 0.0
-		if not locked or comp <= 0.0:
+		if comp <= 0.0:
 			_prev_comp[i] = 0.0
 			continue
 		touching = true
@@ -602,7 +609,7 @@ func _ground_contacts(dt: float, gh: float) -> Array:
 	# tail stinger
 	tail_scrape = false
 	var tp := pos + rot * spec.tail_probe
-	var th := tp.y - (_gh(tp.x, tp.z) as float)
+	var th := (tp.y - (_gh(tp.x, tp.z) as float)) if near_ground else 1.0
 	if th < 0.0:
 		tail_scrape = true
 		var vtp := vel + rot * omega.cross(spec.tail_probe)
@@ -623,15 +630,16 @@ func _ground_contacts(dt: float, gh: float) -> Array:
 			_event("touchdown", "%s  (%.1f m/s)" % [grade, sink], sink)
 	wow = touching
 	# airframe (nose, wingtips, fins, belly when the gear is up) must not touch
-	for p in spec.crash_probes:
-		var cp := pos + rot * (p as Vector3)
-		if cp.y - (_gh(cp.x, cp.z) as float) < 0.0:
-			_crash("WATER" if _wat(cp.x, cp.z) else "TERRAIN")
+	if near_ground:
+		for p in spec.crash_probes:
+			var cp := pos + rot * (p as Vector3)
+			if cp.y - (_gh(cp.x, cp.z) as float) < 0.0:
+				_crash("WATER" if _wat(cp.x, cp.z) else "TERRAIN")
 	if not locked:
 		var belly := pos + rot * Vector3(0.0, -1.2, 0.0)
 		if belly.y - gh < 0.0:
 			_crash("WATER" if _wat(belly.x, belly.z) else ("BELLY LANDING" if gear_pos < 0.05 else "GEAR NOT LOCKED"))
-	if _wat(pos.x, pos.z) and pos.y - gh < spec.gear_height:
+	if pos.y - gh < spec.gear_height and _wat(pos.x, pos.z):
 		_crash("WATER")
 	return [f_total, t_total]
 

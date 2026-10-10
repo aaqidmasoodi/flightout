@@ -289,6 +289,8 @@ func _apply(pl: Player, cmd: Array) -> void:
 		fm.step(dt)
 	fm.events.clear()
 	pl.sim_tick += 1
+	if pl.sim_tick % 30 == 0:
+		WorldData.prefetch_ahead(fm.world_pos(), fm.vel)
 	pl.ack = cmd[0]
 	pl.next_tick = cmd[0] + 1
 	pl.last_cmd = cmd

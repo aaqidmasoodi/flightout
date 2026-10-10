@@ -13,7 +13,8 @@ const CELL := 512.0
 const STEP := 32.0                    # one land cover sample
 const TREELINE := 3700.0
 const NEAR_MAX := 650.0                # detailed, shadow-casting trees inside this distance at most
-const BUDGET_USEC := 2000             # planting time per frame
+const BUDGET_USEC := 2000             # time per frame for putting planted cells into the scene
+const MAX_PLANTING := 2               # cells being planted on worker threads at once (leaves cores for the game)
 const HIGH_DROP := 6500.0             # above this height over the ground the forest is dropped (trees under a pixel)...
 const HIGH_BACK := 5500.0             # ...and planted again below this one (a band, so ridges below don't flip it)
 const RANGES := [3200.0, 4500.0, 6000.0]
@@ -34,6 +35,12 @@ var _near_pool := {}
 var _shadow_pool := {}                 # species -> shadow-only copy of the detailed trees within the shadow distance
 var _density := 1.0                   # share of trees planted (graphics/forest_density)
 var _high := false                    # camera far above the ground: no forest
+# planting runs on worker threads (_plant_data: land cover, terrain heights and tree placement, all pure); the main
+# thread only puts the finished cells into the scene (_add_cell)
+var _planting := {}                   # cell -> worker task id
+var _planted_lock := Mutex.new()
+var _planted_done: Array = []         # finished cells waiting to be added (under _planted_lock)
+var _gen := 0                         # bumped when every cell is dropped: older results are thrown away
 var _near_center := Vector2(INF, INF)
 var _near_dirty := false
 var _last_cam := Vector2(INF, INF)
@@ -134,13 +141,39 @@ func _process(_delta: float) -> void:
 	if cp.distance_to(_last_cam) > 120.0:
 		_last_cam = cp
 		_refresh(cp, reach)
-	while not _queue.is_empty() and Time.get_ticks_usec() - t0 < BUDGET_USEC:
+	# finished cells into the scene (nearest were started first)
+	_planted_lock.lock()
+	var done := _planted_done
+	_planted_done = []
+	_planted_lock.unlock()
+	for i in done.size():
+		var r: Dictionary = done[i]
+		var c: Vector2i = r.c
+		if _planting.has(c):
+			if int(_planting[c]) >= 0:
+				WorkerThreadPool.wait_for_task_completion(_planting[c])     # finished: returns at once
+			_planting.erase(c)
+		if int(r.gen) != _gen or _cells.has(c) or _cell_dist(c, cp) > reach + CELL * 1.5:
+			continue                       # dropped meanwhile (out of range, or the forest was replanted)
+		if Time.get_ticks_usec() - t0 > BUDGET_USEC:
+			# over this frame's budget: the rest waits for the next frame
+			_planted_lock.lock()
+			_planted_done = done.slice(i) + _planted_done
+			_planted_lock.unlock()
+			for k in range(i, done.size()):
+				var cc: Vector2i = done[k].c
+				if not _planting.has(cc):
+					_planting[cc] = -1     # (still counted as busy until it is added)
+			break
+		_add_cell(r)
+		stats.plant_n += 1
+		if _cell_dist(c, cp) < _near_radius + 250.0:
+			_near_dirty = true            # only a cell inside the detailed radius changes the near pool
+	# start planting the most wanted cells
+	while not _queue.is_empty() and _busy() < MAX_PLANTING:
 		var c: Vector2i = _queue.pop_front()
-		if not _cells.has(c) and _cell_dist(c, cp) < reach + CELL:
-			_plant(c)
-			stats.plant_n += 1
-			if _cell_dist(c, cp) < _near_radius + 250.0:
-				_near_dirty = true            # only a cell inside the detailed radius changes the near pool
+		if not _cells.has(c) and not _planting.has(c) and _cell_dist(c, cp) < reach + CELL:
+			_planting[c] = WorkerThreadPool.add_task(_plant_worker.bind(c, _density, _gen))
 	stats.proc_us = Time.get_ticks_usec() - t0
 	if _near_dirty or cp.distance_to(_near_center) > 150.0:
 		var t1 := Time.get_ticks_usec()
@@ -158,6 +191,7 @@ func _cell_dist(c: Vector2i, p: Vector2) -> float:
 
 
 func _clear_cells() -> void:
+	_gen += 1
 	for c in _cells:
 		for n in _cells[c].nodes:
 			(n as Node).queue_free()
@@ -204,7 +238,32 @@ func _on_runway(p: Vector2) -> bool:
 	return false
 
 
-func _plant(c: Vector2i) -> void:
+func _busy() -> int:
+	var n := 0
+	for c in _planting:
+		if int(_planting[c]) >= 0:
+			n += 1
+	return n
+
+
+func _plant_worker(c: Vector2i, density: float, gen: int) -> void:
+	var r := _plant_data(c, density)
+	r.gen = gen
+	_planted_lock.lock()
+	_planted_done.append(r)
+	_planted_lock.unlock()
+
+
+## Leaving the flight: planting workers call back into this node, so they finish first.
+func _exit_tree() -> void:
+	for c in _planting:
+		if int(_planting[c]) >= 0:
+			WorkerThreadPool.wait_for_task_completion(_planting[c])
+	_planting.clear()
+
+
+## One cell's trees (any thread): returns its instance buffers, ready to be put into the scene by _add_cell.
+func _plant_data(c: Vector2i, density: float) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(c) ^ 0x5eed
 	var o := Vector2(c) * CELL
@@ -227,7 +286,7 @@ func _plant(c: Vector2i) -> void:
 				var x := sx + rng.randf_range(-0.5, 0.5) * STEP
 				var z := sz + rng.randf_range(-0.5, 0.5) * STEP
 				# lower densities keep a fixed subset (by position), so thinning never reshuffles the forest
-				if _density < 1.0 and fposmod(sin(x * 12.9898 + z * 78.233) * 43758.5453, 1.0) > _density:
+				if density < 1.0 and fposmod(sin(x * 12.9898 + z * 78.233) * 43758.5453, 1.0) > density:
 					continue
 				if near_runway and _on_runway(Vector2(x, z)):
 					continue
@@ -235,10 +294,10 @@ func _plant(c: Vector2i) -> void:
 				if h > TREELINE + rng.randf_range(-250.0, 150.0):
 					continue
 				_add_tree(trees, rng, cls, Vector3(x, h, z), o)
-	var nodes: Array = []
 	var near := {}
 	for sp in trees:
 		near[sp] = _buffer(trees[sp], Vector3.ZERO)        # map coordinates, for the detailed pool
+	var sets: Array = []
 	for key in ["conifer:core", "conifer:fill", "broadleaf:core", "broadleaf:fill"]:
 		var sp: String = String(key).get_slice(":", 0)
 		var core: bool = String(key).ends_with("core")
@@ -249,12 +308,24 @@ func _plant(c: Vector2i) -> void:
 				list.append(trees[sp][k])
 		if list.is_empty():
 			continue
+		sets.append([sp, core, list.size(), _buffer(list, Vector3(o.x, 0.0, o.y))])     # relative to the cell: small numbers
+	return {"c": c, "near": near, "sets": sets}
+
+
+## Puts a planted cell into the scene (main thread): one MultiMesh per species and share.
+func _add_cell(r: Dictionary) -> void:
+	var c: Vector2i = r.c
+	var o := Vector2(c) * CELL
+	var nodes: Array = []
+	for st in r.sets:
+		var sp: String = st[0]
+		var core: bool = st[1]
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
 		mm.use_colors = true
 		mm.mesh = _meshes[sp][1]
-		mm.instance_count = list.size()
-		mm.buffer = _buffer(list, Vector3(o.x, 0.0, o.y))     # relative to the cell: small numbers
+		mm.instance_count = int(st[2])
+		mm.buffer = st[3]
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
 		mmi.position = Vector3(o.x, 0.0, o.y)
@@ -267,8 +338,8 @@ func _plant(c: Vector2i) -> void:
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		add_child(mmi)
 		nodes.append(mmi)
-		planted += list.size()
-	_cells[c] = {"nodes": nodes, "near": near}
+		planted += int(st[2])
+	_cells[c] = {"nodes": nodes, "near": r.near}
 
 
 ## MultiMesh instance data (3x4 transform rows, then RGBA) for a list of [Transform3D, Color], shifted by -offset.

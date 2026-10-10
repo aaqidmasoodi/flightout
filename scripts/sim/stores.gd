@@ -31,15 +31,22 @@ static func scene_path(id: String) -> String:
 	return "res://assets/aircraft/%s_stores/%s_stores.glb" % [id, id]
 
 
+static var _data_cache := {}        # stations file -> parsed data (read once per session)
+static var _scene_cache := {}       # stores model -> PackedScene, kept loaded
+
+
 ## Loads the station data for an aircraft id. Returns false if the aircraft has no stores.
 func load_for(id: String) -> bool:
 	aircraft_id = id
 	var path := data_path(id)
 	if not FileAccess.file_exists(path):
 		return false
-	var d = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not _data_cache.has(path):
+		_data_cache[path] = JSON.parse_string(FileAccess.get_file_as_string(path))
+	var d = _data_cache[path]
 	if typeof(d) != TYPE_DICTIONARY:
 		return false
+	d = (d as Dictionary).duplicate(true)       # each jet gets its own copy of the loadout data
 	stations = d.get("stations", [])
 	stations.sort_custom(func(a, b): return int(a.id) < int(b.id))
 	catalogue = d.get("stores", {})
@@ -56,7 +63,9 @@ func attach(model: Node3D) -> void:
 	var path := scene_path(aircraft_id)
 	if not ResourceLoader.exists(path):
 		return
-	_root = (load(path) as PackedScene).instantiate() as Node3D
+	if not _scene_cache.has(path):
+		_scene_cache[path] = load(path)
+	_root = (_scene_cache[path] as PackedScene).instantiate() as Node3D
 	_root.name = "Stores"
 	model.add_child(_root)
 	for n in _root.find_children("STA_*", "", true, false):

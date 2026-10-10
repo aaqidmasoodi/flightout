@@ -173,7 +173,7 @@ func _ready() -> void:
 		spec = load("res://data/aircraft/su27.tres")
 	fm = FlightModel.new()
 	fm.setup(spec, WorldData.atmosphere, WorldData.ground_height, WorldData.is_water, 7)
-	model = load(spec.model_scene).instantiate()
+	model = _scene(spec.model_scene).instantiate()
 	model.rotation.y = PI  # glTF model front is +Z, Godot forward is -Z
 	add_child(model)
 	# cockpit lights start on at night (they can be switched any time)
@@ -202,6 +202,7 @@ func _ready() -> void:
 		if String(clip).begins_with("radar_scan"):
 			radar_clip = clip
 			(clips[clip] as Animation).loop_mode = Animation.LOOP_LINEAR
+	_clip_prefix = String(spec.id) + ":"
 	canopy_player = _system_player("CanopyPlayer", source, clips, ["canopy_open"])
 	brake_player = _system_player("AirbrakePlayer", source, clips, ["airbrake_open"])
 	radar_player = _system_player("RadarPlayer", source, clips, [radar_clip])
@@ -248,6 +249,17 @@ func _ready() -> void:
 	_shown = _switches()
 
 
+static var _scene_cache := {}       # model path -> PackedScene, kept loaded for every later jet (joins cost no disk read)
+static var _clip_cache := {}        # "type:clip" -> animation with only its own moving tracks
+var _clip_prefix := ""
+
+
+static func _scene(path: String) -> PackedScene:
+	if not _scene_cache.has(path):
+		_scene_cache[path] = load(path)
+	return _scene_cache[path]
+
+
 func _system_player(player_name: String, source: AnimationPlayer, clips: Dictionary, names: Array) -> AnimationPlayer:
 	var p := AnimationPlayer.new()
 	p.name = player_name
@@ -256,7 +268,12 @@ func _system_player(player_name: String, source: AnimationPlayer, clips: Diction
 	var lib := AnimationLibrary.new()
 	for n in names:
 		if clips.has(n):
-			lib.add_animation(n, _only_moving_tracks(clips[n]))
+			# stripped once per aircraft type and shared (read-only) by every jet of that type: a player joining
+			# then costs no animation copying
+			var key := _clip_prefix + String(n)
+			if not _clip_cache.has(key):
+				_clip_cache[key] = _only_moving_tracks(clips[n])
+			lib.add_animation(n, _clip_cache[key])
 	p.add_animation_library("", lib)
 	return p
 
@@ -300,6 +317,8 @@ func _physics_process(delta: float) -> void:
 	var cmd := P.make_cmd(t, pitch_in, roll_in, yaw_in, throttle, 1.0 if wheel_brakes else 0.0, _tog)
 	apply_cmd(cmd, false)
 	step_sim()
+	if Engine.get_physics_frames() % 30 == 0:
+		WorldData.prefetch_ahead(fm.world_pos(), fm.vel)
 	if net_mode == NetMode.PREDICTED:
 		Game.client.record(cmd, fm.get_state())
 	var k := exp(-CORRECTION_RATE * delta)

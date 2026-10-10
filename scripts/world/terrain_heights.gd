@@ -4,8 +4,14 @@ extends RefCounted
 ## Reads the finest level only, a tile at a time (decompressed tiles are cached), and interpolates exactly as the
 ## renderer triangulates its grid (scripts/world/terrain_streamer.gd: diagonals alternate per quad), so the ground
 ## the wheels roll on is the ground you see under the jet. Works without a GPU (dedicated server).
+##
+## Safe to use from several threads (the forest plants on worker threads): the caches are behind a lock, and reads
+## that miss the cache use the calling thread's own file handle. prefetch() reads the tiles around and ahead of a
+## point on a worker thread, so the simulation (120 times a second) finds its ground already in memory instead of
+## stopping to read the disk.
 
-const CACHE := 256
+const CACHE := 1024                 # tiles kept decompressed (about 9 kB each)
+const PREFETCH_R := 1               # tiles each side of the predicted point
 
 var tq := 64
 var ts := 67
@@ -25,6 +31,10 @@ var _cfile: FileAccess              # land cover tiles (tools/build_landcover.py
 var _cindex := PackedByteArray()
 var _ccache := {}
 var _corder: Array[int] = []
+var _dir := ""
+var _lock := Mutex.new()
+var _prefetching := false
+var _prefetch_task := -1
 
 
 func setup(dir: String) -> bool:
@@ -41,6 +51,7 @@ func setup(dir: String) -> bool:
 	nx = int(m.tiles[0][0])
 	nz = int(m.tiles[0][1])
 	_zstd = m.get("compression", "") == "zstd"
+	_dir = dir
 	_file = FileAccess.open(dir.path_join("h0.bin"), FileAccess.READ)
 	if _zstd:
 		_index = FileAccess.get_file_as_bytes(dir.path_join("i0.bin"))
@@ -71,16 +82,26 @@ func cover(x: float, z: float) -> int:
 
 func _ctile(i: int, j: int) -> PackedByteArray:
 	var n := j * nx + i
-	if _ccache.has(n):
-		return _ccache[n]
+	_lock.lock()
+	var hit = _ccache.get(n)
+	_lock.unlock()
+	if hit != null:
+		return hit
 	var a := _cindex.decode_u64(n * 8)
 	var b := _cindex.decode_u64(n * 8 + 8)
-	_cfile.seek(a)
-	var data := _cfile.get_buffer(b - a).decompress(ts * ts, FileAccess.COMPRESSION_ZSTD)
-	_ccache[n] = data
-	_corder.append(n)
-	if _corder.size() > CACHE:
-		_ccache.erase(_corder.pop_front())
+	var f := FileAccess.open(_dir.path_join("lc0.bin"), FileAccess.READ) if OS.get_thread_caller_id() != OS.get_main_thread_id() else _cfile
+	_lock.lock()          # (the shared handle seeks: one reader at a time)
+	f.seek(a)
+	var raw := f.get_buffer(b - a)
+	_lock.unlock()
+	var data := raw.decompress(ts * ts, FileAccess.COMPRESSION_ZSTD)
+	_lock.lock()
+	if not _ccache.has(n):
+		_ccache[n] = data
+		_corder.append(n)
+		if _corder.size() > CACHE:
+			_ccache.erase(_corder.pop_front())
+	_lock.unlock()
 	return data
 
 
@@ -91,23 +112,81 @@ func extent() -> Rect2:
 
 func _tile(i: int, j: int) -> PackedByteArray:
 	var n := j * nx + i
-	if _cache.has(n):
-		return _cache[n]
+	_lock.lock()
+	var hit = _cache.get(n)
+	_lock.unlock()
+	if hit != null:
+		return hit
+	return _load_tile(n, null)
+
+
+## Reads and decompresses height tile n and caches it. `f`: a file handle of the caller's own (worker threads), or
+## null for the shared one (then the read happens under the lock).
+func _load_tile(n: int, f: FileAccess) -> PackedByteArray:
 	var bytes := ts * ts * 2
-	var data: PackedByteArray
+	var shared := f == null
+	if shared:
+		f = _file
+		_lock.lock()
+	var raw: PackedByteArray
 	if _zstd:
 		var a := _index.decode_u64(n * 8)
 		var b := _index.decode_u64(n * 8 + 8)
-		_file.seek(a)
-		data = _file.get_buffer(b - a).decompress(bytes, FileAccess.COMPRESSION_ZSTD)
+		f.seek(a)
+		raw = f.get_buffer(b - a)
 	else:
-		_file.seek(n * bytes)
-		data = _file.get_buffer(bytes)
-	_cache[n] = data
-	_order.append(n)
-	if _order.size() > CACHE:
-		_cache.erase(_order.pop_front())
+		f.seek(n * bytes)
+		raw = f.get_buffer(bytes)
+	if shared:
+		_lock.unlock()
+	var data := raw.decompress(bytes, FileAccess.COMPRESSION_ZSTD) if _zstd else raw
+	_lock.lock()
+	if not _cache.has(n):
+		_cache[n] = data
+		_order.append(n)
+		if _order.size() > CACHE:
+			_cache.erase(_order.pop_front())
+	_lock.unlock()
 	return data
+
+
+## Reads the tiles around (x, z) on a worker thread, if they are not in memory yet. Call it with where the jet will be
+## in a second or two; at most one read is in flight, and the call returns at once.
+func prefetch(x: float, z: float) -> void:
+	if _prefetching or _file == null:
+		return
+	var ti := clampi(int((x - x0) / (spacing * tq)), 0, nx - 1)
+	var tj := clampi(int((z - z0) / (spacing * tq)), 0, nz - 1)
+	var want := PackedInt32Array()
+	_lock.lock()
+	for dj in range(-PREFETCH_R, PREFETCH_R + 1):
+		for di in range(-PREFETCH_R, PREFETCH_R + 1):
+			var i := ti + di
+			var j := tj + dj
+			if i >= 0 and i < nx and j >= 0 and j < nz and not _cache.has(j * nx + i):
+				want.append(j * nx + i)
+	_lock.unlock()
+	if want.is_empty():
+		return
+	if _prefetch_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_prefetch_task)     # (finished: _prefetching is false)
+	_prefetching = true
+	_prefetch_task = WorkerThreadPool.add_task(_prefetch_worker.bind(want))
+
+
+func _prefetch_worker(want: PackedInt32Array) -> void:
+	var f := FileAccess.open(_dir.path_join("h0.bin"), FileAccess.READ)
+	if f:
+		for n in want:
+			_load_tile(n, f)
+	_prefetching = false
+
+
+## Waits for a prefetch in flight (leaving the map).
+func finish() -> void:
+	if _prefetch_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_prefetch_task)
+		_prefetch_task = -1
 
 
 func height(x: float, z: float) -> float:

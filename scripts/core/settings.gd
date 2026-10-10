@@ -91,6 +91,13 @@ func _ready() -> void:
 		if arg.begins_with("--dev-preset="):
 			transient = true
 			set_value("graphics/preset", arg.trim_prefix("--dev-preset=").to_int())
+	# development: `--dev-set=<key>=<value>` changes one option for this run only (after any preset)
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--dev-set="):
+			transient = true
+			var kv := arg.trim_prefix("--dev-set=").split("=")
+			if kv.size() == 2 and DEFAULTS.has(kv[0]):
+				set_value(kv[0], type_convert(str_to_var(kv[1]), typeof(DEFAULTS[kv[0]])))
 
 
 func get_value(key: String) -> Variant:
