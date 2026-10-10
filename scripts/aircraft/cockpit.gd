@@ -75,6 +75,12 @@ var _ck_mesh_sent: PackedByteArray = PackedByteArray()
 var _ck_sent := {}                      # MeshInstance3D -> last model-to-eye transform sent
 var _precise_on := false
 var _inside := false
+## Seen from far outside (more than INTERIOR_FAR from the camera) the interior is a few dark pixels under the canopy:
+## it is hidden then (hundreds of small parts fewer to draw) and its gauges, lamps, controls, pilot and screens are
+## not updated (they catch up the moment the camera comes closer). The canopy, its glass and frame stay.
+const INTERIOR_FAR := 60.0
+var _interior: Node3D
+var _away := false
 # HUD: symbology drawn into a texture, shown collimated on the combiner glass
 var _hud_vp: SubViewport
 var _hud: Control
@@ -114,6 +120,7 @@ func setup(aircraft: Node3D, model: Node3D) -> void:
 	var root := (load(SCENE) as PackedScene).instantiate() as Node3D
 	root.name = "Interior"
 	add_child(root)
+	_interior = root
 	_apply_materials(root)
 	_index(root)
 	var canopy := model.find_child("Canopy", true, false) as Node3D
@@ -396,6 +403,17 @@ func _index(root: Node) -> void:
 # ------------------------------------------------------------------ per frame
 func _process(delta: float) -> void:
 	if not ready_ok or ac == null or ac.fm == null:
+		return
+	var cam0 := get_viewport().get_camera_3d()
+	var away: bool = not _inside and cam0 != null and cam0.global_position.distance_squared_to(global_position) > INTERIOR_FAR * INTERIOR_FAR
+	if away != _away:
+		_away = away
+		if _interior:
+			_interior.visible = not away
+	if away:
+		_update_cabin_lights(delta)
+		_update_precise()
+		_update_torch(delta)
 		return
 	var fm = ac.fm
 	var k := 1.0 - exp(-NEEDLE_RATE * delta)
