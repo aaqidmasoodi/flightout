@@ -161,6 +161,9 @@ var _gear_moving_visual := true
 var _vis_pos := Vector3.ZERO         # network correction still being blended out (view only)
 var _vis_rot := Quaternion.IDENTITY
 var _remote_crashed := false
+const REMOTE_DETAIL_FAR := 2500.0     # m: beyond this a remote jet's surfaces and gear are updated less often
+var _lod_dt := 0.0
+var _lod_n := 0
 var dev_pilot: Object = null     # development: a scripted pilot (scripts/dev/formation.gd) flies instead of the keys
 var _dev_fly := "--dev-fly" in OS.get_cmdline_user_args()   # development: a simple autopilot for netcode tests
 var _dev_gear_done := false
@@ -838,8 +841,17 @@ func apply_remote(pos: Vector3, q: Quaternion, vel: Vector3, omega: Vector3, d: 
 		sim_event.emit("crash" if fm.crashed else "reset", 0.0)
 	global_transform = Transform3D(fm.rot, fm.pos)
 	_sync_switches()
+	# the moving surfaces and the gear legs: every frame up close; far away (a few pixels on screen) only every
+	# sixth frame, catching up on the time in between. The jet itself is still placed every frame.
+	_lod_dt += delta
+	var cam := get_viewport().get_camera_3d()
+	if cam != null and cam.global_position.distance_squared_to(fm.pos) > REMOTE_DETAIL_FAR * REMOTE_DETAIL_FAR:
+		_lod_n += 1
+		if _lod_n % 6 != 0:
+			return
 	_update_surfaces()
-	_update_gear_visuals(delta)
+	_update_gear_visuals(_lod_dt)
+	_lod_dt = 0.0
 
 
 func _add_callsign() -> void:
