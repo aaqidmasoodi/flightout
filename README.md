@@ -4,6 +4,17 @@
 
 A flight game built in Godot 4, starring a fully animated Su-27 Flanker.
 
+[![FlightOut on YouTube](https://img.youtube.com/vi/SrfLZZcuo8Y/maxresdefault.jpg)](https://www.youtube.com/watch?v=SrfLZZcuo8Y)
+
+**Watch:** [FlightOut on YouTube](https://www.youtube.com/watch?v=SrfLZZcuo8Y)
+
+| | |
+|---|---|
+| ![Through the clouds](docs/screenshots/through-the-clouds.jpg) | ![High altitude, contrails at dusk](docs/screenshots/high-altitude-contrails.jpg) |
+| ![Cockpit](docs/screenshots/cockpit.jpg) | ![Cockpit at altitude](docs/screenshots/cockpit-high-altitude.jpg) |
+| ![Low level over Kashmir](docs/screenshots/low-level.jpg) | ![Map screen](docs/screenshots/map.jpg) |
+| ![Main menu](docs/screenshots/main-menu.jpg) | |
+
 ## Download and play
 Get the latest build from [Releases](https://github.com/aaqidmasoodi/flightout/releases). FlightOut is in alpha.
 
@@ -32,7 +43,8 @@ lined up on the runway at Srinagar (8), Leh (4) and Skardu (4).
 
 ## Features
 - The whole Kashmir region at real scale (Kashmir valley, Ladakh, Gilgit-Baltistan, Aksai Chin) from Copernicus 30 m elevation and ESA land cover, streamed with continuous level of detail, Earth curvature, terrain shadows and aerial haze; real airfields with lit runways (edge, threshold, approach lights and PAPI)
-- Map screen (M) with airfields, your track and position
+- Volumetric clouds you can fly through: cumulus, broken, overcast and fog decks at varied heights, sunlit and self-shadowed, casting shadows on the ground, to the horizon from altitude; sunlit contrails
+- Map screen (M): opens close around you, sharp detail as you zoom in, Kashmir's border, airfields with runways, your track; a ruler (right drag) for bearing, distance and time between any two points, holding on to jets, airfields and marks
 - Su-27 model built at real scale in Blender, with animated landing gear, canopy, airbrake, radome, radar dish, flaperons, slats, stabilators and rudders
 - Physics-based flight model: lift and induced drag from angle of attack, transonic wave drag, thrust with afterburner and altitude lapse, gravity, air density, fly-by-wire rate commands with AoA and G limiting
 - Nose-wheel steering (tiller works even when stopped), wheel brakes, judged landings, terrain and sea collisions
@@ -72,7 +84,7 @@ Settings → Weather: time presets (night, dawn, morning, noon, afternoon, sunse
 - `scripts/world/sky_system.gd`: sun and moon positions from the hour at a 34°N latitude; light colour and strength, ambient light, fog, exposure and glow keyed to the sun's elevation; weather eases in smoothly; above an overcast deck the sky is clear; rain particles and rain sound.
 - `shaders/sky.gdshader`: sky colour by sun elevation, sun disc and glow, moon, stars, high cirrus.
 - Distant water fades into the horizon haze like the land.
-- `scripts/world/volumetric_clouds.gd` + `shaders/clouds_march.glsl`, `clouds_resolve.glsl`, `clouds_composite.glsl`: raymarched volumetric clouds as a compositor effect in three GPU passes. March (half resolution): 3D Perlin-Worley density with detail erosion, a weather map and varied layer heights; adaptive stepping (large steps through empty air, small steps inside cloud); blue-noise ray offsets; Beer-Lambert self-shadowing, powder and multiple-scattering lighting; stores cloud start and end distances. Resolve: temporal accumulation with wind-aware reprojection and motion-adaptive neighbourhood clipping (no trails). Composite (full resolution): cubic B-spline upsampling with each sample trimmed against the pixel's exact depth, so clouds behind an object never cover it.
+- `scripts/world/volumetric_clouds.gd` + `shaders/clouds_*.glsl` (one cloud model in `shaders/include/clouds_common.glslinc`): raymarched volumetric clouds as compositor effects on the GPU. A weather map over the whole map (coverage, cloud type, height, clustering) shapes Perlin-Worley clouds that are fixed in the world and drift with the wind; their size and shading do not change with where you look from, only the sharpness of their edges. A shadow map in two cascades shades the clouds themselves and casts their shadows on the terrain, trees, trails and jets. Far clouds come from integrated column maps, so the deck reaches the horizon without noise. March at half resolution with fine steps near the camera, temporal resolve with Catmull-Rom history, and a full-resolution composite that splits the cloud in front of and behind each surface (no fringes on the jet with MSAA).
 
 ## Terrain and forests
 - One forest density map is computed from the heightmap: dense woods on hillsides, groves in the lowlands, a treeline near 1,100 m, nothing on steep rock or beaches. The terrain shader paints forest floor from the same map.

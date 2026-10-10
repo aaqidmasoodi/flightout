@@ -4,7 +4,7 @@ extends Node
 
 const MENU_SCENE := "res://scenes/menu.tscn"
 const GAME_SCENE := "res://scenes/main.tscn"
-const VERSION := "0.3.1 Alpha"
+const VERSION := "0.4.0 Alpha"
 
 var _cache := {}
 var client: Node                     # net/client.gd, always present
