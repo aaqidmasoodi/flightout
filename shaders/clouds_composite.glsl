@@ -40,7 +40,13 @@ vec4 trimmed(ivec2 hp, float dist) {
 		return dist >= 1e8 ? c : vec4(0.0, 0.0, 0.0, 1.0);
 	}
 	// nearer than where the sample stopped (the jet in front of the clouds): the share of its cloud in front of it
-	float k = clamp((dist - d.x) / max(d.y - d.x, 30.0), 0.0, 1.0);
+	// The light builds up front-loaded, as light through cloud does: exponentially from where the cloud starts, over
+	// the length its opacity-weighted depth gives (z - x), between its start and end. (Spread evenly over the whole
+	// span, a jet 20 m into a deck kilometres deep was given almost none of the cloud in front of it, and the share
+	// flipped from texel to texel: speckle all over the jet in cloud.)
+	float L = max(d.z - d.x, 5.0);
+	float span = max(d.y - d.x, 1.0);
+	float k = clamp((1.0 - exp(-max(dist - d.x, 0.0) / L)) / max(1.0 - exp(-span / L), 1e-4), 0.0, 1.0);
 	return vec4(c.rgb * k, mix(1.0, c.a, k));
 }
 

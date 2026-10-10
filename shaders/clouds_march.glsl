@@ -257,7 +257,10 @@ void main() {
 		int steps = int(p.steps.x);
 		float seg = max(march_end - t0, 0.0);
 		float dt = clamp(seg / float(steps), 25.0, 250.0);
-		float t = t0 + dt * jitter;
+		// near the camera the steps are a fraction of the distance (a few metres at first): flying in cloud, the jet
+		// and the cloud just around it are tens of metres away, and steps of 25 m and more, jittered, left each pixel
+		// a different share of that cloud: speckle over everything, the jet worst
+		float t = t0 + min(dt, max(2.0, t0 * 0.2)) * jitter;
 		int fine_left = 0;
 		int expensive = 0;
 		float last_step = dt;
@@ -268,8 +271,8 @@ void main() {
 			if (t > march_end || T < 0.01 || expensive >= max_dense) {
 				break;
 			}
-			float big = dt * (1.0 + t / 12000.0);
-			float fine = clamp(big * 0.35, 30.0, 160.0) * (1.0 + t / 9000.0);
+			float big = min(dt * (1.0 + t / 12000.0), max(8.0, t * 0.3));
+			float fine = min(clamp(big * 0.35, 30.0, 160.0) * (1.0 + t / 9000.0), max(2.0, t * 0.2));
 			vec3 sp = ro + rd * t;
 			vec2 dc = sp.xz - ro.xz;
 			vec3 mp = vec3(sp.x + omap.x, sp.y + dot(dc, dc) * curve, sp.z + omap.y);

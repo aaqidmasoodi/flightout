@@ -134,7 +134,7 @@ void main() {
 				// behind it; trusted loosely, they smeared along the motion
 				float k = mix(mix(1.25, 3.5, match), 1.0, moving);
 				h = clip_box(h, m1 - k * sigma, m1 + k * sigma);
-				float w = p.amb_top.w * mix(0.75, 1.0, match) * mix(1.0, 0.8, moving);
+				float w = p.amb_top.w * mix(0.75, 1.0, match) * mix(1.0, 0.9, moving);
 				// the current frame lightly filtered (its noise is what the history averages away)
 				vec4 cf = mix(c, m1, max(mix(0.6, 0.25, match), 0.5 * moving));
 				result = mix(cf, h, w);
