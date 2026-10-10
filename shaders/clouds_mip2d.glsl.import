@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://bvh6pclpq4qfg"
+path="res://.godot/imported/clouds_mip2d.glsl-0958f8ba95271e4b5354f24f208375ce.res"
+
+[deps]
+
+source_file="res://shaders/clouds_mip2d.glsl"
+dest_files=["res://.godot/imported/clouds_mip2d.glsl-0958f8ba95271e4b5354f24f208375ce.res"]
+
+[params]
+

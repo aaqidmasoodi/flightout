@@ -81,8 +81,14 @@ float profile(float h, float type) {
 
 // Density at a point (true frame). lod: the shape noise level for this sample's footprint (0 sharpest); detail_amt:
 // how much the detail noise erodes the edges (0 far away). h_out: the height in the layer (0..1), for lighting.
+float density_in(vec3 mp, Column c, float lod, float detail_amt, out float h_out);
+
 float density(vec3 mp, float lod, float detail_amt, out float h_out) {
-	Column c = column(mp.xz);
+	return density_in(mp, column(mp.xz), lod, detail_amt, h_out);
+}
+
+// the same, with the column already known (the march reads it once per step for its empty-space skipping)
+float density_in(vec3 mp, Column c, float lod, float detail_amt, out float h_out) {
 	float h = (mp.y - c.base) / max(c.top - c.base, 60.0);
 	h_out = saturate(h);
 	if (h <= 0.0 || h >= 1.0 || c.cov <= 0.002) {

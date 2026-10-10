@@ -93,6 +93,7 @@ var _sh_centre := [Vector2(INF, INF), Vector2(INF, INF)]
 var _sh_phase := 0
 var _cam_buf := RID()
 var _far := [RID(), RID()]
+var _far_levels := [[], []]       # one view per mip level (the build writes level 0, the mip pass the rest)
 var _far_front := 0
 var _far_centre := [Vector2.ZERO, Vector2.ZERO]   # wind space
 var _far_valid := [false, false]
@@ -160,7 +161,7 @@ func _on_origin_shifted(delta: Vector3) -> void:
 
 
 func _setup() -> void:
-	for n in ["noise", "mip", "weather", "shadow", "far", "march", "resolve", "composite"]:
+	for n in ["noise", "mip", "mip2d", "weather", "shadow", "far", "march", "resolve", "composite"]:
 		var spirv := (load("res://shaders/clouds_%s.glsl" % n) as RDShaderFile).get_spirv()
 		if spirv.compile_error_compute != "":
 			push_error("Clouds: %s shader: %s" % [n, spirv.compile_error_compute])
@@ -186,8 +187,17 @@ func _setup() -> void:
 	_sh[1] = _target(RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, Vector2i(SH1_N, SH1_N))
 	for i in 2:
 		_rd.texture_clear(_sh[i], Color(0.0, 0.0, 0.0, 1.0), 0, 1, 0, 1)
-		_far[i] = _target(RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, Vector2i(FAR_N, FAR_N))
-		_rd.texture_clear(_far[i], Color(0.0, 0.0, 0.0, 1.0), 0, 1, 0, 1)
+		var ff := RDTextureFormat.new()
+		ff.format = RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT
+		ff.width = FAR_N
+		ff.height = FAR_N
+		ff.mipmaps = int(log(float(FAR_N)) / log(2.0)) + 1
+		ff.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT \
+			| RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT
+		_far[i] = _rd.texture_create(ff, RDTextureView.new())
+		_rd.texture_clear(_far[i], Color(0.0, 0.0, 0.0, 1.0), 0, ff.mipmaps, 0, 1)
+		for lv in ff.mipmaps:
+			_far_levels[i].append(_rd.texture_create_shared_from_slice(RDTextureView.new(), _far[i], 0, lv, 1, RenderingDevice.TEXTURE_SLICE_2D))
 	var inf := RDTextureFormat.new()
 	inf.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
 	inf.width = 4
@@ -410,7 +420,7 @@ func _model_uniforms() -> Array:
 func _usable() -> bool:
 	if _blue_rid.is_valid():
 		_blue = RenderingServer.texture_get_rd_texture(_blue_rid)
-	return _pipes.size() >= 8 and _generated and _blue.is_valid() and _rd.texture_is_valid(_blue) and coverage > 0.001 and active
+	return _pipes.size() >= 9 and _generated and _blue.is_valid() and _rd.texture_is_valid(_blue) and coverage > 0.001 and active
 
 
 ## Before the opaque pass: the parameters for this frame, the shadow map and the camera's sunlight.
@@ -450,6 +460,13 @@ func _shadow_callback(render_data: RenderData) -> void:
 			full[c] = true
 	# the far-cloud map: a finished copy takes over, then the next is begun around where the camera is now
 	if _far_row >= FAR_N:
+		# finished: its mip levels (the march picks the level of each pixel's footprint: no aliasing far away)
+		var fbk := 1 - _far_front
+		var msz := FAR_N
+		for lv in range(1, _far_levels[fbk].size()):
+			msz /= 2
+			_dispatch("mip2d", [_u_image(0, _far_levels[fbk][lv - 1]), _u_image(1, _far_levels[fbk][lv])], Vector2i(msz, msz),
+				PackedFloat32Array([float(msz), 0.0, 0.0, 0.0]))
 		_far_front = 1 - _far_front
 		_far_valid[_far_front] = true
 		_far_row = 0
@@ -459,7 +476,7 @@ func _shadow_callback(render_data: RenderData) -> void:
 	_write_params(cam_xf, proj, size)
 	var fb := 1 - _far_front
 	var fc: Vector2 = _far_centre[fb]
-	_dispatch("far", _model_uniforms() + [_u_image(6, _far[fb])], Vector2i(FAR_N, FAR_ROWS),
+	_dispatch("far", _model_uniforms() + [_u_image(6, _far_levels[fb][0])], Vector2i(FAR_N, FAR_ROWS),
 		PackedFloat32Array([fc.x, fc.y, FAR_HALF, float(_far_row), float(FAR_N), float(FAR_ROWS), 0.0, 0.0]))
 	_far_row += FAR_ROWS
 	var info := PackedFloat32Array([_sh_centre[0].x, _sh_centre[0].y, SH0_HALF, SH0_N,

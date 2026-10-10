@@ -176,7 +176,7 @@ void main() {
 		// back and walk it in small steps, so thin clouds never fall between two samples ----
 		int steps = int(p.steps.x);
 		float seg = max(march_end - t0, 0.0);
-		float dt = clamp(seg / float(steps), 25.0, 380.0);
+		float dt = clamp(seg / float(steps), 25.0, 250.0);
 		float t = t0 + dt * jitter;
 		int fine_left = 0;
 		int expensive = 0;
@@ -196,7 +196,23 @@ void main() {
 			// the noise level for this sample's footprint (a pixel's width at this distance)
 			float lod = max(log2(max(t * pix, 1.0) / shape_texel) + 0.5, 0.0);
 			float hh;
-			float cheap = density(mp, lod, 0.0, hh);
+			Column col = column(mp.xz);
+			// empty-space skipping by height: above or below this column's layer, jump to where the ray reaches it
+			// (at most 3 km on: the layer's height changes over the land). The slab every ray crosses spans all of
+			// Kashmir's valleys and peaks; without this most of a ray's steps went into the empty part of it.
+			if (fine_left == 0) {
+				float gap = 0.0;
+				if (mp.y > col.top && rd.y < -1e-3) {
+					gap = (mp.y - col.top) / -rd.y;
+				} else if (mp.y < col.base && rd.y > 1e-3) {
+					gap = (col.base - mp.y) / rd.y;
+				}
+				if (gap > big) {
+					t += min(gap - big * 0.5, 3000.0);
+					continue;
+				}
+			}
+			float cheap = density_in(mp, col, lod, 0.0, hh);
 			if (fine_left == 0) {
 				if (cheap > 0.0 && t - big > t0 - 1.0) {
 					t = max(t - big, t0);       // step back to the last empty sample, then walk in finely
@@ -221,7 +237,7 @@ void main() {
 			expensive++;
 			float detail_amt = 1.0 - smoothstep(near_end * 0.55, near_end, t);
 			float hgt;
-			float dens = density(mp, lod, detail_amt, hgt);
+			float dens = density_in(mp, col, lod, detail_amt, hgt);
 			// approaching the end of the march, hand over to the far-cloud map (which fades in over the same band)
 			dens *= 1.0 - smoothstep(p.ranges.y * 0.75, p.ranges.y, t);
 			if (dens > 0.0) {
@@ -279,6 +295,7 @@ void main() {
 				}
 				// where the ray meets this height of the local cloud (the height comes from the map: iterate)
 				float tk = max(fa, (mix(p.cirrus.w, p.lights_n.y, frac) - ro.y) / (abs(rd.y) > 1e-4 ? rd.y : 1e-4));
+				const float FAR_TEXEL = 2.0 * 120000.0 / 1024.0;
 				vec4 col = vec4(0.0);
 				bool hit = false;
 				vec3 sp = ro;
@@ -297,7 +314,10 @@ void main() {
 						float dfar = density_far(mp, hf);
 						col = vec4(dfar * EXT * (cc.top - cc.base), cc.base, cc.top, 0.0);
 					} else {
-						col = textureLod(far_tex, uv, 0.0);
+						// the map's mip level for this pixel's footprint on it, stretched along the ray at a grazing
+						// view (the larger of the two: blur rather than alias into streaks)
+						float fp = tk * pix * min(slant, 8.0);
+						col = textureLod(far_tex, uv, max(log2(fp / FAR_TEXEL), 0.0));
 					}
 					float y_true = mix(col.y, col.z, frac);
 					float yr = y_true - dot(dc, dc) * curve;

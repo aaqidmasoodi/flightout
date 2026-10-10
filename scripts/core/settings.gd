@@ -234,7 +234,7 @@ const PRESETS := [
 ## Cloud quality: ray steps and light samples, the most loop iterations and in-cloud (expensive) samples a ray may
 ## take, and the march resolution (div: 2 = half, 4 = quarter of the screen; the composite upsamples smoothly).
 # march: metres of full raymarch (beyond it the far field to the horizon); near: metres of edge detail
-const CLOUD_LEVELS := [{"steps": 28, "light": 1, "radiance": 64, "iters": 128, "dense": 32, "div": 2, "march": 12000.0, "near": 4000.0},
+const CLOUD_LEVELS := [{"steps": 32, "light": 1, "radiance": 64, "iters": 140, "dense": 40, "div": 2, "march": 12000.0, "near": 4000.0},
 	{"steps": 48, "light": 2, "radiance": 128, "iters": 200, "dense": 56, "div": 2, "march": 16000.0, "near": 6000.0},
 	{"steps": 64, "light": 3, "radiance": 128, "iters": 260, "dense": 80, "div": 2, "march": 20000.0, "near": 8000.0},
 	{"steps": 96, "light": 4, "radiance": 256, "iters": 320, "dense": 110, "div": 2, "march": 26000.0, "near": 10000.0}]
