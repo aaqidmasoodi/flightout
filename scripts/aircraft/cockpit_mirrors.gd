@@ -61,6 +61,7 @@ var _fold_shown := -1.0
 var _dev_dir := ""                           # development: --dev-mirror-shot=<dir> saves the shared picture
 var _dev_t := 0.0
 var _frame_n := 0
+var _fold_deg := FOLD_DEG
 
 
 ## Middle of the arch's band at an angle from the top (metres from its centre line).
@@ -161,6 +162,8 @@ func build(aircraft: Node3D, root: Node3D, pads: MeshInstance3D, eye: Vector3, m
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--dev-mirror-shot="):
 			_dev_dir = arg.trim_prefix("--dev-mirror-shot=")
+		elif arg.begins_with("--dev-mirror-fold="):        # development: try another fold angle
+			_fold_deg = arg.trim_prefix("--dev-mirror-fold=").to_float()
 	# the setting decides how they start (and folds or unfolds them when it is changed); the key does it in flight
 	ac.set("mirrors_folded", not bool(Settings.get_value("graphics/mirrors")))
 	_fold = 1.0 if ac.get("mirrors_folded") else 0.0
@@ -216,7 +219,7 @@ func _show_fold() -> void:
 	if _fold == _fold_shown:
 		return
 	_fold_shown = _fold
-	var a := deg_to_rad(FOLD_DEG) * smoothstep(0.0, 1.0, _fold)
+	var a := deg_to_rad(_fold_deg) * smoothstep(0.0, 1.0, _fold)
 	for m in _mirrors:
 		(m.pivot as Node3D).transform.basis = (m.basis as Basis) * Basis(Vector3.RIGHT, -a)
 	var was := _on
