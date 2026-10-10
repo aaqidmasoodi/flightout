@@ -141,22 +141,22 @@ func _add_lamp(n: String, color: Color, emission: float, energy: float, light_ra
 		light.distance_fade_length = 100.0
 		mi.add_child(light)
 	if halo > 0.0:
-		# the lamp as seen from a distance: a soft point of light that keeps its size on screen (fixed size),
-		# so a nav light reads as a light from far away instead of a few sub-pixel emissive triangles
+		# the lamp as seen from a distance: a soft glow around it, sized in metres (it shrinks with the jet), at
+		# least a couple of pixels (it still reads as a light far away), fading with range and haze
+		# (shaders/nav_light.gdshader)
 		var q := MeshInstance3D.new()
 		var qm := QuadMesh.new()
-		qm.size = Vector2(halo, halo)
+		qm.size = Vector2.ONE
 		q.mesh = qm
-		var hm := StandardMaterial3D.new()
-		hm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		hm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		hm.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-		hm.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
-		hm.fixed_size = true
-		hm.no_depth_test = false
-		hm.albedo_texture = _halo_tex()
-		hm.albedo_color = Color(color.r, color.g, color.b, 1.0) * 2.2
+		var hm := ShaderMaterial.new()
+		hm.shader = NAV_LIGHT
+		hm.set_shader_parameter("glow", _halo_tex())
+		hm.set_shader_parameter("color", Color(color.r, color.g, color.b))
+		hm.set_shader_parameter("intensity", 2.2)
+		hm.set_shader_parameter("size_m", halo * 16.0)     # (the old screen-fixed sizes, as metres around the lamp)
+		preload("res://scripts/world/surface_materials.gd").add_haze_material(hm)
 		q.material_override = hm
+		q.extra_cull_margin = 4.0
 		q.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		q.visible = false
 		mi.add_child(q)
@@ -164,6 +164,7 @@ func _add_lamp(n: String, color: Color, emission: float, energy: float, light_ra
 	_lamps[n] = {"mat": m, "light": light, "emission": emission, "energy": energy}
 
 
+const NAV_LIGHT := preload("res://shaders/nav_light.gdshader")
 static var _halo_texture: Texture2D
 
 ## Soft round glow: a bright core with a quickly falling skirt.
@@ -226,9 +227,8 @@ func _process(delta: float) -> void:
 		_night_set = night
 		for hn in _halos:
 			var hq := _halos[hn] as MeshInstance3D
-			var hmat := hq.material_override as StandardMaterial3D
-			var base: Color = _lamps[hn].mat.emission
-			hmat.albedo_color = Color(base.r, base.g, base.b, 1.0) * 2.2 * night
+			var hmat := hq.material_override as ShaderMaterial
+			hmat.set_shader_parameter("intensity", 2.2 * night)
 	# navigation lights: steady
 	for n in ["Light_Nav_L", "Light_Nav_R", "Light_Tail_L", "Light_Tail_R"]:
 		_set_lamp(n, on)

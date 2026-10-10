@@ -17,14 +17,16 @@ extends RefCounted
 
 const G := 9.80665
 # metres of head travel per G of push, beyond the 1 G of sitting still (and the limits the seat and harness allow)
-const GAIN := Vector3(0.022, 0.008, 0.016)            # sideways, up and down, fore and aft
-const LIMIT_LO := Vector3(-0.06, -0.065, -0.035)      # left, down (under G), forward (braking: the harness holds)
-const LIMIT_HI := Vector3(0.06, 0.035, 0.05)          # right, up (pushing: the canopy is close), back (into the seat)
-const NECK_HZ := 2.0                                   # the neck's natural frequency
-const NECK_DAMPING := 0.6                              # < 1: the slight overshoot that reads as weight
+const GAIN := Vector3(0.03, 0.0105, 0.024)            # sideways, up and down, fore and aft (sustained push)
+const ONSET := Vector3(0.025, 0.012, 0.03)             # extra for a change in push, which then washes out
+const ONSET_TAU := 1.2                                 # s: how long the onset "kick" lasts before it settles
+const LIMIT_LO := Vector3(-0.08, -0.09, -0.05)         # left, down (under G), forward (braking: the harness holds)
+const LIMIT_HI := Vector3(0.08, 0.045, 0.07)           # right, up (pushing: the canopy is close), back (into the seat)
+const NECK_HZ := 1.7                                   # the neck's natural frequency
+const NECK_DAMPING := 0.5                              # < 1: the overshoot that reads as weight
 const INPUT_HZ := 3.0                                  # only motions slower than this move the head
-const NOD_PER_G := 0.5                                 # degrees the head nods forward per G
-const ROLL_LAG := 0.02                                 # radians of head roll per rad/s of roll rate (lags the roll)
+const NOD_PER_G := 0.7                                 # degrees the head nods forward per G
+const ROLL_LAG := 0.03                                 # radians of head roll per rad/s of roll rate (lags the roll)
 
 var amount := 1.0                                      # 0 off, 0.5 reduced, 1 full (setting cockpit/head_motion)
 var shake_amount := 1.0                                # setting cockpit/shake
@@ -35,6 +37,7 @@ var _prev_pos := Vector3.ZERO                          # last step's, to interpo
 var _rot := Vector3.ZERO                               # nod (x), roll (z) radians
 var _prev_rot := Vector3.ZERO
 var _f := Vector3(0.0, 1.0, 0.0)                       # low-passed specific force (G, jet axes)
+var _f_slow := Vector3(0.0, 1.0, 0.0)                  # ... and slower still: the difference is the onset
 var _last_vel := Vector3.ZERO
 var _have := false
 var _shake := 0.0                                      # current shake amplitude (degrees) and its character
@@ -56,6 +59,7 @@ func reset() -> void:
 	_rot = Vector3.ZERO
 	_prev_rot = Vector3.ZERO
 	_f = Vector3(0.0, 1.0, 0.0)
+	_f_slow = _f
 	_have = false
 
 
@@ -80,9 +84,13 @@ func physics_step(dt: float, fm) -> void:
 		_have = true
 		return
 	_f = _f.lerp(f, 1.0 - exp(-TAU * INPUT_HZ * dt))
+	_f_slow = _f_slow.lerp(_f, 1.0 - exp(-dt / ONSET_TAU))
 	var push := _f - Vector3(0.0, 1.0, 0.0)
+	# onset: the body feels a change of push most (the "kick" of the take-off roll, of a pull, of the touchdown),
+	# then settles to the sustained part (as motion platforms wash out)
+	var onset := _f - _f_slow
 	# the head moves against the push: sinks under G, back under acceleration, outward in a skid
-	var target := Vector3(-push.x * GAIN.x, -push.y * GAIN.y, -push.z * GAIN.z) * amount
+	var target := -(push * GAIN + onset * ONSET) * amount
 	target = target.clamp(LIMIT_LO, LIMIT_HI)
 	var w := TAU * NECK_HZ
 	_vel += (w * w * (target - _pos) - 2.0 * NECK_DAMPING * w * _vel) * dt
@@ -105,7 +113,7 @@ func physics_step(dt: float, fm) -> void:
 	for e in fm.engines:
 		ab = maxf(ab, float(e.ab))
 	var brake: float = float(fm.airbrake_pos) * clampf(float(fm.ias) / 200.0, 0.0, 1.0)
-	var want := buffet * 0.4 + transonic * 0.12 + rough + ab * 0.025 + brake * 0.05
+	var want := buffet * 0.55 + transonic * 0.16 + rough * 1.3 + ab * 0.035 + brake * 0.07
 	_shake += (want - _shake) * (1.0 - exp(-dt / 0.12))
 	var lo := rough / maxf(want, 1e-4)
 	_shake_lo += (lo - _shake_lo) * (1.0 - exp(-dt / 0.3))
