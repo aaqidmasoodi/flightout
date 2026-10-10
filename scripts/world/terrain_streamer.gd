@@ -61,6 +61,9 @@ var _log_stats := "--terrain-stats" in OS.get_cmdline_user_args()
 var _pending := {}                 # key -> true while a worker reads it
 var _done: Array = []              # [key, heights, cover] read by workers, waiting for upload
 var _mutex := Mutex.new()
+var _tasks: Array[int] = []           # worker tasks started and not yet collected (each must be waited on once)
+var _view_far := -1.0
+var _shadow_bake: RefCounted          # the mountains' shadows for the whole map (scripts/world/terrain_shadow_bake.gd)
 var _curve := 0.0                  # earth_curve shader global (large maps), for culling
 var _overview_tex: Texture2D       # kept alive while in use (cast shadows)
 var _reached := 0                  # resident tiles the quadtree needs this frame
@@ -126,6 +129,10 @@ func setup(path: String) -> bool:
 	material.set_shader_parameter("h_scale", h_scale * 65535.0)
 	material.set_shader_parameter("h_offset", h_offset)
 	material.set_shader_parameter("debug_lod", "--terrain-lod" in OS.get_cmdline_user_args())
+	material.set_shader_parameter("lite", int(Settings.get_value("graphics/terrain_detail")) == 0)
+	Settings.changed.connect(func(k, v):
+		if k == "graphics/terrain_detail" and material:
+			material.set_shader_parameter("lite", int(v) == 0))
 	_mm = MultiMesh.new()
 	_mm.transform_format = MultiMesh.TRANSFORM_3D
 	_mm.use_custom_data = true
@@ -148,7 +155,7 @@ func setup(path: String) -> bool:
 	process_priority = 200            # after the camera has moved this frame: culling uses this frame's view
 	RenderingServer.global_shader_parameter_set("terrain_shadow", 0.0)
 	if meta.has("overview") and FileAccess.file_exists(dir.path_join("overview.bin")):
-		WorkerThreadPool.add_task(_load_overview)
+		_tasks.append(WorkerThreadPool.add_task(_load_overview))
 	return true
 
 
@@ -179,6 +186,9 @@ func _overview_ready(img: Image, ov: Dictionary) -> void:
 	RenderingServer.global_shader_parameter_set("overview_rect", Vector4(x0, z0, 1.0 / (img.get_width() * s), 1.0 / (img.get_height() * s)))
 	RenderingServer.global_shader_parameter_set("terrain_shadow", 0.0 if "--no-terrain-shadow" in OS.get_cmdline_user_args() else 1.0)
 	_overview_tex = tex
+	_shadow_bake = preload("res://scripts/world/terrain_shadow_bake.gd").new()
+	if not _shadow_bake.setup(tex, Vector4(x0, z0, 1.0 / (img.get_width() * s), 1.0 / (img.get_height() * s)), s):
+		_shadow_bake = null
 	print("TERRAIN overview %d x %d loaded (cast shadows)" % [img.get_width(), img.get_height()])
 
 
@@ -198,6 +208,8 @@ func _height_range(level: int, i: int, j: int) -> Vector2:
 
 
 func _process(_delta: float) -> void:
+	if _shadow_bake:
+		_shadow_bake.update()
 	var cam := get_viewport().get_camera_3d()
 	if cam == null or _mm == null:
 		return
@@ -206,7 +218,9 @@ func _process(_delta: float) -> void:
 	_cam_map = WorldData.to_world(cam.global_position)
 	_planes = cam.get_frustum()
 	_curve = WorldData.EARTH_CURVE if WorldData.is_large() else 0.0
-	material.set_shader_parameter("view_far", cam.far)      # the aerial perspective closes in on the far plane
+	if cam.far != _view_far:
+		_view_far = cam.far
+		material.set_shader_parameter("view_far", cam.far)      # the aerial perspective closes in on the far plane
 	_draw.clear()
 	_wanted.clear()
 	_reached = 0
@@ -298,6 +312,7 @@ func _select(level: int, i: int, j: int, vis: bool) -> void:
 
 
 func _stream() -> void:
+	_collect_tasks()
 	# upload what the workers have finished
 	_mutex.lock()
 	var ready := _done.slice(0, LOADS_PER_FRAME)
@@ -310,7 +325,7 @@ func _stream() -> void:
 		if _apply(r[0], r):
 			stats.loads += 1
 	# start reading the most wanted tiles (only while the pool has room for them: tiles in use are never recycled)
-	if _wanted.is_empty() or _reached + _pending.size() >= POOL:
+	if _wanted.is_empty() or _reached + _pending.size() >= POOL or _pending.size() >= MAX_IN_FLIGHT:
 		return
 	var keys := _wanted.keys()
 	keys.sort_custom(func(a, b): return _wanted[a] < _wanted[b])
@@ -320,7 +335,28 @@ func _stream() -> void:
 		if _pending.has(k) or _layer_of.has(k):
 			continue
 		_pending[k] = true
-		WorkerThreadPool.add_task(_worker.bind(k))
+		_tasks.append(WorkerThreadPool.add_task(_worker.bind(k)))
+
+
+## Finished worker tasks are waited on (which returns at once) so the pool can release them.
+func _collect_tasks() -> void:
+	var i := 0
+	while i < _tasks.size():
+		if WorkerThreadPool.is_task_completed(_tasks[i]):
+			WorkerThreadPool.wait_for_task_completion(_tasks[i])
+			_tasks.remove_at(i)
+		else:
+			i += 1
+
+
+## Leaving the flight: the workers still reading tiles call back into this node, so they must finish first.
+func _exit_tree() -> void:
+	if _shadow_bake:
+		_shadow_bake.release()
+		_shadow_bake = null
+	for id in _tasks:
+		WorkerThreadPool.wait_for_task_completion(id)
+	_tasks.clear()
 
 
 func _worker(key: int) -> void:

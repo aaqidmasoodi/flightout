@@ -15,6 +15,7 @@ uniform int cap = 64;                 // ring size
 uniform int head = 0;                 // ring index of the newest stored point
 uniform int count = 0;                // stored points
 uniform vec4 live = vec4(0.0);        // xyz emitter position now, w intensity now
+uniform vec3 shift = vec3(0.0);       // floating origin moves since the points were stored (scene = stored - shift)
 uniform float now = 0.0;              // the trail's clock (seconds; stops while the game is paused)
 uniform float lifetime = 2.0;
 uniform float width0 = 0.5;           // metres at birth
@@ -35,7 +36,8 @@ vec4 pt(int j) {
 	if (j <= 0) {
 		return vec4(live.xyz, now);
 	}
-	return texelFetch(points, ivec2((head - (j - 1) + cap * 4) % cap, 0), 0);
+	vec4 p = texelFetch(points, ivec2((head - (j - 1) + cap * 4) % cap, 0), 0);
+	return vec4(p.xyz - shift, p.w);
 }
 
 float inten(int j) {

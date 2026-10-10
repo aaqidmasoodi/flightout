@@ -6,7 +6,7 @@ extends CompositorEffect
 ##   3. composite (full resolution): depth-aware upsample; each pixel trims the clouds to what lies in front of it
 ## The sky system sets the public parameters every frame from the time of day and weather.
 
-const UBO_FLOATS := 100         # 3 mat4 + 13 vec4
+const UBO_FLOATS := 104         # 3 mat4 + 14 vec4
 
 var sun_dir := Vector3.UP
 var light_intensity := 1.0
@@ -26,6 +26,10 @@ var wind := Vector2.ZERO
 var max_distance := 40000.0
 var primary_steps := 72
 var light_steps := 3
+var max_iterations := 320       # loop iterations per ray (cheap steps through air included)
+var max_dense := 96             # samples inside cloud per ray (the expensive ones)
+var resolution_div := 2         # march at 1/2 (or 1/4) of the screen
+var active := true              # graphics/volumetric_clouds
 var height_variation := 450.0   # metres the layer base and the cloud tops wander across the map
 var hor_toward := Color(0.6, 0.7, 0.8)   # sky colour at the horizon towards the sun (aerial perspective)
 var hor_away := Color(0.6, 0.7, 0.8)
@@ -152,7 +156,8 @@ func _ensure_layer(size: Vector2i) -> void:
 
 
 func _ensure_targets(size: Vector2i) -> void:
-	var hs := Vector2i(maxi((size.x + 1) / 2, 1), maxi((size.y + 1) / 2, 1))
+	var dv := 4 if resolution_div >= 4 else 2
+	var hs := Vector2i(maxi((size.x + dv - 1) / dv, 1), maxi((size.y + dv - 1) / dv, 1))
 	if hs == _half_size and _raw_color.is_valid():
 		return
 	for r in _all_targets():
@@ -216,7 +221,7 @@ func _dispatch(name: String, uniforms: Array, size: Vector2i) -> void:
 
 
 func _render_callback(_type: int, render_data: RenderData) -> void:
-	if _pipes.size() < 3 or _noise.size() < 5 or coverage <= 0.001:
+	if _pipes.size() < 3 or _noise.size() < 5 or coverage <= 0.001 or not active:
 		_has_history = false
 		if _layer.is_valid():
 			_rd.texture_clear(_layer, Color(1.0, 60000.0, 0.0, 1.0), 0, 1, 0, 1)   # clear sky: nothing hides
@@ -264,6 +269,7 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	data.append_array([1.0 if _has_history else 0.0, hw, height_variation, WorldData.origin_z])   # w: origin z
 	data.append_array([hor_toward.r, hor_toward.g, hor_toward.b, sun_xz.x])
 	data.append_array([hor_away.r, hor_away.g, hor_away.b, sun_xz.y])
+	data.append_array([float(max_iterations), float(max_dense), 0.0, 0.0])
 	var bytes := data.to_byte_array()
 	_rd.buffer_update(_ubo, 0, bytes.size(), bytes)
 	for view in buffers.get_view_count():

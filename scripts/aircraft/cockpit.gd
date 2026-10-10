@@ -57,16 +57,21 @@ var _seat_rest := Vector3.ZERO
 const LIMBS := {"UpperArm": 0.29, "Forearm": 0.25, "Thigh": 0.45, "Shin": 0.43}
 ## In the cockpit view you see your legs and nothing else of yourself (as in DCS): these parts stay visible.
 const SEEN_FROM_INSIDE := ["Thigh", "Shin", "Boot", "Sole", "Ankle", "Hip", "Pelvis", "Root"]
-# rear-view mirrors: one small camera looking aft from the canopy bow, its image split across both mirrors
-var _mirrors := {}                   # "L"/"R" -> MeshInstance3D
-var _mirror_vp: SubViewport
-var _mirror_cam: Camera3D
-const MIRROR_SIZE := Vector2i(448, 176)
+# rear-view mirrors on the canopy arch, each with its own true reflection
+var _mirror_set: Node                 # scripts/aircraft/cockpit_mirrors.gd
 # cockpit shadows: a tight first shadow cascade while inside, so small parts get crisp, steady shadows
 var _sun: DirectionalLight3D
 var _sun_splits := Vector3.ZERO
 const COCKPIT_LAYER := 1 << 19          # visual layer 20, see aircraft_effects.gd
 var _ck_meshes: Array[MeshInstance3D] = []   # meshes drawn with the precise cockpit transform
+var _casters: Array[MeshInstance3D] = []     # opaque cockpit meshes: they cast shadows only while you sit inside
+# precise transform bookkeeping (_update_precise): every node between a cockpit mesh and the aircraft root, its last
+# local transform, and per mesh the chain of those nodes; a mesh is re-sent only when a node in its chain moved
+var _ck_nodes: Array[Node3D] = []
+var _ck_node_xf: Array[Transform3D] = []
+var _ck_chains: Array = []                   # per mesh: PackedInt32Array of node indices, mesh first
+var _ck_mesh_xf: Array[Transform3D] = []     # per mesh: last aircraft-space transform sent
+var _ck_mesh_sent: PackedByteArray = PackedByteArray()
 var _ck_sent := {}                      # MeshInstance3D -> last model-to-eye transform sent
 var _precise_on := false
 var _inside := false
@@ -84,6 +89,15 @@ var _ap_knobs := {}                   # "SPD" -> [[node, rest basis], ...]
 var _ap_wheel_t := {}                 # knob id -> time of the last wheel step (fast spins take bigger steps)
 var _mfd_scr := {}                     # "MFD_L" -> screen MeshInstance3D
 var _mfds := {}                        # "MFD_L" -> Mfd control
+# cockpit screens are drawn into their own small pictures (SubViewports); they are re-drawn only as often as they
+# need to be: the HUD every frame in the cockpit, the MFDs and the autopilot panel at a steady rate, everything at a
+# couple of times a second when seen from outside (where they are a few pixels), see _display_due
+const MFD_HZ := 30.0
+const AP_HZ := 15.0
+const OUTSIDE_HZ := 2.0
+const DISPLAY_SCALE := [0.5, 0.75, 1.0]    # graphics/display_res: picture size against the design size
+var _disp_acc := {}                    # display key -> seconds since it was last drawn
+var _displays: Array = []              # [SubViewport, design size] for resizing with the setting
 var _osb := {}                         # OSB node -> [mfd name, slot, rest position]
 var _osb_down := {}                    # OSB node -> seconds it stays pressed in
 var _shade := 0.0                      # HUD sun shade: 0 stowed .. 1 deployed
@@ -110,12 +124,47 @@ func setup(aircraft: Node3D, model: Node3D) -> void:
 	if old:
 		old.visible = false
 	_hide_airframe_glass(model)
-	_setup_mirrors()
+	_setup_mirrors(cnp)
 	_setup_hud(root)
 	_setup_ap()
 	_setup_mfds()
 	_setup_cabin_lights(root)
+	_apply_display_res()
+	Settings.changed.connect(_on_setting)
 	ready_ok = true
+
+
+func _on_setting(key: String, _v) -> void:
+	if key == "graphics/display_res":
+		_apply_display_res()
+
+
+## The screens' pictures at the chosen resolution; their drawing keeps its design size (stretched to fit), so pages,
+## line widths and fonts are untouched and only the number of pixels changes.
+func _apply_display_res() -> void:
+	var k: float = DISPLAY_SCALE[clampi(int(Settings.get_value("graphics/display_res")), 0, DISPLAY_SCALE.size() - 1)]
+	for d in _displays:
+		var vp := d[0] as SubViewport
+		var design: Vector2i = d[1]
+		if not is_instance_valid(vp):
+			continue
+		vp.size_2d_override = design
+		vp.size_2d_override_stretch = true
+		vp.size = Vector2i(maxi(roundi(design.x * k), 16), maxi(roundi(design.y * k), 16))
+		vp.render_target_update_mode = SubViewport.UPDATE_ONCE    # redraw now at the new size
+	_disp_acc.clear()
+
+
+## Paces a screen: true (and the screen's picture is drawn this frame) once 1/hz seconds have passed since it was
+## last drawn; `out` gets the time since then, for the page's own clocks.
+func _display_due(key: String, vp: SubViewport, delta: float, hz: float) -> float:
+	var acc := float(_disp_acc.get(key, 0.0)) + delta
+	if acc < 1.0 / hz and _disp_acc.has(key):
+		_disp_acc[key] = acc
+		return -1.0
+	_disp_acc[key] = 0.0
+	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	return minf(acc, 0.5)
 
 
 # ------------------------------------------------------------------ materials
@@ -139,7 +188,11 @@ func _apply_materials(root: Node) -> void:
 			var round := m.name.begins_with("LMP_C_") or m.name.begins_with("LMP_RWR") or m.name.begins_with("LMP_GEAR") or m.name.begins_with("LMP_HUD")
 			m.set_instance_shader_parameter("use_legend", 0.0 if round else 1.0)
 			m.set_instance_shader_parameter("lit", 0.0)
-		m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF if _is_glass(m) else GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		# from outside the interior's own shadows are a few pixels under the canopy: it casts them only from inside
+		# (_set_cockpit_shadows), which keeps hundreds of small parts out of the shadow maps in the outside views
+		m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		if not _is_glass(m):
+			_casters.append(m)
 		# own render layer: the jet's exterior lights (beacons, strobes) cull it, so they never flash the cockpit
 		m.layers = COCKPIT_LAYER
 		var ours := true
@@ -332,8 +385,6 @@ func _index(root: Node) -> void:
 			if not _ap_knobs.has(kid):
 				_ap_knobs[kid] = []
 			_ap_knobs[kid].append([node, node.basis])
-		elif nm == "CNP_MirrorL" or nm == "CNP_MirrorR":
-			_mirrors[nm.right(1)] = node
 		elif nm == "PLT_Head":
 			_head = node
 		elif nm.begins_with("PLT_"):
@@ -431,26 +482,86 @@ func _update_precise() -> void:
 		if _precise_on:
 			_precise_on = false
 			_ck_sent.clear()
+			_ck_mesh_sent.fill(0)
 			for m in _ck_meshes:
 				if is_instance_valid(m):
 					m.set_instance_shader_parameter("ck_on", 0.0)
 		return
+	# aircraft -> eye, once for every mesh this frame
 	var eye := Transform3D(cam.get("_ck_look") as Basis, cam.get("_ck_eye") as Vector3).affine_inverse()
-	for m in _ck_meshes:
+	var eb := eye.basis
+	RenderingServer.global_shader_parameter_set(&"ck_eye0", Vector4(eb.x.x, eb.y.x, eb.z.x, eye.origin.x))
+	RenderingServer.global_shader_parameter_set(&"ck_eye1", Vector4(eb.x.y, eb.y.y, eb.z.y, eye.origin.y))
+	RenderingServer.global_shader_parameter_set(&"ck_eye2", Vector4(eb.x.z, eb.y.z, eb.z.z, eye.origin.z))
+	if _ck_chains.size() != _ck_meshes.size():
+		_build_ck_chains()
+	# which nodes moved since last frame (needles, switches, the stick, the canopy, the pilot's arms...)
+	var moved := PackedByteArray()
+	moved.resize(_ck_nodes.size())
+	for i in _ck_nodes.size():
+		var n := _ck_nodes[i]
+		if not is_instance_valid(n):
+			continue
+		var t := n.transform
+		if t != _ck_node_xf[i]:
+			_ck_node_xf[i] = t
+			moved[i] = 1
+	for mi in _ck_meshes.size():
+		var m := _ck_meshes[mi]
 		if not is_instance_valid(m) or m.material_override != null or not m.is_visible_in_tree():
+			if _ck_mesh_sent.size() > mi and _ck_mesh_sent[mi] == 1:
+				_ck_mesh_sent[mi] = 2      # hidden: brought up to date again as soon as it shows
 			continue
-		var p := eye * _aircraft_space(m)
-		var last = _ck_sent.get(m)
-		if last != null and (last as Transform3D).is_equal_approx(p):
+		var chain: PackedInt32Array = _ck_chains[mi]
+		var dirty := _ck_mesh_sent[mi] != 1
+		if not dirty:
+			for ni in chain:
+				if moved[ni] == 1:
+					dirty = true
+					break
+		if not dirty:
 			continue
-		_ck_sent[m] = p
+		# model -> aircraft from the cached local transforms (small numbers only)
+		var p := Transform3D.IDENTITY
+		for k in range(chain.size() - 1, -1, -1):
+			p = p * _ck_node_xf[chain[k]]
+		if _ck_mesh_sent[mi] == 1 and _ck_mesh_xf[mi] == p:
+			continue
+		var first := _ck_mesh_sent[mi] == 0
+		_ck_mesh_xf[mi] = p
 		var b := p.basis
 		m.set_instance_shader_parameter("ck_r0", Vector4(b.x.x, b.y.x, b.z.x, p.origin.x))
 		m.set_instance_shader_parameter("ck_r1", Vector4(b.x.y, b.y.y, b.z.y, p.origin.y))
 		m.set_instance_shader_parameter("ck_r2", Vector4(b.x.z, b.y.z, b.z.z, p.origin.z))
-		if last == null:
+		_ck_mesh_sent[mi] = 1
+		if first:
 			m.set_instance_shader_parameter("ck_on", 1.0)
 	_precise_on = true
+
+
+## For each cockpit mesh, the nodes from it up to (not including) the aircraft root, as indices into one shared list.
+func _build_ck_chains() -> void:
+	_ck_nodes.clear()
+	_ck_node_xf.clear()
+	_ck_chains.clear()
+	_ck_mesh_xf.clear()
+	var index := {}
+	for m in _ck_meshes:
+		var chain := PackedInt32Array()
+		var n: Node = m
+		while n != null and n != ac:
+			var n3 := n as Node3D
+			if n3:
+				if not index.has(n3):
+					index[n3] = _ck_nodes.size()
+					_ck_nodes.append(n3)
+					_ck_node_xf.append(n3.transform)
+				chain.append(int(index[n3]))
+			n = n.get_parent()
+		_ck_chains.append(chain)
+		_ck_mesh_xf.append(Transform3D.IDENTITY)
+	_ck_mesh_sent = PackedByteArray()
+	_ck_mesh_sent.resize(_ck_meshes.size())
 
 
 ## A node's transform relative to the aircraft root: the product of local transforms up the tree, so no
@@ -600,10 +711,8 @@ func _update_pilot() -> void:
 					keep = true
 			(e[1] as Node3D).visible = keep or not inside
 		_set_cockpit_shadows(inside)
-		if _mirror_vp:
-			_mirror_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS if inside else SubViewport.UPDATE_DISABLED
-	if inside:
-		_update_mirror_camera()
+	if _mirror_set:
+		_mirror_set.update(inside, cam, get_process_delta_time())
 	var b: Basis = global_basis
 	for side in [["L", 1.0], ["R", -1.0]]:
 		var sd: String = side[0]
@@ -647,50 +756,28 @@ func _aim(n: Node3D, from: Vector3, to: Vector3, side: Vector3) -> void:
 
 
 # ------------------------------------------------------------------ mirrors
-func _setup_mirrors() -> void:
-	if _mirrors.is_empty():
+func _setup_mirrors(cnp: Node3D) -> void:
+	if cnp == null:
 		return
-	_mirror_vp = SubViewport.new()
-	_mirror_vp.name = "MirrorView"
-	_mirror_vp.size = MIRROR_SIZE
-	_mirror_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
-	_mirror_vp.msaa_3d = Viewport.MSAA_DISABLED
-	_mirror_vp.positional_shadow_atlas_size = 0
-	add_child(_mirror_vp)
-	_mirror_cam = Camera3D.new()
-	_mirror_cam.fov = 62.0
-	_mirror_cam.near = 0.05
-	_mirror_cam.far = 20000.0
-	_mirror_cam.compositor = Compositor.new()     # no volumetric clouds in the mirrors: they cost a full pass
-	_mirror_vp.add_child(_mirror_cam)
-	_mirror_cam.current = true
-	var tex := _mirror_vp.get_texture()
-	# the camera looks aft; a mirror shows that image flipped, left half on the left mirror
-	for side in _mirrors:
-		var m := StandardMaterial3D.new()
-		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		m.albedo_texture = tex
-		m.albedo_color = Color(0.86, 0.88, 0.9)
-		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
-		m.uv1_scale = Vector3(-0.5, 1.0, 1.0)
-		m.uv1_offset = Vector3(1.0 if side == "L" else 0.5, 0.0, 0.0)
-		(_mirrors[side] as MeshInstance3D).material_override = m
-
-
-func _update_mirror_camera() -> void:
-	if _mirror_cam == null or not _mirrors.has("L") or not _mirrors.has("R"):
+	var pads := cnp.find_child("CNP_Root_CP_Pad", false, false) as MeshInstance3D
+	if pads == null or pads.mesh == null:
 		return
-	var a: Vector3 = (_mirrors["L"] as Node3D).global_transform * (_mirrors["L"] as MeshInstance3D).get_aabb().get_center()
-	var b: Vector3 = (_mirrors["R"] as Node3D).global_transform * (_mirrors["R"] as MeshInstance3D).get_aabb().get_center()
-	var basis := ac.global_basis
-	var pos := (a + b) * 0.5 + basis.y * 0.06
-	# aircraft forward is -Z: look along +Z (aft), slightly down over the seat
-	var back := (basis.z - basis.y * 0.08).normalized()
-	_mirror_cam.global_transform = Transform3D(Basis.looking_at(back, basis.y), pos)
+	_mirror_set = preload("res://scripts/aircraft/cockpit_mirrors.gd").new()
+	_mirror_set.name = "Mirrors"
+	add_child(_mirror_set)
+	var eye: Vector3 = ac.spec.cockpit_eye if ac.spec else Vector3(0.0, 1.18, -5.5)
+	for m in _mirror_set.build(ac, cnp, pads, eye, _material, COCKPIT_LAYER):
+		_ck_meshes.append(m)
+		if (m as MeshInstance3D).mesh is QuadMesh:
+			continue
+		_casters.append(m)
 
 
 # ------------------------------------------------------------------ shadows
 func _set_cockpit_shadows(inside: bool) -> void:
+	for m in _casters:
+		if is_instance_valid(m):
+			m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if inside else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	if _sun == null:
 		for l in get_tree().root.find_children("*", "DirectionalLight3D", true, false):
 			if (l as DirectionalLight3D).shadow_enabled:
@@ -732,8 +819,9 @@ func _setup_hud(root: Node) -> void:
 	_hud_vp.size = Vector2i(HudDisplay.SIZE, HudDisplay.SIZE)
 	_hud_vp.transparent_bg = true
 	_hud_vp.disable_3d = true
-	_hud_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	_hud_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	add_child(_hud_vp)
+	_displays.append([_hud_vp, Vector2i(HudDisplay.SIZE, HudDisplay.SIZE)])
 	_hud = HudDisplay.new()
 	_hud.ac = ac
 	_hud_vp.add_child(_hud)
@@ -759,14 +847,16 @@ func _setup_mfds() -> void:
 			continue
 		var cfg: Array = MFDS[name]
 		var vp := SubViewport.new()
-		vp.size = Vector2i(1024, 768) if float(cfg[0]) > 0.15 else Vector2i(512, 768)
+		var design := Vector2i(1024, 768) if float(cfg[0]) > 0.15 else Vector2i(512, 768)
+		vp.size = design
 		vp.disable_3d = true
 		vp.transparent_bg = false
-		vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 		add_child(vp)
+		_displays.append([vp, design])
 		var page := Mfd.new()
 		page.ac = ac
-		page.size = Vector2(vp.size)
+		page.size = Vector2(design)
 		page.setup(name.substr(4), cfg[0], cfg[1], cfg[2], cfg[3], cfg[4], cfg[5])
 		if name == "MFD_R" and "--dev-wpn" in OS.get_cmdline_user_args():
 			page.page = "WPN"          # development: show the stores page
@@ -784,8 +874,12 @@ func _update_mfds(delta: float) -> void:
 	var sn = ac.get("sensors")
 	if sn:
 		sn.update(delta)
+	var hz := MFD_HZ if _inside else OUTSIDE_HZ
 	for name in _mfds:
-		(_mfds[name] as Control).call("tick", delta)
+		var page := _mfds[name] as Control
+		var dt := _display_due(name, page.get_parent() as SubViewport, delta, hz)
+		if dt >= 0.0:
+			page.call("tick", dt)
 	# pressed bezel buttons sit 2 mm in for a moment
 	for node in _osb:
 		var n := node as Node3D
@@ -998,8 +1092,9 @@ func _setup_ap() -> void:
 	_ap_vp = SubViewport.new()
 	_ap_vp.size = ApPanel.TEX
 	_ap_vp.disable_3d = true
-	_ap_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	_ap_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	add_child(_ap_vp)
+	_displays.append([_ap_vp, ApPanel.TEX])
 	_ap_panel = ApPanel.new()
 	_ap_panel.ac = ac
 	_ap_vp.add_child(_ap_panel)
@@ -1009,7 +1104,9 @@ func _setup_ap() -> void:
 func _update_ap(delta: float) -> void:
 	if _ap_panel == null or ac.get("autopilot") == null:
 		return
-	_ap_panel.tick(delta)
+	var dt := _display_due("AP", _ap_vp, delta, AP_HZ if _inside else OUTSIDE_HZ)
+	if dt >= 0.0:
+		_ap_panel.tick(dt)
 	# knobs turn with their values: one detent (15 degrees) per step
 	var ap = ac.autopilot
 	var imp := int(Settings.get_value("hud/unit_system")) == 1
@@ -1147,6 +1244,7 @@ func _update_hud(delta: float) -> void:
 	if _inside or _hud_timer > 0.25:
 		_hud.tick(_hud_timer)
 		_hud_timer = 0.0
+		_hud_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	# the interpolated basis, the same one the cockpit and the eye are drawn with, so symbols never swim
 	var b: Basis = ac.get_global_transform_interpolated().basis if ac.is_physics_interpolated_and_enabled() else ac.global_basis
 	_hud_mat.set_shader_parameter("to_aircraft", b.orthonormalized().inverse())

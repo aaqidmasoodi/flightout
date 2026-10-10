@@ -104,8 +104,20 @@ func _on_node_added(node: Node) -> void:
 				play_ui("ui_click"))
 
 
-## Loads a WAV and makes it loop seamlessly.
+static var _looped := {}               # path -> looping stream, shared by every player (every jet's engines)
+
+
+## Loads a WAV and makes it loop seamlessly. One shared copy per file: a second jet joining reuses it instead of
+## copying the sound data again.
 static func looped(path: String) -> AudioStream:
+	if _looped.has(path):
+		return _looped[path]
+	var out := _make_looped(path)
+	_looped[path] = out
+	return out
+
+
+static func _make_looped(path: String) -> AudioStream:
 	var s: AudioStream = load(path)
 	if s is AudioStreamWAV:
 		var w := (s as AudioStreamWAV).duplicate() as AudioStreamWAV

@@ -20,6 +20,10 @@ uniform vec2 sun_xz = vec2(0.0);
 uniform float aerial_k = 1.0;        // large maps: strength of the aerial perspective
 uniform float aerial_max = 0.9;      // never fully hazed: distant ranges keep their silhouette
 uniform float view_far = 1e9;        // camera far plane (set by the streamer)
+// lighter shading for modest GPUs (graphics/terrain_detail low): one macro and one detail sample, the land cover read
+// straight from its grid (no wandering boundaries), no field patchwork, close-up relief or cover morph; about half
+// the texture reads of the full path. The colours, rock, snow, haze and lighting are the same.
+uniform bool lite = false;
 
 float haze_mean(float y0, float y1) {
 	const float H = 2500.0;
@@ -164,17 +168,20 @@ void fragment() {
 		float slope = 1.0 - clamp(n.y, 0.0, 1.0);
 		vec2 sp = wpos.xz;
 		float macro = texture(macro_tex, tc(sp, 16000.0)).r;
-		float macro2 = texture(macro_tex, tc(sp, 4000.0) + 0.5).r;
+		float macro2 = lite ? macro : texture(macro_tex, tc(sp, 4000.0) + 0.5).r;
 		float det = texture(detail_tex, tc(sp, 64.0)).r;
-		float det2 = texture(detail_tex, tc(sp, 8.0) + 0.3).r;
+		float det2 = lite ? det : texture(detail_tex, tc(sp, 8.0) + 0.3).r;
 		// fields: irregular cells about 125 m across (cell index from a 64 km periodic frame, so it survives origin moves)
 		vec2 fw = (sp + mod(world_origin, vec2(64000.0))) / 125.0;
-		fw += (vec2(texture(detail_tex, tc(sp, 400.0)).r, texture(detail_tex, tc(sp, 400.0) + 0.5).r) - 0.5) * 1.4;
+		vec2 warp = vec2(0.0);
+		if (!lite) {
+			fw += (vec2(texture(detail_tex, tc(sp, 400.0)).r, texture(detail_tex, tc(sp, 400.0) + 0.5).r) - 0.5) * 1.4;
+			// land cover, blended between the four nearest samples, read through a little noise so class boundaries
+			// wander naturally instead of following the 32 m grid
+			warp = (vec2(texture(detail_tex, tc(sp, 180.0)).r, texture(detail_tex, tc(sp, 180.0) + 0.37).r) - 0.5) * 2.2
+					+ (vec2(texture(detail_tex, tc(sp, 50.0) + 0.11).r, texture(detail_tex, tc(sp, 50.0) + 0.61).r) - 0.5) * 0.8;
+		}
 		float fields = fract(sin(dot(floor(fw), vec2(12.9898, 78.233))) * 43758.5453);
-		// land cover, blended between the four nearest samples, read through a little noise so class boundaries
-		// wander naturally instead of following the 32 m grid
-		vec2 warp = (vec2(texture(detail_tex, tc(sp, 180.0)).r, texture(detail_tex, tc(sp, 180.0) + 0.37).r) - 0.5) * 2.2
-				+ (vec2(texture(detail_tex, tc(sp, 50.0) + 0.11).r, texture(detail_tex, tc(sp, 50.0) + 0.61).r) - 0.5) * 0.8;
 		vec2 gw = clamp(v_grid + warp - 0.5, vec2(-1.0), vec2(tile_quads + 0.99));
 		vec2 g0 = floor(gw);
 		vec2 f = gw - g0;
@@ -184,7 +191,7 @@ void fragment() {
 		vec3 c11 = cover_col(cls_at(g0 + vec2(1.0, 1.0), v_layer), macro, macro2, det, fields, h);
 		vec3 c = mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
 		float c_here = cls_at(g0, v_layer);
-		if (morph > 0.0) {
+		if (morph > 0.0 && !lite) {
 			// the parent's land cover: only every other sample, so the class blocks are twice as big
 			// the parent reads its cover through the same warp in its own (twice as coarse) sample units
 			vec2 gc = clamp(v_grid * 0.5 + warp - 0.5, vec2(0.0), vec2(tile_quads * 0.5 - 0.001));
@@ -202,15 +209,18 @@ void fragment() {
 		float snowc = (c_here > 65.0 && c_here < 75.0) ? 1.0 : 0.0;
 		float waterc = (c_here > 75.0 && c_here < 85.0) ? 1.0 : 0.0;
 		// steep faces are rock whatever the cover says (snow does not stay on cliffs)
-		float rock_det = texture(detail_tex, tc(sp, 40.0) + 0.7).r;
+		float rock_det = lite ? det : texture(detail_tex, tc(sp, 40.0) + 0.7).r;
 		vec3 rock = mix(vec3(0.24, 0.22, 0.21), vec3(0.38, 0.35, 0.32), rock_det);
 		rock = mix(rock, rock * vec3(1.08, 0.96, 0.84), macro2 * 0.6);
 		float rock_amt = smoothstep(0.38, 0.6, slope + (rock_det - 0.5) * 0.12) * (1.0 - waterc);
 		c = mix(c, rock, rock_amt);
 		c *= mix(0.9 + 0.2 * det2, 1.0, smoothstep(150.0, 900.0, dist));
-		vec2 dn = texture(detail_nrm, tc(sp, 24.0)).xy * 2.0 - 1.0;
-		float relief = (1.0 - smoothstep(60.0, 700.0, dist)) * (0.35 + 0.65 * rock_amt) * (1.0 - waterc);
-		vec3 nw = normalize(n + vec3(dn.x, 0.0, dn.y) * relief * 0.6);
+		vec3 nw = n;
+		if (!lite) {
+			vec2 dn = texture(detail_nrm, tc(sp, 24.0)).xy * 2.0 - 1.0;
+			float relief = (1.0 - smoothstep(60.0, 700.0, dist)) * (0.35 + 0.65 * rock_amt) * (1.0 - waterc);
+			nw = normalize(n + vec3(dn.x, 0.0, dn.y) * relief * 0.6);
+		}
 		NORMAL = normalize((VIEW_MATRIX * vec4(nw, 0.0)).xyz);
 		ALBEDO = c;
 		ROUGHNESS = mix(mix(0.95, 0.55, snowc * (1.0 - rock_amt)), 0.08, waterc);

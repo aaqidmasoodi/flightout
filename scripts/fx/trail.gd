@@ -5,7 +5,8 @@ extends MeshInstance3D
 ## same for our jet, remote jets (placed from network snapshots) and anything else that moves, such as missiles.
 ## The points the emitter passed through are kept in scene coordinates in a small ring texture, and the GPU lays the
 ## ribbon along them, so the trail keeps the real path flown (turns, S-turns), not the jet's current heading.
-## Floating origin: every stored point moves with the scene when the origin shifts. When the anchor goes away (a
+## Floating origin: stored points are kept in their own frame and moved by one offset (`_shift`, applied in the
+## shader), so a shift costs the same however many points a trail holds. When the anchor goes away (a
 ## missile hits, a jet leaves) the trail stays where it is and fades out, then frees itself.
 ##
 ## Make one with Trail.attach(anchor, local_offset, preset, intensity_fn); presets are dictionaries:
@@ -33,6 +34,7 @@ var _clock := 0.0
 var _acc := 0.0
 var _last_on := -1e9                            # clock time the trail last had any intensity
 var _orphan := false
+var _shift := Vector3.ZERO                      # scene = stored point - _shift (floating origin moves since stored)
 
 
 ## A trail laid by `anchor` at `local_offset` (in the anchor's space). It lives in the scene root, not under the anchor.
@@ -97,7 +99,7 @@ func _process(delta: float) -> void:
 		if _count == 0 or _clock - _last_on > life:
 			queue_free()
 			return
-		pos = _point(0)                           # no live head any more: the ribbon ends at its newest point
+		pos = _point(0) - _shift                  # no live head any more: the ribbon ends at its newest point
 	else:
 		pos = _emitter()
 		on = clampf(float(intensity_fn.call()) if intensity_fn.is_valid() else 1.0, 0.0, 1.0)
@@ -108,6 +110,9 @@ func _process(delta: float) -> void:
 		visible = false
 		_count = 0
 		_acc = 0.0
+		if _shift != Vector3.ZERO:
+			_shift = Vector3.ZERO
+			_mat.set_shader_parameter("shift", _shift)
 		return
 	if not _orphan:
 		_acc += delta
@@ -124,7 +129,8 @@ func _process(delta: float) -> void:
 func _push(p: Vector3, on: float) -> void:
 	_head = (_head + 1) % _cap
 	_count = mini(_count + 1, _cap - 1)
-	_img.set_pixel(_head, 0, Color(p.x, p.y, p.z, _clock))
+	var q := p + _shift
+	_img.set_pixel(_head, 0, Color(q.x, q.y, q.z, _clock))
 	_img.set_pixel(_head, 1, Color(on, 0.0, 0.0, 0.0))
 	_tex.update(_img)
 
@@ -138,11 +144,17 @@ func _point(n: int) -> Vector3:
 func _on_origin_shifted(delta: Vector3) -> void:
 	if _count == 0:
 		return
-	for n in _count:
-		var i := (_head - n + _cap) % _cap
-		var c := _img.get_pixel(i, 0)
-		_img.set_pixel(i, 0, Color(c.r - delta.x, c.g - delta.y, c.b - delta.z, c.a))
-	_tex.update(_img)
+	_shift += delta
+	if _shift.length() > 100000.0:
+		# very long trails on a long flight: fold the offset back into the points now and then, so the stored
+		# numbers stay small enough for 32-bit floats to hold them to the centimetre
+		for n in _count:
+			var i := (_head - n + _cap) % _cap
+			var c := _img.get_pixel(i, 0)
+			_img.set_pixel(i, 0, Color(c.r - _shift.x, c.g - _shift.y, c.b - _shift.z, c.a))
+		_tex.update(_img)
+		_shift = Vector3.ZERO
+	_mat.set_shader_parameter("shift", _shift)
 
 
 ## Strip mesh: (cap) segments of SUB steps, two vertices per step. UV.x = position along the trail in points.

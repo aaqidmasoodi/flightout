@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://bva6g6h50qk3q"
+path="res://.godot/imported/terrain_shadow_bake.glsl-e19e2a7eea2893905852df6c271b79bb.res"
+
+[deps]
+
+source_file="res://shaders/terrain_shadow_bake.glsl"
+dest_files=["res://.godot/imported/terrain_shadow_bake.glsl-e19e2a7eea2893905852df6c271b79bb.res"]
+
+[params]
+

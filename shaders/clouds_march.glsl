@@ -30,6 +30,7 @@ layout(set = 0, binding = 6, std140) uniform Params {
 	vec4 misc2;            // x history valid, y history weight, z height variation (m)
 	vec4 hor_a;            // rgb sky at the horizon towards the sun, w = sun direction x (horizontal, unit)
 	vec4 hor_b;            // rgb sky at the horizon away from the sun, w = sun direction z
+	vec4 limits;           // x most loop iterations per ray, y most in-cloud samples per ray (quality setting)
 } p;
 
 layout(rg32f, set = 0, binding = 7) uniform restrict writeonly image2D out_depth;
@@ -122,12 +123,13 @@ void main() {
 		return;
 	}
 	vec2 uv = (vec2(px) + 0.5) / vec2(hsize);
-	// march as far as the farthest of the 2x2 full-resolution pixels this texel covers; the composite trims it
-	// back per pixel, so the background beside an object still gets its clouds
-	ivec2 f0 = px * 2;
+	// march as far as the farthest of the full-resolution pixels this texel covers (2x2, or the corners of 4x4); the
+	// composite trims it back per pixel, so the background beside an object still gets its clouds
+	int r = int(p.sizes.z / p.sizes.x + 0.5);
+	ivec2 f0 = px * r;
 	ivec2 fmax = ivec2(p.sizes.zw) - 1;
-	float scene_dist = max(max(scene_distance(min(f0, fmax)), scene_distance(min(f0 + ivec2(1, 0), fmax))),
-		max(scene_distance(min(f0 + ivec2(0, 1), fmax)), scene_distance(min(f0 + ivec2(1, 1), fmax))));
+	float scene_dist = max(max(scene_distance(min(f0, fmax)), scene_distance(min(f0 + ivec2(r - 1, 0), fmax))),
+		max(scene_distance(min(f0 + ivec2(0, r - 1), fmax)), scene_distance(min(f0 + ivec2(r - 1, r - 1), fmax))));
 	vec4 vfar = p.inv_proj * vec4(uv * 2.0 - 1.0, 0.5, 1.0);
 	vec3 ro = p.cam_pos.xyz;
 	vec3 rd = normalize(mat3(p.cam_xform) * normalize(vfar.xyz / vfar.w));
@@ -179,8 +181,10 @@ void main() {
 	int fine_left = 0;
 	int expensive = 0;
 	float last_step = dt;
-	for (int i = 0; i < 320; i++) {
-		if (t > t1 || T < 0.01 || expensive >= 96) {
+	int max_iter = int(p.limits.x);
+	int max_dense = int(p.limits.y);
+	for (int i = 0; i < max_iter; i++) {
+		if (t > t1 || T < 0.01 || expensive >= max_dense) {
 			break;
 		}
 		float big = dt * (1.0 + t / 7000.0);

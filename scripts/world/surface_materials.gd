@@ -5,8 +5,9 @@ extends RefCounted
 const OCEAN_SHADER := preload("res://shaders/ocean.gdshader")
 const CLOUD_SHADER := preload("res://shaders/menu_clouds.gdshader")
 
-## Every ocean material created, so the sky system can update their distance haze.
-static var ocean_materials: Array = []
+## Materials whose distance haze the sky system keeps current (water, the terrain), held weakly: a material
+## belongs to whatever uses it and goes away with it (a flight's terrain with its 27 MB of height layers).
+static var _haze: Array[WeakRef] = []
 static var _normal_large: NoiseTexture2D
 static var _normal_small: NoiseTexture2D
 static var _clouds: NoiseTexture2D
@@ -41,8 +42,26 @@ static func ocean() -> ShaderMaterial:
 	m.shader = OCEAN_SHADER
 	m.set_shader_parameter("normal_large", _normal_large)
 	m.set_shader_parameter("normal_small", _normal_small)
-	ocean_materials.append(m)
+	add_haze_material(m)
 	return m
+
+
+static func add_haze_material(m: ShaderMaterial) -> void:
+	_haze.append(weakref(m))
+
+
+## The haze materials still in use (forgotten ones are dropped from the list).
+static func haze_materials() -> Array:
+	var out := []
+	var i := 0
+	while i < _haze.size():
+		var m = _haze[i].get_ref()
+		if m == null:
+			_haze.remove_at(i)
+		else:
+			out.append(m)
+			i += 1
+	return out
 
 
 static func clouds() -> ShaderMaterial:

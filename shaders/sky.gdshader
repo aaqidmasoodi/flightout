@@ -9,10 +9,13 @@ uniform float cloud_coverage = 0.3;               // 0 clear .. 1 overcast deck
 uniform float overcast = 0.0;                     // 0..1 greys the whole sky
 uniform float haze = 0.0;                         // 0..1 fog / rain whiteout near the horizon
 uniform vec2 cloud_drift = vec2(0.0);
-// cirrus drift per second of TIME: the layer moves smoothly every frame without touching any uniform (a uniform
-// change re-renders the sky's lighting, so those are only sent a few times a second, which made the cirrus tick).
-// 15 and 9 texture repeats an hour, so TIME's hourly rollover lands on a whole repeat and never shows.
+// cirrus drift per second of sky_clock: the layer moves smoothly every frame without touching any uniform (a
+// uniform change re-renders the sky's lighting, so those are only sent a few times a second, which made the cirrus
+// tick). The clock is a global (scripts/world/sky_system.gd), not TIME: a sky shader that reads TIME has its whole
+// lighting cubemap re-rendered every frame. 15 and 9 texture repeats an hour, so the clock's hourly rollover lands
+// on a whole repeat and never shows.
 const vec2 DRIFT_RATE = vec2(15.0, 9.0) / 3600.0;
+global uniform float sky_clock;
 uniform sampler2D cloud_tex : filter_linear_mipmap, repeat_enable;
 
 float hash3(vec3 p) {
@@ -69,7 +72,7 @@ void sky() {
 			if (h > 0.986) {
 				vec3 centre = vec3(hash3(cell + 1.7), hash3(cell + 3.1), hash3(cell + 5.3)) * 0.6 + 0.2;
 				float b = smoothstep(0.22, 0.0, length(fract(p) - centre));
-				float tw = 0.7 + 0.3 * sin(TIME * (2.0 + h * 5.0) + h * 80.0);
+				float tw = 0.7 + 0.3 * sin(sky_clock * (2.0 + h * 5.0) + h * 80.0);
 				c += vec3(0.9, 0.93, 1.0) * b * tw * (h - 0.986) * 140.0 * night * (1.0 - overcast) * smoothstep(0.0, 0.15, d.y);
 			}
 		}
@@ -87,7 +90,7 @@ void sky() {
 
 	// cloud layer projected onto a dome
 	if (d.y > 0.0 && cloud_coverage > 0.01) {
-		vec2 uv = d.xz / (d.y + 0.12) * 0.32 + cloud_drift + DRIFT_RATE * TIME;
+		vec2 uv = d.xz / (d.y + 0.12) * 0.32 + cloud_drift + DRIFT_RATE * sky_clock;
 		float n = texture(cloud_tex, uv * 0.55).r * 0.62 + texture(cloud_tex, uv * 1.9 + vec2(0.37, 0.71)).r * 0.38;
 		float edge = 1.0 - cloud_coverage;
 		float dens = smoothstep(edge - 0.08, edge + 0.22, n) * smoothstep(0.0, 0.14, d.y);

@@ -14,6 +14,8 @@ const STEP := 32.0                    # one land cover sample
 const TREELINE := 3700.0
 const NEAR_MAX := 650.0                # detailed, shadow-casting trees inside this distance at most
 const BUDGET_USEC := 2000             # planting time per frame
+const HIGH_DROP := 6500.0             # above this height over the ground the forest is dropped (trees under a pixel)...
+const HIGH_BACK := 5500.0             # ...and planted again below this one (a band, so ridges below don't flip it)
 const RANGES := [3200.0, 4500.0, 6000.0]
 const CORE := 0.35                    # share of trees drawn out to the full range; the rest only out to FILL_RANGE
 const FILL_RANGE := 0.5               # of the range (farther out the canopy colour of the terrain fills in)
@@ -29,6 +31,9 @@ var _queue: Array[Vector2i] = []
 var _range := 5000.0
 var _near_radius := 1100.0
 var _near_pool := {}
+var _shadow_pool := {}                 # species -> shadow-only copy of the detailed trees within the shadow distance
+var _density := 1.0                   # share of trees planted (graphics/forest_density)
+var _high := false                    # camera far above the ground: no forest
 var _near_center := Vector2(INF, INF)
 var _near_dirty := false
 var _last_cam := Vector2(INF, INF)
@@ -60,20 +65,41 @@ func setup(w: Node3D) -> void:
 		mmi.name = "CoverTreesNear_%s" % sp
 		mmi.multimesh = mm
 		mmi.material_override = _near_mat
-		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-		mmi.extra_cull_margin = 2000.0
+		# the detailed pool reaches several hundred metres; shadows are drawn only to the shadow distance, so only the
+		# trees that close are drawn into the shadow maps, by a shadow-only copy (below)
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mmi.extra_cull_margin = 50.0
 		add_child(mmi)
 		_near_pool[sp] = mmi
+		var smm := MultiMesh.new()
+		smm.transform_format = MultiMesh.TRANSFORM_3D
+		smm.use_colors = true
+		smm.mesh = _meshes[sp][0]
+		var smi := MultiMeshInstance3D.new()
+		smi.name = "CoverTreesShadow_%s" % sp
+		smi.multimesh = smm
+		smi.material_override = _near_mat
+		smi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
+		smi.extra_cull_margin = 50.0
+		add_child(smi)
+		_shadow_pool[sp] = smi
 
 
 func _ready() -> void:
 	# after the World node's own settings pass (it sets the shared tree materials for the island's forests)
-	Settings.changed.connect(func(_k, _v): _apply_settings(), CONNECT_DEFERRED)
+	Settings.changed.connect(func(k, _v):
+		if k in ["graphics/trees", "graphics/draw_distance", "graphics/tree_detail", "graphics/forest_density",
+				"graphics/shadows", "graphics/shadow_quality"]:
+			_apply_settings(), CONNECT_DEFERRED)
 	_apply_settings()
 
 
 func _apply_settings() -> void:
 	_on = bool(Settings.get_value("graphics/trees"))
+	var dens: float = Settings.FOREST_DENSITY[clampi(int(Settings.get_value("graphics/forest_density")), 0, 3)]
+	if dens != _density:
+		_density = dens
+		_clear_cells()             # replanted at the new density around the camera
 	visible = _on
 	_range = RANGES[clampi(int(Settings.get_value("graphics/draw_distance")), 0, 2)]
 	# the detailed trees cast shadows into every shadow cascade: in forests this dense, keep them close
@@ -97,7 +123,13 @@ func _process(_delta: float) -> void:
 	var cp := Vector2(cp3.x, cp3.z)
 	# trees are not worth planting for a camera far above them (they would be under a pixel)
 	var agl := cp3.y - WorldData.terrain_height(cp.x, cp.y)
-	var reach := _range if agl < 6000.0 else 0.0
+	if _high and agl < HIGH_BACK:
+		_high = false
+		_last_cam = Vector2(INF, INF)
+	elif not _high and agl > HIGH_DROP:
+		_high = true
+		_last_cam = Vector2(INF, INF)
+	var reach := 0.0 if _high else _range
 	var t0 := Time.get_ticks_usec()
 	if cp.distance_to(_last_cam) > 120.0:
 		_last_cam = cp
@@ -123,6 +155,17 @@ func _cell_dist(c: Vector2i, p: Vector2) -> float:
 	var lo := Vector2(c) * CELL
 	var q := p.clamp(lo, lo + Vector2(CELL, CELL))
 	return q.distance_to(p)
+
+
+func _clear_cells() -> void:
+	for c in _cells:
+		for n in _cells[c].nodes:
+			(n as Node).queue_free()
+	_cells.clear()
+	_queue.clear()
+	planted = 0
+	_last_cam = Vector2(INF, INF)
+	_near_dirty = true
 
 
 ## Drops cells out of range, queues the missing ones nearest first.
@@ -183,6 +226,9 @@ func _plant(c: Vector2i) -> void:
 			for t in count:
 				var x := sx + rng.randf_range(-0.5, 0.5) * STEP
 				var z := sz + rng.randf_range(-0.5, 0.5) * STEP
+				# lower densities keep a fixed subset (by position), so thinning never reshuffles the forest
+				if _density < 1.0 and fposmod(sin(x * 12.9898 + z * 78.233) * 43758.5453, 1.0) > _density:
+					continue
 				if near_runway and _on_runway(Vector2(x, z)):
 					continue
 				var h := WorldData.terrain_height(x, z)
@@ -279,12 +325,23 @@ func _update_near(cp: Vector2) -> void:
 	_near_dirty = false
 	_near_center = cp
 	var r := _near_radius + 250.0
+	var sr := 0.0
+	if bool(Settings.get_value("graphics/shadows")):
+		sr = float(Settings.shadow_level().dist) + 60.0
 	for sp in _near_pool:
-		var buf := PackedFloat32Array()
+		_fill(_near_pool[sp], sp, cp, r)
+		_fill(_shadow_pool[sp], sp, cp, sr)
+
+
+## One pool's instances: the detailed trees of the planted cells within `r` of the camera (packed buffers copied
+## whole, in native code).
+func _fill(mmi: MultiMeshInstance3D, sp: String, cp: Vector2, r: float) -> void:
+	var buf := PackedFloat32Array()
+	if r > 0.0:
 		for c in _cells:
 			if _cell_dist(c, cp) < r:
 				buf.append_array(_cells[c].near[sp])
-		var mm: MultiMesh = (_near_pool[sp] as MultiMeshInstance3D).multimesh
-		mm.instance_count = buf.size() / 16
-		if not buf.is_empty():
-			mm.buffer = buf
+	var mm := mmi.multimesh
+	mm.instance_count = buf.size() / 16
+	if not buf.is_empty():
+		mm.buffer = buf

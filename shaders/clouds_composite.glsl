@@ -56,9 +56,9 @@ void main() {
 		vec4 v = p.inv_proj * vec4(fuv * 2.0 - 1.0, dz, 1.0);
 		dist = length(v.xyz / v.w);
 	}
-	// cubic B-spline reconstruction over 4x4 half-resolution samples (smooth, no stair-steps or speckle),
+	// cubic B-spline reconstruction over 4x4 low-resolution samples (smooth, no stair-steps or speckle),
 	// each sample trimmed against this pixel's depth first
-	vec2 hp = (vec2(px) + 0.5) * 0.5 - 0.5;
+	vec2 hp = (vec2(px) + 0.5) * (p.sizes.xy / p.sizes.zw) - 0.5;
 	ivec2 b = ivec2(floor(hp));
 	vec2 f = hp - vec2(b);
 	vec2 f2 = f * f;

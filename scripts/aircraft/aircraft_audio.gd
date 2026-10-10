@@ -21,6 +21,7 @@ var _motor: AudioStreamPlayer3D
 var _hum: AudioStreamPlayer
 var _warn: AudioStreamPlayer
 var _oneshots: Array[AudioStreamPlayer3D] = []
+var _loops: Array[AudioStreamPlayer3D] = []
 var _shot_i := 0
 var _streams := {}
 var _warn_current := ""
@@ -44,12 +45,14 @@ func _ready() -> void:
 	_buffet = _loop("buffet", Vector3.ZERO, "Effects")
 	_roll = _loop("tyre_roll", Vector3(0, -2, 1.8), "Effects")
 	_motor = _loop("gear_motor", Vector3(0, -1.2, 0.5), "Effects")
-	_hum = AudioStreamPlayer.new()
-	_hum.stream = A.looped(DIR + "cockpit_hum.wav")
-	_hum.bus = "Warnings"
-	_hum.volume_db = -80.0
-	add_child(_hum)
-	_hum.play()
+	if not ac.is_remote:
+		# cockpit ambience: our own jet only
+		_hum = AudioStreamPlayer.new()
+		_hum.stream = A.looped(DIR + "cockpit_hum.wav")
+		_hum.bus = "Warnings"
+		_hum.volume_db = -80.0
+		add_child(_hum)
+		_hum.play()
 	_warn = AudioStreamPlayer.new()
 	_warn.bus = "Warnings"
 	add_child(_warn)
@@ -59,14 +62,16 @@ func _ready() -> void:
 		p.unit_size = 14.0
 		p.max_distance = 6000.0
 		p.doppler_tracking = AudioStreamPlayer3D.DOPPLER_TRACKING_PHYSICS_STEP
+		p.area_mask = 0
 		add_child(p)
 		_oneshots.append(p)
 	for n in ["gear_clunk", "touchdown", "tyre_chirp", "ab_light", "explosion", "scrape", "caution", "warn_stall", "warn_pullup", "warn_gear", "warn_overg"]:
 		_streams[n] = load(DIR + n + ".wav")
 	for n in ["switch_01", "switch_02", "metal_hit_01", "thunder_01"]:
 		_streams[n] = load(DIR + n + ".ogg")
-	for n in ["warn_stall", "warn_pullup", "warn_gear", "warn_overg"]:
-		_streams[n] = A.looped(DIR + n + ".wav")
+	if not ac.is_remote:
+		for n in ["warn_stall", "warn_pullup", "warn_gear", "warn_overg"]:
+			_streams[n] = A.looped(DIR + n + ".wav")
 	ac.sim_event.connect(_on_event)
 
 
@@ -81,10 +86,21 @@ func _loop(n: String, local: Vector3, bus: String) -> AudioStreamPlayer3D:
 	p.attenuation_filter_cutoff_hz = 6000.0
 	p.attenuation_filter_db = -18.0
 	p.doppler_tracking = AudioStreamPlayer3D.DOPPLER_TRACKING_PHYSICS_STEP
+	p.area_mask = 0            # no reverb areas in this game: skip the per-mix area lookup
 	p.volume_db = -80.0
 	add_child(p)
 	p.play(randf() * 2.0)
+	_loops.append(p)
 	return p
+
+
+## Layers turned all the way down are paused (they keep their place in the loop), so silent layers of every jet in
+## the game are not mixed at all; they carry on when their volume comes back up.
+func _pause_silent() -> void:
+	for p in _loops:
+		var quiet := p.volume_db <= -70.0
+		if p.stream_paused != quiet:
+			p.stream_paused = quiet
 
 
 static func _db(lin: float) -> float:
@@ -106,6 +122,7 @@ func _process(delta: float) -> void:
 		for p in [_whine, _core, _low, _ab, _ab_body, _wind, _buffet, _roll, _motor]:
 			p.volume_db = move_toward(p.volume_db, -80.0, 60.0 * delta)
 		_set_warning("")
+		_pause_silent()
 		return
 
 	# ---- engine ----
@@ -163,7 +180,12 @@ func _process(delta: float) -> void:
 	_motor.pitch_scale = 0.95 + 0.05 * sin(Time.get_ticks_msec() * 0.003)
 
 	# ---- cockpit ambience ----
-	_hum.volume_db = move_toward(_hum.volume_db, -30.0 if cockpit else -80.0, 80.0 * delta)
+	if _hum:
+		_hum.volume_db = move_toward(_hum.volume_db, -30.0 if cockpit else -80.0, 80.0 * delta)
+		var hq := _hum.volume_db <= -70.0
+		if _hum.stream_paused != hq:
+			_hum.stream_paused = hq
+	_pause_silent()
 
 	# ---- warnings ----
 	if local:

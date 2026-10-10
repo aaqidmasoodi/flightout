@@ -77,7 +77,11 @@ func _ready() -> void:
 	_toggle(p, "Ambient occlusion", "graphics/ssao")
 	_toggle(p, "Bloom", "graphics/glow")
 	_choice(p, "Draw distance", "graphics/draw_distance", ["Near", "Medium", "Far"], [0, 1, 2])
+	_toggle(p, "Volumetric clouds", "graphics/volumetric_clouds")
 	_choice(p, "Cloud quality", "graphics/clouds", ["Low", "Medium", "High", "Ultra"], [0, 1, 2, 3])
+	_choice(p, "Terrain detail", "graphics/terrain_detail", ["Low", "High"], [0, 1])
+	_choice(p, "Cockpit screens", "graphics/display_res", ["Low", "Medium", "High"], [0, 1, 2])
+	_toggle(p, "Rear-view mirrors", "graphics/mirrors")
 	Settings.changed.connect(func(key, _v):
 		if String(key).begins_with("graphics/"):
 			for r in _refreshers:

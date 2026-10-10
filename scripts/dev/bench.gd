@@ -24,6 +24,9 @@ var world: Node
 var _out := ""
 var _len := 90.0
 var _pan := false
+var _mouse := false            # --bench-mouse: drag the view with synthetic mouse motion (as a player does)
+var _prev_look := Basis.IDENTITY
+var _look_rate := 0.0          # how fast the view turned against the jet this frame (deg/s)
 var _flight := false
 var _gmax := 0.0
 var _aoamax := 0.0
@@ -84,6 +87,8 @@ func _ready() -> void:
 			view = arg.trim_prefix("--bench-view=").to_int()
 		elif arg == "--bench-pan":
 			_pan = true
+		elif arg == "--bench-mouse":
+			_mouse = true
 		elif arg.begins_with("--bench-snap="):     # dir:t1,t2,...  screenshots at those times
 			var spec := arg.trim_prefix("--bench-snap=")
 			var cut := spec.rfind(":")                  # (the folder may start with a drive letter)
@@ -148,8 +153,24 @@ func _process(delta: float) -> void:
 	if _look != null:
 		cam._yaw = _look.x
 		cam._pitch = _look.y
+	# the view's turn rate against the jet, frame by frame (an evenly turning view gives an even rate)
+	var tb: Basis = aircraft.get_global_transform_interpolated().basis.orthonormalized()
+	var rel: Basis = tb.inverse() * cam.global_transform.basis.orthonormalized()
+	_look_rate = rad_to_deg(Quaternion(_prev_look).angle_to(Quaternion(rel))) / maxf(delta, 1e-4)
+	_prev_look = rel
 	if _flight:
 		_fly()
+	elif _mouse:
+		# hold the right button and drag: a steady 0.5 rad/s swing, reversing every 4 s
+		if not cam._dragging:
+			var b := InputEventMouseButton.new()
+			b.button_index = MOUSE_BUTTON_RIGHT
+			b.pressed = true
+			Input.parse_input_event(b)
+		var mm := InputEventMouseMotion.new()
+		var dir := 1.0 if fmod(_t, 8.0) < 4.0 else -1.0
+		mm.relative = Vector2(dir * 0.5 * delta / (0.005 * float(Settings.get_value("controls/mouse_sensitivity"))), 0.0)
+		Input.parse_input_event(mm)
 	elif _pan:
 		cam._yaw = sin(_t * 0.9) * 2.0
 		cam._pitch = sin(_t * 0.37) * 0.25
@@ -332,7 +353,7 @@ func _ap_heading(ap, fm, h: float) -> void:
 
 func _log_frame(delta: float, draws: int) -> void:
 	if _frame_rows.is_empty():
-		_frame_rows.append("t,dt_ms,cpu_ms,gpu_ms,draws,terrain_us,drawn,loads,evict,evict_split,forest_us,near_us,near_rebuild,cells_planted,origin_shift,cam_yaw,view,bank,process_ms,physics_ms,pipelines,diff")
+		_frame_rows.append("t,dt_ms,cpu_ms,gpu_ms,draws,terrain_us,drawn,loads,evict,evict_split,forest_us,near_us,near_rebuild,cells_planted,origin_shift,cam_yaw,view,bank,process_ms,physics_ms,pipelines,diff,look_rate")
 	var st: Dictionary = world.streamer.stats if world.streamer else {}
 	var cf: Node = world.get_node_or_null("CoverForest")
 	var fs: Dictionary = cf.stats if cf else {}
@@ -342,11 +363,11 @@ func _log_frame(delta: float, draws: int) -> void:
 	for k in cur:
 		d[k] = cur[k] - int(_prev.get(k, cur[k]))
 	_prev = cur
-	_frame_rows.append("%.3f,%.2f,%.2f,%.2f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%d,%.0f,%.2f,%.2f,%d,%.2f" % [_t, delta * 1000.0,
+	_frame_rows.append("%.3f,%.2f,%.2f,%.2f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.2f,%d,%.0f,%.2f,%.2f,%d,%.2f,%.2f" % [_t, delta * 1000.0,
 		RenderingServer.viewport_get_measured_render_time_cpu(_vp) + RenderingServer.get_frame_setup_time_cpu(),
 		RenderingServer.viewport_get_measured_render_time_gpu(_vp), draws, int(st.get("proc_us", 0)), int(st.get("drawn", 0)),
 		d.loads, d.evict, d.evict_split, int(fs.get("proc_us", 0)), int(fs.get("near_us", 0)), d.near_n, d.plant_n, d.shifts, cam._yaw, cam.view, rad_to_deg(asin(clampf(aircraft.fm.rot.x.y, -1.0, 1.0))),
-		Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0, _pipelines(), _diff])
+		Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0, _pipelines(), _diff, _look_rate])
 
 
 func _finish() -> void:

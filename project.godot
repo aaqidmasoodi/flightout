@@ -77,3 +77,27 @@ sun_dir={
 "type": "vec3",
 "value": Vector3(0, 1, 0)
 }
+sky_clock={
+"type": "float",
+"value": 0.0
+}
+terrain_shadow_map={
+"type": "sampler2D",
+"value": ""
+}
+terrain_shadow_baked={
+"type": "float",
+"value": 0.0
+}
+ck_eye0={
+"type": "vec4",
+"value": Vector4(1, 0, 0, 0)
+}
+ck_eye1={
+"type": "vec4",
+"value": Vector4(0, 1, 0, 0)
+}
+ck_eye2={
+"type": "vec4",
+"value": Vector4(0, 0, 1, 0)
+}

@@ -67,7 +67,7 @@ func _ready() -> void:
 	_volumes = preload("res://scripts/world/surface_materials.gd").cloud_volumes()
 	_apply_quality()
 	Settings.changed.connect(func(key, _v):
-		if key in ["graphics/clouds", "graphics/shadow_quality", "graphics/ssao", "graphics/glow"]:
+		if key in ["graphics/clouds", "graphics/volumetric_clouds", "graphics/shadow_quality", "graphics/ssao", "graphics/glow"]:
 			_apply_quality())
 	Look.apply(env)
 	Settings.changed.connect(func(k, _v):
@@ -163,7 +163,13 @@ static func _body_dir(hour_angle: float, decl: float) -> Vector3:
 	return Vector3(cos(alt) * sin(az), sin(alt), -cos(alt) * cos(az))
 
 
+var _sky_clock := 0.0
+
+
 func _process(delta: float) -> void:
+	# the sky shader's own clock (cirrus drift, twinkling stars), see shaders/sky.gdshader
+	_sky_clock = fmod(_sky_clock + delta, 3600.0)
+	RenderingServer.global_shader_parameter_set(&"sky_clock", _sky_clock)
 	var target: Dictionary = CONDITIONS[WorldData.conditions]
 	var k := clampf(delta * 0.6, 0.0, 1.0)
 	for key in target:
@@ -242,6 +248,7 @@ func _process(delta: float) -> void:
 	var use_sun := e > -4.0
 	clouds.sun_dir = sd if use_sun else md
 	RenderingServer.global_shader_parameter_set("sun_dir", sd if use_sun else md)   # terrain cast shadows
+	preload("res://scripts/world/terrain_shadow_bake.gd").request(sd if use_sun else md)
 	clouds.light_intensity = (sun.light_energy if use_sun else moon.light_energy * 1.6) * 2.9
 	clouds.sun_color = sun.light_color if use_sun else moon.light_color
 	clouds.ambient = 0.62
@@ -265,7 +272,7 @@ func _process(delta: float) -> void:
 	clouds.wind = _cloud_drift
 
 	# ---- water haze ----
-	for om in preload("res://scripts/world/surface_materials.gd").ocean_materials:
+	for om in preload("res://scripts/world/surface_materials.gd").haze_materials():
 		(om as ShaderMaterial).set_shader_parameter("haze_color", env.fog_light_color)
 		(om as ShaderMaterial).set_shader_parameter("haze_density", maxf(clouds.fog_density * 1.9, 0.00003))
 		(om as ShaderMaterial).set_shader_parameter("hor_toward", hz[0])
@@ -316,6 +323,10 @@ func _apply_quality() -> void:
 	var cq: Dictionary = Settings.cloud_level()
 	clouds.primary_steps = int(cq.steps)
 	clouds.light_steps = int(cq.light)
+	clouds.max_iterations = int(cq.iters)
+	clouds.max_dense = int(cq.dense)
+	clouds.resolution_div = int(cq.div)
+	clouds.active = bool(Settings.get_value("graphics/volumetric_clouds"))
 	var rs := {64: Sky.RADIANCE_SIZE_64, 128: Sky.RADIANCE_SIZE_128, 256: Sky.RADIANCE_SIZE_256}
 	if env and env.sky and env.sky.radiance_size != rs[int(cq.radiance)]:
 		env.sky.radiance_size = rs[int(cq.radiance)]
@@ -329,3 +340,6 @@ func _apply_quality() -> void:
 		env.glow_enabled = _glow_on
 	if sun:
 		sun.directional_shadow_max_distance = float(Settings.shadow_level().dist)
+		# two cascades on the lower settings (their shadow distance is short): every caster is drawn twice, not four times
+		var two := int(Settings.get_value("graphics/shadow_quality")) <= 1
+		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS if two else DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS

@@ -28,6 +28,10 @@ const DEFAULTS := {
 	"graphics/shadows": true,
 	"graphics/trees": true,
 	"graphics/vapour": true,         # wingtip vortices, wing vapour and contrails
+	"graphics/volumetric_clouds": true,   # off: the sky's thin cloud layer only (big saving on weak GPUs)
+	"graphics/display_res": 2,       # cockpit screens' picture size: 0 low (half), 1 medium, 2 high (full)
+	"graphics/mirrors": true,        # cockpit rear-view mirrors (each is a small extra view of the world)
+	"graphics/terrain_detail": 1,    # 0 low (lighter ground shader), 1 high
 	"graphics/draw_distance": 1,     # 0 near, 1 medium, 2 far
 	"hud/telemetry": true,
 	"hud/key_hints": false,
@@ -64,6 +68,13 @@ func _enter_tree() -> void:
 			var parts: PackedStringArray = String(k).split("/")
 			if cfg.has_section_key(parts[0], parts[1]):
 				_values[k] = cfg.get_value(parts[0], parts[1])
+		# options added since the file was saved take the saved preset's value (a Low player gets Low's choice)
+		var pr := int(_values.get("graphics/preset", 2))
+		if cfg.has_section_key("graphics", "preset") and pr < PRESETS.size():
+			for pk in PRESETS[pr]:
+				var pp: PackedStringArray = String(pk).split("/")
+				if not cfg.has_section_key(pp[0], pp[1]):
+					_values[pk] = PRESETS[pr][pk]
 		if not cfg.has_section_key("graphics", "preset"):
 			# first run with presets: start from High so every new option has a sensible value
 			for pk in PRESETS[2]:
@@ -75,6 +86,11 @@ func _ready() -> void:
 	_fit_window.call_deferred()
 	for k in _values.keys():
 		_apply(k)
+	# development: `--dev-preset=<0..3>` runs with a graphics preset for this run only (benchmarks); nothing is saved
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--dev-preset="):
+			transient = true
+			set_value("graphics/preset", arg.trim_prefix("--dev-preset=").to_int())
 
 
 func get_value(key: String) -> Variant:
@@ -106,7 +122,13 @@ func reset_defaults() -> void:
 	reset_bindings()
 
 
+## Development (--dev-preset): settings changed for this run only, never written to the file.
+var transient := false
+
+
 func save() -> void:
+	if transient:
+		return
 	var cfg := ConfigFile.new()
 	for k in _values.keys():
 		var parts: PackedStringArray = String(k).split("/")
@@ -177,22 +199,30 @@ const PRESETS := [
 	# Low: runs on modest hardware. Lower internal resolution with FSR upscaling; demanding effects off.
 	{"display/render_scale": 0.7, "display/upscaler": 1, "graphics/msaa": 0, "graphics/anisotropic": 2,
 		"graphics/shadows": false, "graphics/shadow_quality": 0, "graphics/ssao": false, "graphics/glow": false,
-		"graphics/trees": true, "graphics/tree_detail": 0, "graphics/forest_density": 0, "graphics/draw_distance": 0, "graphics/clouds": 0},
+		"graphics/trees": true, "graphics/tree_detail": 0, "graphics/forest_density": 0, "graphics/draw_distance": 0, "graphics/clouds": 0,
+		"graphics/volumetric_clouds": true, "graphics/display_res": 0, "graphics/mirrors": false, "graphics/terrain_detail": 0},
 	# Medium: mainstream hardware.
 	{"display/render_scale": 0.85, "display/upscaler": 1, "graphics/msaa": 1, "graphics/anisotropic": 3,
 		"graphics/shadows": true, "graphics/shadow_quality": 1, "graphics/ssao": false, "graphics/glow": true,
-		"graphics/trees": true, "graphics/tree_detail": 1, "graphics/forest_density": 1, "graphics/draw_distance": 1, "graphics/clouds": 1},
+		"graphics/trees": true, "graphics/tree_detail": 1, "graphics/forest_density": 1, "graphics/draw_distance": 1, "graphics/clouds": 1,
+		"graphics/volumetric_clouds": true, "graphics/display_res": 1, "graphics/mirrors": true, "graphics/terrain_detail": 1},
 	# High: the intended look at native resolution.
 	{"display/render_scale": 1.0, "display/upscaler": 0, "graphics/msaa": 1, "graphics/anisotropic": 4,
 		"graphics/shadows": true, "graphics/shadow_quality": 2, "graphics/ssao": true, "graphics/glow": true,
-		"graphics/trees": true, "graphics/tree_detail": 2, "graphics/forest_density": 2, "graphics/draw_distance": 1, "graphics/clouds": 2},
+		"graphics/trees": true, "graphics/tree_detail": 2, "graphics/forest_density": 2, "graphics/draw_distance": 1, "graphics/clouds": 2,
+		"graphics/volumetric_clouds": true, "graphics/display_res": 2, "graphics/mirrors": true, "graphics/terrain_detail": 1},
 	# Ultra: everything at its best for powerful GPUs.
 	{"display/render_scale": 1.0, "display/upscaler": 0, "graphics/msaa": 2, "graphics/anisotropic": 4,
 		"graphics/shadows": true, "graphics/shadow_quality": 3, "graphics/ssao": true, "graphics/glow": true,
-		"graphics/trees": true, "graphics/tree_detail": 3, "graphics/forest_density": 3, "graphics/draw_distance": 2, "graphics/clouds": 3},
+		"graphics/trees": true, "graphics/tree_detail": 3, "graphics/forest_density": 3, "graphics/draw_distance": 2, "graphics/clouds": 3,
+		"graphics/volumetric_clouds": true, "graphics/display_res": 2, "graphics/mirrors": true, "graphics/terrain_detail": 1},
 ]
-const CLOUD_LEVELS := [{"steps": 36, "light": 1, "radiance": 64}, {"steps": 56, "light": 2, "radiance": 128},
-	{"steps": 72, "light": 3, "radiance": 128}, {"steps": 110, "light": 5, "radiance": 256}]
+## Cloud quality: ray steps and light samples, the most loop iterations and in-cloud (expensive) samples a ray may
+## take, and the march resolution (div: 2 = half, 4 = quarter of the screen; the composite upsamples smoothly).
+const CLOUD_LEVELS := [{"steps": 36, "light": 1, "radiance": 64, "iters": 160, "dense": 40, "div": 4},
+	{"steps": 56, "light": 2, "radiance": 128, "iters": 240, "dense": 64, "div": 2},
+	{"steps": 72, "light": 3, "radiance": 128, "iters": 320, "dense": 96, "div": 2},
+	{"steps": 110, "light": 5, "radiance": 256, "iters": 320, "dense": 96, "div": 2}]
 const TREE_LEVELS := [{"near": 600.0, "px": 4.0}, {"near": 850.0, "px": 3.0}, {"near": 1100.0, "px": 2.0}, {"near": 1500.0, "px": 1.2}]
 const FOREST_DENSITY := [0.45, 0.7, 1.0, 1.0]
 const SHADOW_LEVELS := [{"dist": 120.0, "atlas": 2048, "soft": 1}, {"dist": 220.0, "atlas": 2048, "soft": 2},

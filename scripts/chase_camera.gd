@@ -64,8 +64,13 @@ func _ready() -> void:
 	near = 0.05
 	far = base_far
 	current = true
-	doppler_tracking = Camera3D.DOPPLER_TRACKING_PHYSICS_STEP
+	# placed every rendered frame (_process), so the Doppler effect tracks it per frame too
+	doppler_tracking = Camera3D.DOPPLER_TRACKING_IDLE_STEP
 	process_physics_priority = 10
+	# every view places the camera itself each rendered frame from the jet's interpolated transform (see _process);
+	# the engine's own interpolation of the camera would only add a step of lag and, with mouse look applied per
+	# physics tick, uneven motion while panning
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -124,18 +129,15 @@ func origin_moved() -> void:
 
 func _physics_process(delta: float) -> void:
 	_physics_step(delta)
-	if _origin_moved:
-		# only now, with the camera placed in the new frame: interpolating from its old-frame position would draw
-		# one frame from part way back across the shift
-		_origin_moved = false
-		reset_physics_interpolation()
+	# (the floating origin: the camera is placed from the jet's interpolated transform every frame, which the jet
+	# resets on a shift, so there is nothing of the old frame to carry over)
+	_origin_moved = false
 
 
 func _physics_step(delta: float) -> void:
 	if target == null:
 		return
 	far = clampf(maxf(base_far, (global_position.y - maxf(WorldData.sea_level, 0.0)) * 32.0), base_far, 450000.0)
-	_shake_t += delta
 	if Input.is_action_just_pressed("toggle_view"):
 		view = (view + 1) % VIEW_NAMES.size()
 		_glide = false
@@ -149,15 +151,8 @@ func _physics_step(delta: float) -> void:
 			_yaw = atan2(-f.x, -f.z)
 			_pitch = deg_to_rad(-12.0)
 
-	# chase views drift back behind the jet; in the cockpit your head stays where you put it
-	if not _dragging and view != View.ORBIT and view != View.COCKPIT:
-		_idle += delta
-		if _idle > RECENTER_DELAY:
-			var k := clampf(delta * 3.0, 0.0, 1.0)
-			_yaw = lerp_angle(_yaw, 0.0, k)
-			_pitch = lerpf(_pitch, 0.0, k)
-
-	var t := target.global_transform
+	if view != View.COCKPIT:
+		return      # outside views are placed every rendered frame in _process
 	var look := Basis(Vector3.UP, _yaw) * Basis(Vector3.RIGHT, _pitch)
 	if view == View.COCKPIT:
 		var eye: Vector3 = target.spec.cockpit_eye if "spec" in target and target.spec else COCKPIT_EYE
@@ -172,13 +167,22 @@ func _physics_step(delta: float) -> void:
 		_seat_eye = eye + _head
 		_ck_look = look
 		_ck_eye = _seat_eye + head_offset(_yaw, _pitch)
-		if physics_interpolation_mode != Node.PHYSICS_INTERPOLATION_MODE_OFF:
-			physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 		_place_cockpit()
-		return
-	if physics_interpolation_mode != Node.PHYSICS_INTERPOLATION_MODE_INHERIT:
-		physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_INHERIT
-		reset_physics_interpolation()
+
+
+## Outside views, every rendered frame: from the jet's interpolated transform (what is drawn this frame), with the
+## mouse look as it is right now, so dragging the view is as smooth as the display.
+func _place_outside(delta: float) -> void:
+	# chase views drift back behind the jet; in the cockpit your head stays where you put it
+	if not _dragging and view != View.ORBIT:
+		_idle += delta
+		if _idle > RECENTER_DELAY:
+			var k := 1.0 - exp(-3.0 * delta)
+			_yaw = lerp_angle(_yaw, 0.0, k)
+			_pitch = lerpf(_pitch, 0.0, k)
+	var t: Transform3D = target.get_global_transform_interpolated() if target.is_physics_interpolated_and_enabled() else target.global_transform
+	t.basis = t.basis.orthonormalized()
+	var look := Basis(Vector3.UP, _yaw) * Basis(Vector3.RIGHT, _pitch)
 	near = 0.05
 	fov = _base_fov
 	if view == View.ORBIT:
@@ -260,6 +264,10 @@ func _step_glide(delta: float) -> void:
 ## of a physics step, and at flying speed that is centimetres of jitter between the panel and your eye,
 ## which smears every needle and label (and temporal upscalers turn it into ghost trails).
 func _process(delta: float) -> void:
+	_shake_t += delta
+	if target != null and view != View.COCKPIT:
+		_place_outside(delta)
+		return
 	if view == View.COCKPIT and target != null:
 		# head direction and zoom are updated per rendered frame too, so looking around and the
 		# double-click zoom glide are as smooth as the display allows

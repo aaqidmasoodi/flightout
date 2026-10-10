@@ -21,7 +21,7 @@ func _ready() -> void:
 		ts.material.set_shader_parameter("detail_tex", tex.detail)
 		ts.material.set_shader_parameter("detail_nrm", tex.normal)
 		# the sky system keeps the haze uniforms of every material in this list current (aerial perspective)
-		SM.ocean_materials.append(ts.material)
+		SM.add_haze_material(ts.material)
 		# a sibling of this node, not a child: it places its tiles in scene coordinates itself (floating origin)
 		get_parent().add_child.call_deferred(ts)
 		streamer = ts
@@ -37,7 +37,9 @@ func _ready() -> void:
 	cf.name = "CoverForest"
 	cf.setup(self)
 	add_child(cf)
-	Settings.changed.connect(func(_k, _v): _apply_settings())
+	Settings.changed.connect(func(k, _v):
+		if String(k).begins_with("graphics/"):
+			_apply_settings())
 	_apply_settings()
 
 
@@ -54,12 +56,20 @@ func _apply_settings() -> void:
 	var q: Dictionary = Settings.tree_level()
 	for m in _tree_mats:
 		(m as ShaderMaterial).set_shader_parameter("min_pixels", float(q.px))
-		(m as ShaderMaterial).set_shader_parameter("density", float(Settings.FOREST_DENSITY[clampi(int(Settings.get_value("graphics/forest_density")), 0, 3)]))
+		# forest density is applied when the trees are planted (scripts/world/cover_forest.gd), so thinned-out trees
+		# cost nothing at all; the shader's own thinning stays off
+		(m as ShaderMaterial).set_shader_parameter("density", 1.0)
+
+
+var _wind_set := -1.0
 
 
 func _process(_delta: float) -> void:
-	for m in _tree_mats:
-		(m as ShaderMaterial).set_shader_parameter("wind", clampf(WorldData.atmosphere.wind_speed / 10.0, 0.15, 1.2))
+	var w := clampf(WorldData.atmosphere.wind_speed / 10.0, 0.15, 1.2)
+	if w != _wind_set:
+		_wind_set = w
+		for m in _tree_mats:
+			(m as ShaderMaterial).set_shader_parameter("wind", w)
 
 
 # ---------------- tree meshes (vertex colours, soft foliage normals) ----------------

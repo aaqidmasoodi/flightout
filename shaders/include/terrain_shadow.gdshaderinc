@@ -6,6 +6,14 @@ global uniform sampler2D terrain_overview;
 global uniform vec4 overview_rect;     // x0, z0 (map metres), 1 / width, 1 / depth (of the image, in metres)
 global uniform float terrain_shadow;   // 1 when the overview is loaded
 global uniform vec3 sun_dir;
+// the same shadows worked out for the whole map whenever the sun moves (scripts/world/terrain_shadow_bake.gd):
+// one lookup instead of a march per vertex, once it is ready
+global uniform sampler2D terrain_shadow_map;
+global uniform float terrain_shadow_baked;
+
+float baked_shadow(vec2 mp) {
+	return textureLod(terrain_shadow_map, (mp - overview_rect.xy) * overview_rect.zw, 0.0).r;
+}
 
 float ov_h(vec2 mp) {
 	vec2 uv = (mp - overview_rect.xy) * overview_rect.zw;
@@ -39,10 +47,16 @@ float macro_shadow_steps(vec3 mp, int steps, float grow) {
 
 
 float macro_shadow(vec3 mp) {
+	if (terrain_shadow_baked > 0.5 && terrain_shadow > 0.5) {
+		return baked_shadow(mp.xz);
+	}
 	return macro_shadow_steps(mp, 18, 1.33);
 }
 
 // cheaper (trees: evaluated for every vertex of every tree)
 float macro_shadow_lite(vec3 mp) {
+	if (terrain_shadow_baked > 0.5 && terrain_shadow > 0.5) {
+		return baked_shadow(mp.xz);
+	}
 	return macro_shadow_steps(mp, 9, 1.7);
 }
