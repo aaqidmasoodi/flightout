@@ -43,6 +43,11 @@ const DEFAULTS := {
 	"controls/invert_pitch": false,
 	"controls/mouse_sensitivity": 1.0,
 	"cockpit/seat_height": 0.0,      # metres above the design eye point (-0.06 .. +0.06)
+	"cockpit/head_motion": 2,         # head movement under G in the cockpit: 0 off, 1 reduced, 2 full
+	"cockpit/shake": 2,               # airframe vibration felt in the cockpit: 0 off, 1 reduced, 2 full
+	"cockpit/g_effects": 2,           # G effects on the pilot (vision, breathing, G-LOC): 0 off, 1 reduced (no G-LOC), 2 realistic
+	"controls/head_tracking": false,  # OpenTrack head tracking (UDP)
+	"controls/head_tracking_port": 4242,
 	"audio/master": 0.8,
 	"audio/engine": 0.9,
 	"audio/effects": 0.9,

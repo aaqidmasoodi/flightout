@@ -32,7 +32,9 @@ var _pitch := 0.0
 var _zoom := 1.0
 var _ck_zoom := 1.0             # cockpit zoom (field of view factor)
 var _base_fov := 70.0
-var _head := Vector3.ZERO       # head offset: sags under G
+var _head := Vector3.ZERO       # (unused: the head's motion is _hm's)
+var _hm := preload("res://scripts/camera/head_motion.gd").new()      # head movement under G and seat vibration
+var _tracker := preload("res://scripts/camera/head_tracker.gd").new() # OpenTrack head tracking
 var _dragging := false
 var _idle := 0.0
 var _rig := Quaternion.IDENTITY
@@ -64,6 +66,10 @@ func _ready() -> void:
 	near = 0.05
 	far = base_far
 	current = true
+	_apply_head_settings()
+	Settings.changed.connect(func(k, _v):
+		if String(k).begins_with("cockpit/") or String(k).begins_with("controls/head"):
+			_apply_head_settings())
 	# placed every rendered frame (_process), so the Doppler effect tracks it per frame too
 	doppler_tracking = Camera3D.DOPPLER_TRACKING_IDLE_STEP
 	process_physics_priority = 10
@@ -134,9 +140,19 @@ func _physics_process(delta: float) -> void:
 	_origin_moved = false
 
 
+func _apply_head_settings() -> void:
+	_hm.amount = [0.0, 0.5, 1.0][clampi(int(Settings.get_value("cockpit/head_motion")), 0, 2)]
+	_hm.shake_amount = [0.0, 0.5, 1.0][clampi(int(Settings.get_value("cockpit/shake")), 0, 2)]
+	_tracker.configure(bool(Settings.get_value("controls/head_tracking")), int(Settings.get_value("controls/head_tracking_port")))
+
+
 func _physics_step(delta: float) -> void:
 	if target == null:
 		return
+	# the head and the seat's vibration follow your own jet's simulation, every step (in any view, so switching
+	# into the cockpit finds the head already where it should be)
+	if target.get("cockpit") != null and "fm" in target:
+		_hm.physics_step(delta, target.fm)
 	far = clampf(maxf(base_far, (global_position.y - maxf(WorldData.sea_level, 0.0)) * 32.0), base_far, 450000.0)
 	if Input.is_action_just_pressed("toggle_view"):
 		view = (view + 1) % VIEW_NAMES.size()
@@ -272,8 +288,21 @@ func _process(delta: float) -> void:
 		# head direction and zoom are updated per rendered frame too, so looking around and the
 		# double-click zoom glide are as smooth as the display allows
 		_step_glide(delta)
-		_ck_look = Basis(Vector3.UP, _yaw) * Basis(Vector3.RIGHT, _pitch)
-		_ck_eye = _seat_eye + head_offset(_yaw, _pitch)
+		# where you look: the mouse look, plus the head tracker's pose when one is sending
+		var yaw := _yaw
+		var pitch := _pitch
+		var roll := 0.0
+		var lean := Vector3.ZERO
+		_tracker.poll()
+		if _tracker.active():
+			yaw += deg_to_rad(_tracker.yaw)
+			pitch = clampf(pitch + deg_to_rad(_tracker.pitch), deg_to_rad(-89.0), deg_to_rad(89.0))
+			roll = deg_to_rad(_tracker.roll)
+			lean = _tracker.pos
+		# the body: the head moving with the jet under G, and the airframe's vibration through the seat
+		var hm: Array = _hm.sample(Engine.get_physics_interpolation_fraction(), _shake_t)
+		_ck_look = Basis.from_euler(hm[1] as Vector3) * Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, pitch) * Basis(Vector3.BACK, -roll)
+		_ck_eye = _seat_eye + head_offset(yaw, pitch) + (hm[0] as Vector3) + lean
 		if _glide:
 			fov = _base_fov * _ck_zoom
 		_place_cockpit()
@@ -307,7 +336,8 @@ static func head_offset(yaw: float, pitch: float) -> Vector3:
 func _place_cockpit() -> void:
 	var t: Transform3D = target.get_global_transform_interpolated() if target.is_physics_interpolated_and_enabled() else target.global_transform
 	global_transform = Transform3D(t.basis.orthonormalized() * _ck_look, t * _ck_eye)
-	# no camera shake in the cockpit: the panel must stay perfectly still relative to the eye
+	# the eye's own motion (head under G, seat vibration, head tracking) is in _ck_eye / _ck_look: smooth by
+	# construction (scripts/camera/head_motion.gd), and the cockpit is drawn from the same numbers
 
 
 ## Keeps the lens out of the ground. Instead of clipping, the camera slides along the surface:

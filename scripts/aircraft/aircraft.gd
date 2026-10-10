@@ -66,6 +66,8 @@ var sensors = null                     # radar and datalink picture for the disp
 var hud_shade := false                 # HUD sun shade deployed (cockpit only, not simulated)
 var mirrors_folded := false            # rear-view mirrors folded up out of use (cockpit only, not simulated)
 var fpm_caged := false                 # HUD flight path marker caged to the centre line (cockpit only, not simulated)
+var pilot_out := false                 # G-LOC: the pilot has passed out, the stick goes limp (scripts/aircraft/pilot_g.gd)
+var pilot_g: Node                      # the pilot's body under G (own jet only)
 var cabin_lights := false              # cockpit night lighting: instrument backlighting and floodlights
 var torch := false                     # the pilot's handheld flashlight (cockpit only, follows the view)
 var _man_pitch := 0.0                  # the pilot's own (smoothed) stick, before the autopilot and tail guard
@@ -228,6 +230,10 @@ func _ready() -> void:
 		cockpit.name = "CockpitInterior"
 		model.add_child(cockpit)
 		cockpit.setup(self, model)
+		pilot_g = preload("res://scripts/aircraft/pilot_g.gd").new()
+		pilot_g.name = "PilotG"
+		pilot_g.ac = self
+		add_child(pilot_g)
 	if is_remote:
 		add_to_group("remote_aircraft")
 		# placed every simulation tick from the snapshots (net/client.gd) and drawn between ticks by physics
@@ -506,15 +512,22 @@ func _read_inputs(delta: float) -> void:
 	var pitch_axis := Input.get_axis("pitch_down", "pitch_up")
 	if bool(Settings.get_value("controls/invert_pitch")):
 		pitch_axis = -pitch_axis
+	var roll_axis := Input.get_axis("roll_left", "roll_right")
+	var yaw_axis := Input.get_axis("yaw_left", "yaw_right")
+	if pilot_out:
+		# G-LOC: his hands fall away, the stick and pedals centre
+		pitch_axis = 0.0
+		roll_axis = 0.0
+		yaw_axis = 0.0
 	_man_pitch = move_toward(_man_pitch, pitch_axis, delta * 4.0)
-	_man_roll = move_toward(_man_roll, Input.get_axis("roll_left", "roll_right"), delta * 5.0)
+	_man_roll = move_toward(_man_roll, roll_axis, delta * 5.0)
 	if not typing:
 		_autopilot_keys(delta)
 	var ap: Array = autopilot.update(fm, spec, delta, _man_pitch, _man_roll)
 	# the tail-strike guard only protects the autopilot's own pitch commands: hand flying, you rotate when you like
 	pitch_in = autopilot.tail_guard(fm, spec, float(ap[0])) if autopilot.engaged else float(ap[0])
 	roll_in = float(ap[1])
-	yaw_in = move_toward(yaw_in, Input.get_axis("yaw_left", "yaw_right"), delta * 3.0)
+	yaw_in = move_toward(yaw_in, yaw_axis, delta * 3.0)
 	var hand_on_throttle := Input.is_action_pressed("throttle_up") or Input.is_action_pressed("throttle_down")
 	if Input.is_action_pressed("throttle_up"):
 		throttle = minf(throttle + delta * 0.4, 1.0)

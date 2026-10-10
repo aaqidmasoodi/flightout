@@ -98,6 +98,17 @@ func _ready() -> void:
 		_toggle(p, "Key hints", "hud/key_hints")
 		_toggle(p, "Network statistics (online)", "hud/net_stats")
 
+	p = _page("COCKPIT")
+	_choice(p, "Head movement under G", "cockpit/head_motion", ["Off", "Reduced", "Full"], [0, 1, 2])
+	_choice(p, "Airframe vibration", "cockpit/shake", ["Off", "Reduced", "Full"], [0, 1, 2])
+	_choice(p, "G effects (vision, breathing, G-LOC)", "cockpit/g_effects", ["Off", "Reduced", "Realistic"], [0, 1, 2])
+	_toggle(p, "Head tracking (OpenTrack, UDP 4242)", "controls/head_tracking")
+	var ht_note := T.label("In OpenTrack choose the output \"UDP over network\", host 127.0.0.1, port 4242.", 18, "Medium", T.DIM)
+	ht_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ht_note.custom_minimum_size = Vector2(10, 0)
+	ht_note.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	p.add_child(ht_note)
+
 	p = _page("CONTROLS")
 	_toggle(p, "Invert pitch", "controls/invert_pitch")
 	_slider(p, "Mouse look sensitivity", "controls/mouse_sensitivity", 0.3, 2.0, 0.05, func(v): return "%.2fx" % v)

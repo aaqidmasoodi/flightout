@@ -2,7 +2,8 @@
 
 Synthesized for FlightOut (Yembera): engine whine, core, low rumble, afterburner, wind, buffet, tyre roll,
 cockpit hum, gear motor, gear clunk, touchdown, tyre chirp, afterburner light, explosion, scrape,
-rain, all warning tones and interface sounds.
+rain, all warning tones and interface sounds, and the oxygen mask breathing and straining sounds
+(assets/audio/pilot, tools/build_mask_sounds.py).
 
 CC0 (public domain) recordings:
 - ab_body.wav: "Rocket Engine" by theMinesAreShakin, https://opengameart.org/content/rocket-engine (CC0)

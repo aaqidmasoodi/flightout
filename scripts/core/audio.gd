@@ -20,6 +20,7 @@ func _ready() -> void:
 	_bus("Effects", "World")
 	_bus("Warnings", "Master")
 	_bus("UI", "Master")
+	_bus("Pilot", "Master")          # the pilot's own breathing, in his mask: never muffled by the canopy
 	_world_lp = AudioEffectLowPassFilter.new()
 	_world_lp.cutoff_hz = 20000.0
 	_world_lp.resonance = 0.4
@@ -49,7 +50,7 @@ func _bus(bus_name: String, send: String) -> void:
 
 
 func _apply_volumes() -> void:
-	for pair in [["Engine", "audio/engine"], ["Effects", "audio/effects"], ["Warnings", "audio/warnings"], ["UI", "audio/ui"]]:
+	for pair in [["Engine", "audio/engine"], ["Effects", "audio/effects"], ["Pilot", "audio/effects"], ["Warnings", "audio/warnings"], ["UI", "audio/ui"]]:
 		var v := float(Settings.get_value(pair[1]))
 		AudioServer.set_bus_volume_db(AudioServer.get_bus_index(pair[0]), linear_to_db(maxf(v, 0.0001)))
 
