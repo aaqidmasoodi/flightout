@@ -400,7 +400,7 @@ void main() {
 		}
 	}
 
-	if (p.ranges.w > 1.5) {
+	if (p.ranges.w > 1.5 && p.ranges.w < 2.5) {
 		// debug 2: green where the march found cloud (brightness: opacity), red where it marched and found none
 		imageStore(out_color, px, first < NO_CLOUD ? vec4(0.0, 1.0 - T, 0.0, 0.0) : vec4(0.3, 0.0, 0.0, 0.0));
 		imageStore(out_depth, px, vec4(100.0, 200.0, 150.0, 0.0));

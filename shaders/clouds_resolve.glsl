@@ -109,6 +109,9 @@ void main() {
 			}
 		}
 	}
+	if (p.ranges.w > 4.5) {
+		result = c;                    // debug 5: the raw march, no temporal pass
+	}
 	imageStore(out_color, px, result);
 	imageStore(out_depth, px, d);
 }

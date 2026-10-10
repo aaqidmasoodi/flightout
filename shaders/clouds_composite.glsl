@@ -72,7 +72,12 @@ void main() {
 		}
 	}
 	cl = clamp(cl, lo, hi);
-	if (p.ranges.w > 2.5) {
+	if (p.ranges.w > 3.5) {
+		// debug 4 / 5: the march-resolution picture itself, nearest texel, opacity as white on black (5: without
+		// the temporal pass)
+		vec4 n = texelFetch(cloud_color, clamp(ivec2(hp + 0.5), ivec2(0), ivec2(p.sizes.xy) - 1), 0);
+		cl = vec4(vec3(1.0 - n.a), 0.0);
+	} else if (p.ranges.w > 2.5) {
 		// debug 3: this pixel's scene distance (red: km / 10, green: under 3 km), opaque
 		cl = vec4(min(dist / 10000.0, 1.0), dist < 3000.0 ? 1.0 : 0.0, 0.0, 0.0);
 	}
