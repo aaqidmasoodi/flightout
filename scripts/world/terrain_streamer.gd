@@ -186,6 +186,8 @@ func _overview_ready(img: Image, ov: Dictionary) -> void:
 	RenderingServer.global_shader_parameter_set("overview_rect", Vector4(x0, z0, 1.0 / (img.get_width() * s), 1.0 / (img.get_height() * s)))
 	RenderingServer.global_shader_parameter_set("terrain_shadow", 0.0 if "--no-terrain-shadow" in OS.get_cmdline_user_args() else 1.0)
 	_overview_tex = tex
+	# the cloud layers are measured from the ground of the region (scripts/world/cloud_ground.gd)
+	preload("res://scripts/world/cloud_ground.gd").build(img, float(ov.x0), float(ov.z0), s)
 	_shadow_bake = preload("res://scripts/world/terrain_shadow_bake.gd").new()
 	if not _shadow_bake.setup(tex, Vector4(x0, z0, 1.0 / (img.get_width() * s), 1.0 / (img.get_height() * s)), s):
 		_shadow_bake = null

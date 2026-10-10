@@ -7,15 +7,21 @@ const SKY_SHADER := preload("res://shaders/sky.gdshader")
 const LATITUDE := 34.0        # degrees north (a Kashmir-like latitude)
 const DECLINATION := 10.0     # spring sun
 # conditions: cloud coverage, overcast grey, haze, fog density, light dimming, rain
-# per condition: cirrus/sky (cov, over, haze), fog density, light dimming, rain, and the volumetric cloud layer
-# (base and top altitude, coverage, density, stratus shape 0..1, darkness)
+# per condition: cirrus/sky (cov, over, haze), fog density, light dimming, rain, and the volumetric cloud layer:
+# base and top in metres above the ground of the region (scripts/world/cloud_ground.gd), measured from its floor
+# (gmix 0: valley floors and plains) or towards its mean (gmix 1: a deck the mountains rise into), coverage,
+# density, stratus shape 0..1, darkness. So the same weather works over the plains at 200 m and the valley at 1,600 m:
+#   scattered / broken: fair-weather cumulus, bases about 1 km above the valley floors and plains
+#   overcast: a grey deck about 1 km over the valleys, ridges and peaks rising into and through it
+#   fog: low stratus filling the valleys and plains, the slopes and mountains standing out of it
+#   rain: a thick, dark deck from about 500 m over the ground up to 4 km and more
 const CONDITIONS := [
-	{"cov": 0.04, "over": 0.0, "haze": 0.0, "fog": 0.000022, "dim": 1.0, "rain": 0.0, "base": 1400.0, "top": 2900.0, "ccov": 0.0, "cdens": 1.0, "strat": 0.0, "cdark": 0.0},
-	{"cov": 0.34, "over": 0.0, "haze": 0.0, "fog": 0.000026, "dim": 0.96, "rain": 0.0, "base": 1400.0, "top": 2900.0, "ccov": 0.42, "cdens": 1.0, "strat": 0.0, "cdark": 0.0},
-	{"cov": 0.62, "over": 0.25, "haze": 0.05, "fog": 0.00003, "dim": 0.72, "rain": 0.0, "base": 1300.0, "top": 3200.0, "ccov": 0.62, "cdens": 1.1, "strat": 0.15, "cdark": 0.1},
-	{"cov": 0.93, "over": 0.82, "haze": 0.2, "fog": 0.00005, "dim": 0.32, "rain": 0.0, "base": 900.0, "top": 2400.0, "ccov": 0.82, "cdens": 1.0, "strat": 0.55, "cdark": 0.25},
-	{"cov": 0.7, "over": 0.55, "haze": 0.85, "fog": 0.00042, "dim": 0.45, "rain": 0.0, "base": 120.0, "top": 900.0, "ccov": 0.85, "cdens": 0.55, "strat": 1.0, "cdark": 0.1},
-	{"cov": 1.0, "over": 0.95, "haze": 0.45, "fog": 0.00016, "dim": 0.22, "rain": 1.0, "base": 600.0, "top": 3800.0, "ccov": 1.0, "cdens": 1.35, "strat": 0.6, "cdark": 0.55},
+	{"cov": 0.04, "over": 0.0, "haze": 0.0, "fog": 0.000022, "dim": 1.0, "rain": 0.0, "base": 1100.0, "top": 2500.0, "gmix": 0.2, "ccov": 0.0, "cdens": 1.0, "strat": 0.0, "cdark": 0.0},
+	{"cov": 0.34, "over": 0.0, "haze": 0.0, "fog": 0.000026, "dim": 0.96, "rain": 0.0, "base": 1100.0, "top": 2500.0, "gmix": 0.2, "ccov": 0.42, "cdens": 1.0, "strat": 0.0, "cdark": 0.0},
+	{"cov": 0.62, "over": 0.25, "haze": 0.05, "fog": 0.00003, "dim": 0.72, "rain": 0.0, "base": 1000.0, "top": 2900.0, "gmix": 0.3, "ccov": 0.62, "cdens": 1.1, "strat": 0.15, "cdark": 0.1},
+	{"cov": 0.93, "over": 0.82, "haze": 0.2, "fog": 0.00005, "dim": 0.32, "rain": 0.0, "base": 700.0, "top": 2100.0, "gmix": 0.5, "ccov": 0.82, "cdens": 1.0, "strat": 0.55, "cdark": 0.25},
+	{"cov": 0.7, "over": 0.55, "haze": 0.85, "fog": 0.00042, "dim": 0.45, "rain": 0.0, "base": -60.0, "top": 520.0, "gmix": 0.0, "ccov": 0.85, "cdens": 0.55, "strat": 1.0, "cdark": 0.1},
+	{"cov": 1.0, "over": 0.95, "haze": 0.45, "fog": 0.00016, "dim": 0.22, "rain": 1.0, "base": 450.0, "top": 4200.0, "gmix": 0.4, "ccov": 1.0, "cdens": 1.35, "strat": 0.6, "cdark": 0.55},
 ]
 
 var env: Environment
@@ -29,6 +35,7 @@ var _rain: GPUParticles3D
 var _rain_snd: AudioStreamPlayer
 var _drift := Vector2.ZERO
 var clouds                      # VolumetricClouds compositor effect
+const CloudGround = preload("res://scripts/world/cloud_ground.gd")
 var _cloud_drift := Vector2.ZERO
 var _volumes := {}
 var _volumes_ready := false
@@ -187,7 +194,13 @@ func _process(delta: float) -> void:
 	var cam_now := get_viewport().get_camera_3d()
 	if cam_now:
 		cam_y = cam_now.global_position.y
-	var deck_top := float(_w.top)
+	# the layer's ground under the camera (cloud heights are above the ground of the region, not sea level)
+	var gref := 0.0
+	if cam_now:
+		var cw := WorldData.to_world(cam_now.global_position)
+		var g2: Vector2 = CloudGround.at(cw.x, cw.z)
+		gref = lerpf(g2.x, g2.y, float(_w.gmix))
+	var deck_top := gref + float(_w.top)
 	var below := 1.0 - smoothstep(deck_top - 50.0, deck_top + 300.0, cam_y) * clampf((float(_w.over) - 0.5) * 2.0, 0.0, 1.0)
 	var over: float = float(_w.over) * below
 	var dim: float = lerpf(1.0, float(_w.dim), below)
@@ -265,6 +278,7 @@ func _process(delta: float) -> void:
 	clouds.sun_xz = sxz
 	clouds.base = float(_w.base)
 	clouds.top = float(_w.top)
+	clouds.ground_mix = float(_w.gmix)
 	clouds.coverage = float(_w.ccov)
 	clouds.density = float(_w.cdens)
 	clouds.stratus = float(_w.strat)
@@ -302,7 +316,7 @@ func _process(delta: float) -> void:
 	var cam: Camera3D = cam_now
 	if cam:
 		_rain.global_position = cam.global_position + Vector3(0.0, 30.0, 0.0)
-	rain *= 1.0 - smoothstep(float(_w.base), float(_w.base) + 300.0, cam_y)     # no rain above the cloud base
+	rain *= 1.0 - smoothstep(gref + float(_w.base), gref + float(_w.base) + 300.0, cam_y)     # no rain above the cloud base
 	_rain.emitting = rain > 0.05
 	_rain.amount_ratio = clampf(rain, 0.0, 1.0)
 	var wv: Vector3 = WorldData.atmosphere.wind_at(_rain.global_position, 0.0, 0.0) if WorldData.atmosphere else Vector3.ZERO

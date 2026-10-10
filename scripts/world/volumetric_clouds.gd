@@ -6,7 +6,8 @@ extends CompositorEffect
 ##   3. composite (full resolution): depth-aware upsample; each pixel trims the clouds to what lies in front of it
 ## The sky system sets the public parameters every frame from the time of day and weather.
 
-const UBO_FLOATS := 104         # 3 mat4 + 14 vec4
+const UBO_FLOATS := 112         # 3 mat4 + 16 vec4
+const CloudGround = preload("res://scripts/world/cloud_ground.gd")
 
 var sun_dir := Vector3.UP
 var light_intensity := 1.0
@@ -30,6 +31,9 @@ var max_iterations := 320       # loop iterations per ray (cheap steps through a
 var max_dense := 96             # samples inside cloud per ray (the expensive ones)
 var resolution_div := 2         # march at 1/2 (or 1/4) of the screen
 var active := true              # graphics/volumetric_clouds
+## base and top are metres above the ground of the region (scripts/world/cloud_ground.gd): ground_mix 0 measures
+## from its floor (valley floors and plains: fog, low cloud), 1 from its mean (decks the mountains rise through)
+var ground_mix := 0.5
 var height_variation := 450.0   # metres the layer base and the cloud tops wander across the map
 var hor_toward := Color(0.6, 0.7, 0.8)   # sky colour at the horizon towards the sun (aerial perspective)
 var hor_away := Color(0.6, 0.7, 0.8)
@@ -270,6 +274,11 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	data.append_array([hor_toward.r, hor_toward.g, hor_toward.b, sun_xz.x])
 	data.append_array([hor_away.r, hor_away.g, hor_away.b, sun_xz.y])
 	data.append_array([float(max_iterations), float(max_dense), 0.0, 0.0])
+	# the ground the layers stand on, and the Earth's curvature (the clouds sink with distance as the terrain does)
+	var curve := WorldData.EARTH_CURVE if WorldData.is_large() else 0.0
+	data.append_array([ground_mix, lerpf(CloudGround.lo, CloudGround.hi, 0.0), CloudGround.hi, curve])
+	var gr: Vector4 = CloudGround.rect
+	data.append_array([gr.x, gr.y, gr.z, gr.w])
 	var bytes := data.to_byte_array()
 	_rd.buffer_update(_ubo, 0, bytes.size(), bytes)
 	for view in buffers.get_view_count():
@@ -278,7 +287,8 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 		_dispatch("march", [_u_image(0, _raw_color), _u_tex(1, _point_sampler, depth),
 			_u_tex(2, _repeat_sampler, _noise.perlin), _u_tex(3, _repeat_sampler, _noise.worley),
 			_u_tex(4, _repeat_sampler, _noise.detail), _u_tex(5, _repeat_sampler, _noise.weather),
-			_u_ubo(6), _u_image(7, _raw_depth), _u_tex(8, _point_sampler, _noise.blue)], _half_size)
+			_u_ubo(6), _u_image(7, _raw_depth), _u_tex(8, _point_sampler, _noise.blue),
+			_u_tex(9, _clamp_sampler, RenderingServer.texture_get_rd_texture(CloudGround.texture.get_rid()))], _half_size)
 		_dispatch("resolve", [_u_image(0, _hist_color[_cur]), _u_image(1, _hist_depth[_cur]),
 			_u_tex(2, _point_sampler, _raw_color), _u_tex(3, _point_sampler, _raw_depth),
 			_u_tex(4, _clamp_sampler, _hist_color[1 - _cur]), _u_ubo(6)], _half_size)

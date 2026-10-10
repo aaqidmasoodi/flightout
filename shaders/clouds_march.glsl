@@ -31,10 +31,14 @@ layout(set = 0, binding = 6, std140) uniform Params {
 	vec4 hor_a;            // rgb sky at the horizon towards the sun, w = sun direction x (horizontal, unit)
 	vec4 hor_b;            // rgb sky at the horizon away from the sun, w = sun direction z
 	vec4 limits;           // x most loop iterations per ray, y most in-cloud samples per ray (quality setting)
+	vec4 ground;           // x mix floor (0) .. mean (1), y lowest reference, z highest reference, w Earth curvature
+	vec4 ground_rect;      // the reference grid: x0, z0 (map metres of its corner), 1 / width, 1 / depth
 } p;
 
 layout(rg32f, set = 0, binding = 7) uniform restrict writeonly image2D out_depth;
 layout(set = 0, binding = 8) uniform sampler2D blue_noise;     // 64x64 void-and-cluster blue noise
+// the ground the layers are measured from (scripts/world/cloud_ground.gd): r floor, g mean, metres above sea level
+layout(set = 0, binding = 9) uniform sampler2D ground_ref;
 
 const float NO_CLOUD = 1e9;
 
@@ -48,13 +52,22 @@ float height_profile(float h) {
 	return mix(cu, st, p.shape.x);
 }
 
+// Where the layer stands at a map position: the regional ground (floor .. mean), lowered by the Earth's curvature
+// seen from the camera (the terrain sinks the same way, so far decks stay on the far mountains).
+float layer_ground(vec2 map_xz) {
+	vec2 g = textureLod(ground_ref, (map_xz - p.ground_rect.xy) * p.ground_rect.zw, 0.0).rg;
+	vec2 dc = map_xz - (p.cam_pos.xz + vec2(p.amb_bottom.w, p.misc2.w));
+	return mix(g.r, g.g, p.ground.x) - dot(dc, dc) * p.ground.w;
+}
+
 float cloud_density(vec3 pos, bool cheap, float detail_amt) {
 	pos.xz += vec2(p.amb_bottom.w, p.misc2.w);    // floating origin: sample the clouds at their map position
 	vec2 wind = p.shape.zw;
 	float hv = texture(weather_tex, (pos.xz + wind) / 9000.0 + vec2(0.37, 0.11)).r - 0.5;
 	float tv = texture(weather_tex, (pos.xz + wind) / 4200.0 + vec2(0.71, 0.53)).r - 0.5;
-	float base = p.layer.x + hv * p.misc2.z;
-	float top = p.layer.y + hv * p.misc2.z * 0.7 + tv * p.misc2.z * 1.6 * (1.0 - p.shape.x * 0.7);
+	float g0 = layer_ground(pos.xz);
+	float base = g0 + p.layer.x + hv * p.misc2.z;
+	float top = g0 + p.layer.y + hv * p.misc2.z * 0.7 + tv * p.misc2.z * 1.6 * (1.0 - p.shape.x * 0.7);
 	float h = (pos.y - base) / max(top - base, 50.0);
 	if (h <= 0.0 || h >= 1.0) {
 		return 0.0;
@@ -133,14 +146,18 @@ void main() {
 	vec4 vfar = p.inv_proj * vec4(uv * 2.0 - 1.0, 0.5, 1.0);
 	vec3 ro = p.cam_pos.xyz;
 	vec3 rd = normalize(mat3(p.cam_xform) * normalize(vfar.xyz / vfar.w));
-	float base = p.layer.x - p.misc2.z * 0.5;
-	float top = p.layer.y + p.misc2.z * 1.2;
-	// above the layer the deck stretches to the horizon, hundreds of km away: march it that far (steps grow with
-	// distance, and aerial perspective fades it into the haze), so it never ends in a circle around the camera
+	// above the layer (here, over the ground below the camera) the deck stretches to the horizon, hundreds of km
+	// away: march it that far (steps grow with distance, and aerial perspective fades it into the haze), so it never
+	// ends in a circle around the camera
+	float g_cam = layer_ground(p.cam_pos.xz + vec2(p.amb_bottom.w, p.misc2.w));
 	float reach = p.misc.x;
-	if (ro.y > top) {
-		reach = max(reach, min(p.misc.x + (ro.y - top) * 40.0, 450000.0));
+	if (ro.y > g_cam + p.layer.y + p.misc2.z * 1.2) {
+		reach = max(reach, min(p.misc.x + (ro.y - (g_cam + p.layer.y)) * 40.0, 450000.0));
 	}
+	// the slab any layer sample can lie in: from the lowest ground reference (less the curvature drop at the far end
+	// of the ray) to the highest
+	float base = p.ground.y + p.layer.x - p.misc2.z * 0.5 - reach * reach * p.ground.w;
+	float top = p.ground.z + p.layer.y + p.misc2.z * 1.2;
 	float t0, t1;
 	if (abs(rd.y) < 1e-4) {
 		t0 = (ro.y < base || ro.y > top) ? 1.0 : 0.0;
@@ -228,7 +245,8 @@ void main() {
 				od += cloud_density(lp, j > 0, detail_amt) * ls;
 				ls *= 2.1;
 			}
-			float hgt = clamp((pos.y - p.layer.x) / (p.layer.y - p.layer.x), 0.0, 1.0);
+			float gl = layer_ground(pos.xz + vec2(p.amb_bottom.w, p.misc2.w));
+			float hgt = clamp((pos.y - gl - p.layer.x) / (p.layer.y - p.layer.x), 0.0, 1.0);
 			float powder = 1.0 - exp(-dens * ext_k * 140.0);
 			float sun_light = 0.0;
 			float oa = 1.0;
