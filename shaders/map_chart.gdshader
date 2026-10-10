@@ -27,8 +27,14 @@ void fragment() {
 	// mirrored back into the chart
 	vec2 m = 1.0 - abs(1.0 - abs(uv));
 	m = clamp(m, vec2(0.0), vec2(1.0));
-	float lod = 7.0 * smoothstep(0.0, 0.12, out_d);
-	vec3 c = textureLod(TEXTURE, m, lod).rgb;
+	// blurred from a ring of samples at a moderate level (the coarsest levels alone showed their texels as blocks)
+	float lod = 4.5 * smoothstep(0.0, 0.12, out_d);
+	vec2 r = exp2(lod) * 1.5 / vec2(textureSize(TEXTURE, 0));
+	vec3 c = textureLod(TEXTURE, m, lod).rgb * 0.2;
+	for (int k = 0; k < 8; k++) {
+		float a = float(k) * 0.785398 + 0.3;
+		c += textureLod(TEXTURE, clamp(m + vec2(cos(a), sin(a)) * r, vec2(0.0), vec2(1.0)), lod).rgb * 0.1;
+	}
 	vec3 sharp = texture(TEXTURE, m).rgb;
 	c = mix(sharp, c, smoothstep(0.0, 0.02, out_d));
 	// a long, soft fade into the background, starting a little inside the chart, along an irregular line (the
