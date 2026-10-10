@@ -19,8 +19,8 @@ const DECLINATION := 10.0     # spring sun
 # in fields and gaps, an overcast is a sheet with few breaks
 const CONDITIONS := [
 	{"cov": 0.04, "over": 0.0, "haze": 0.0, "fog": 0.000022, "dim": 1.0, "rain": 0.0, "base": 1100.0, "top": 2500.0, "gmix": 0.2, "ccov": 0.0, "cdens": 1.0, "strat": 0.0, "cdark": 0.0, "var": 0.8},
-	{"cov": 0.34, "over": 0.0, "haze": 0.0, "fog": 0.000026, "dim": 0.96, "rain": 0.0, "base": 1100.0, "top": 2500.0, "gmix": 0.2, "ccov": 0.42, "cdens": 1.0, "strat": 0.0, "cdark": 0.0, "var": 0.85},
-	{"cov": 0.62, "over": 0.25, "haze": 0.05, "fog": 0.00003, "dim": 0.72, "rain": 0.0, "base": 1000.0, "top": 2900.0, "gmix": 0.3, "ccov": 0.62, "cdens": 1.1, "strat": 0.15, "cdark": 0.1, "var": 0.7},
+	{"cov": 0.34, "over": 0.0, "haze": 0.0, "fog": 0.000026, "dim": 0.96, "rain": 0.0, "base": 1100.0, "top": 3300.0, "gmix": 0.2, "ccov": 0.42, "cdens": 1.0, "strat": 0.0, "cdark": 0.0, "var": 0.85},
+	{"cov": 0.62, "over": 0.25, "haze": 0.05, "fog": 0.00003, "dim": 0.72, "rain": 0.0, "base": 1000.0, "top": 3600.0, "gmix": 0.3, "ccov": 0.62, "cdens": 1.1, "strat": 0.15, "cdark": 0.1, "var": 0.7},
 	{"cov": 0.93, "over": 0.82, "haze": 0.2, "fog": 0.00005, "dim": 0.32, "rain": 0.0, "base": 700.0, "top": 2100.0, "gmix": 0.5, "ccov": 0.82, "cdens": 1.0, "strat": 0.55, "cdark": 0.25, "var": 0.35},
 	{"cov": 0.7, "over": 0.55, "haze": 0.85, "fog": 0.00042, "dim": 0.45, "rain": 0.0, "base": -60.0, "top": 520.0, "gmix": 0.0, "ccov": 0.85, "cdens": 0.55, "strat": 1.0, "cdark": 0.1, "var": 0.3},
 	{"cov": 1.0, "over": 0.95, "haze": 0.45, "fog": 0.00016, "dim": 0.22, "rain": 1.0, "base": 450.0, "top": 4200.0, "gmix": 0.4, "ccov": 1.0, "cdens": 1.35, "strat": 0.6, "cdark": 0.55, "var": 0.3},
