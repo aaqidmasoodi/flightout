@@ -35,12 +35,15 @@ func _ready() -> void:
 	_build_corner_info()
 	_ui.modulate.a = 0.0
 	create_tween().tween_property(_ui, "modulate:a", 1.0, 1.0).set_trans(Tween.TRANS_SINE)
-	# test/automation switch: FlightOut.exe -- --start-flight  (skips the menu)
-	if "--start-flight" in OS.get_cmdline_user_args():
+	# test/automation switch: FlightOut.exe -- --start-flight  (skips the menu, the first time only: going back to
+	# the main menu from the flight then stays there)
+	var first := not Game.has_meta("menu_shown")
+	Game.set_meta("menu_shown", true)
+	if first and "--start-flight" in OS.get_cmdline_user_args():
 		_on_play.call_deferred()
-	# FlightOut -- --connect=host[:port] [--callsign=Name]  (joins a server straight away)
+	# FlightOut -- --connect=host[:port] [--callsign=Name]  (joins a server straight away, the first time only)
 	for arg in OS.get_cmdline_user_args():
-		if arg.begins_with("--connect="):
+		if first and arg.begins_with("--connect="):
 			var cs := "Pilot"
 			for a2 in OS.get_cmdline_user_args():
 				if a2.begins_with("--callsign="):
