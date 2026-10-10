@@ -15,6 +15,7 @@ const TRAIL_MAX := 1800
 const MIN_SCALE := 40.0                # m per pixel, zoomed in (the chart has a pixel every 256 m)
 const MAX_SCALE := 2000.0
 const PANEL_W := 380.0
+const CHART_PAD := 0.35               # the chart's soft surround on each side, as a share of its size
 const SNAP_PX := 18.0                  # a point this close to a jet, an airfield or a marker takes it
 const RULER_COL := Color("f4f6f8")
 const BORDER_COL := Color(0.92, 0.27, 0.24, 0.85)
@@ -579,8 +580,9 @@ func _draw_relief() -> void:
 		var a := _to_screen(Vector2(float(_ext.x0) - s * 0.5, float(_ext.z0) - s * 0.5))
 		var b := _to_screen(Vector2(float(_ext.x1) + s * 0.5, float(_ext.z1) + s * 0.5))
 		# drawn larger than the chart: beyond its edge the shader fades it out softly (shaders/map_chart.gdshader)
-		var pad: float = (_relief.material as ShaderMaterial).get_shader_parameter("pad")
 		var sz := b - a
+		var pad := CHART_PAD
+		(_relief.material as ShaderMaterial).set_shader_parameter("pad", pad)
 		(_relief.material as ShaderMaterial).set_shader_parameter("aspect", sz.y / maxf(sz.x, 1.0))
 		_relief.draw_texture_rect(_tex, Rect2(a - sz * pad, sz * (1.0 + 2.0 * pad)), false)
 
