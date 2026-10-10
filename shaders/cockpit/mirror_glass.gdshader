@@ -11,7 +11,7 @@ shader_type spatial;
 render_mode unshaded, cull_back, skip_vertex_transform, fog_disabled, shadows_disabled;
 #include "res://shaders/include/cockpit_precise.gdshaderinc"
 
-uniform sampler2D reflection : source_color, filter_linear, repeat_disable;
+uniform sampler2D reflection : filter_linear, repeat_disable;   // linear light (HDR), tone mapped once by the main view
 uniform bool live = true;                   // false: folded away, nothing rendered, plain dark glass
 uniform vec3 tint : source_color = vec3(0.82, 0.84, 0.86);   // silvered glass is not a perfect reflector
 uniform mat3 capture_basis;                 // world direction -> the shared picture's camera space

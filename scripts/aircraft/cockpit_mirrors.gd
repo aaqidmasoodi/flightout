@@ -20,7 +20,6 @@ extends Node
 ## Folded, nothing is rendered for them at all.
 
 const GLASS_SHADER := preload("res://shaders/cockpit/mirror_glass.gdshader")
-const FAR := 6000.0
 # the shared picture: from the middle of the arch, looking aft; wide enough for every mirror from any head position
 const CAPTURE_FOV := Vector2(130.0, 64.0)     # degrees across, up
 const CAPTURE_HEIGHT := [300, 360, 420]      # pixels (display resolution setting: low, medium, full)
@@ -141,12 +140,13 @@ func build(aircraft: Node3D, root: Node3D, pads: MeshInstance3D, eye: Vector3, m
 	_vp.msaa_3d = Viewport.MSAA_DISABLED
 	_vp.positional_shadow_atlas_size = 0
 	_vp.audio_listener_enable_3d = false
+	_vp.use_hdr_2d = true                       # the picture stays in linear light, before tone mapping (see _sync_env)
 	add_child(_vp)
 	_cam = Camera3D.new()
 	_cam.keep_aspect = Camera3D.KEEP_HEIGHT
 	_cam.fov = CAPTURE_FOV.y
 	_cam.near = CAPTURE_NEAR
-	_cam.far = FAR
+	_cam.far = 20000.0                          # follows the main view's (see update)
 	_cam.cull_mask = 0xFFFFF & ~layer           # the cockpit interior is drawn for the main view only
 	_cam.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	_cam.compositor = Compositor.new()          # no volumetric clouds in the mirrors: they would cost a full pass
@@ -175,6 +175,38 @@ func _apply_resolution() -> void:
 	var h: int = CAPTURE_HEIGHT[clampi(int(Settings.get_value("graphics/display_res")), 0, 2)]
 	var aspect := tan(deg_to_rad(CAPTURE_FOV.x * 0.5)) / tan(deg_to_rad(CAPTURE_FOV.y * 0.5))
 	_vp.size = Vector2i(roundi(h * aspect), h)
+
+
+## The picture is rendered with the world's own sky, light and fog, but not tone mapped (no exposure, no curve, no
+## glow): the glass hands it to the main view, which tone maps it once along with everything else. Tone mapping it
+## twice made the mirrors pale and washed out. The sky system changes the world's environment as the day goes on,
+## so the few settings it changes are copied over each time the picture is taken.
+var _env: Environment
+const ENV_KEYS := [&"background_mode", &"sky", &"ambient_light_source", &"ambient_light_color", &"ambient_light_energy",
+	&"ambient_light_sky_contribution", &"reflected_light_source", &"fog_enabled", &"fog_light_color", &"fog_density",
+	&"fog_height", &"fog_height_density", &"fog_aerial_perspective", &"fog_sky_affect"]
+
+
+func _sync_env() -> void:
+	var world := _vp.find_world_3d()
+	var src: Environment = world.environment if world else null
+	if src == null:
+		return
+	if _env == null:
+		_env = Environment.new()
+		_env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
+		_env.tonemap_exposure = 1.0
+		_env.glow_enabled = false
+		_env.ssao_enabled = false
+		_env.ssr_enabled = false
+		_env.ssil_enabled = false
+		_env.sdfgi_enabled = false
+		_env.volumetric_fog_enabled = false
+		_cam.environment = _env
+	for key in ENV_KEYS:
+		var v = src.get(key)
+		if _env.get(key) != v:
+			_env.set(key, v)
 
 
 ## The mirrors swung up about their hinges by the fold amount (eased, like the sun shade).
@@ -214,6 +246,8 @@ func update(inside: bool, cam: Camera3D, delta: float) -> void:
 	air.basis = air.basis.orthonormalized()
 	var t := air * _space(_root) * _capture_local
 	_cam.global_transform = t
+	_cam.far = cam.far                          # as far as you can see out of the canopy (the terrain far below)
+	_sync_env()
 	# world direction -> the picture camera's own axes (its rows are the camera's axes)
 	_material.set_shader_parameter("capture_basis", t.basis.orthonormalized().transposed())
 	_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
