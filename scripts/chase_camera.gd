@@ -44,6 +44,8 @@ var _floor := -INF              # smoothed surface height under the lens
 var _reach := 1.0               # 0..1 fraction of the boom left after a hill pulls the camera in
 var _ck_eye := Vector3.ZERO     # cockpit eye point (aircraft space) for this frame, head sag included
 var _ck_look := Basis.IDENTITY  # cockpit head direction (aircraft space)
+var _ck_eye_steady := Vector3.ZERO     # the same without the body's motion and the vibration (the torch's hand)
+var _ck_look_steady := Basis.IDENTITY
 var _seat_eye := Vector3.ZERO   # design eye point for the seat (aircraft space); the head moves around it
 var _glide := false             # head animating to a target (double-click inspect, reset)
 var _glide_to := Vector3.ZERO   # yaw, pitch, zoom to glide to
@@ -301,8 +303,10 @@ func _process(delta: float) -> void:
 			lean = _tracker.pos
 		# the body: the head moving with the jet under G, and the airframe's vibration through the seat
 		var hm: Array = _hm.sample(Engine.get_physics_interpolation_fraction(), _shake_t)
-		_ck_look = Basis.from_euler(hm[1] as Vector3) * Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, pitch) * Basis(Vector3.BACK, -roll)
-		_ck_eye = _seat_eye + head_offset(yaw, pitch) + (hm[0] as Vector3) + lean
+		_ck_look_steady = Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, pitch) * Basis(Vector3.BACK, -roll)
+		_ck_eye_steady = _seat_eye + head_offset(yaw, pitch) + lean
+		_ck_look = Basis.from_euler(hm[1] as Vector3) * _ck_look_steady
+		_ck_eye = _ck_eye_steady + (hm[0] as Vector3)
 		if _glide:
 			fov = _base_fov * _ck_zoom
 		_place_cockpit()

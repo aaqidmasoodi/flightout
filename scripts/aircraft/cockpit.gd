@@ -1022,12 +1022,16 @@ func _update_torch(delta: float) -> void:
 	if env:
 		exposure = maxf(env.tonemap_exposure, 0.3)
 	_torch.light_energy = TORCH_ENERGY * _torch_k * clampf(pow(2.0 / exposure, 2.0), 1.0, 6.0)
-	# lag in the jet's frame (the view's look basis relative to the airframe), so manoeuvring never swings the beam
-	var look := cam.global_basis.orthonormalized()
-	var rel: Basis = cam.get("_ck_look") if cam.get("_ck_look") != null else Basis()
+	# fixed to the airframe (the jet as drawn this frame) and aimed where you look, but from the steady head: the
+	# body's motion under G and the seat's vibration are left out. A shadow-casting light that moves by fractions of
+	# a millimetre every frame re-renders its shadows a little differently each time, and the cockpit's edges
+	# shimmered and flickered under it. Lag in the jet's frame, so manoeuvring never swings the beam.
+	var air: Transform3D = ac.get_global_transform_interpolated() if ac.is_physics_interpolated_and_enabled() else ac.global_transform
+	air.basis = air.basis.orthonormalized()
+	var rel: Basis = cam.get("_ck_look_steady") if cam.get("_ck_look_steady") != null else Basis()
+	var eye: Vector3 = cam.get("_ck_eye_steady") if cam.get("_ck_eye_steady") != null else Vector3.ZERO
 	_torch_aim = _torch_aim.slerp(rel, clampf(delta * TORCH_LAG, 0.0, 1.0)).orthonormalized()
-	var frame := look * rel.inverse()               # the airframe's world basis as the camera sees it
-	_torch.global_transform = Transform3D(frame * _torch_aim, cam.global_position + look * TORCH_HAND)
+	_torch.global_transform = air * Transform3D(_torch_aim, eye + rel * TORCH_HAND)
 
 
 ## HUD sun shade: swings down behind the combiner (and its lever with it) when ac.hud_shade is on.
