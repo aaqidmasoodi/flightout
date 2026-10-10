@@ -194,7 +194,7 @@ void main() {
 			vec2 dc = sp.xz - ro.xz;
 			vec3 mp = vec3(sp.x + omap.x, sp.y + dot(dc, dc) * curve, sp.z + omap.y);
 			// the noise level for this sample's footprint (a pixel's width at this distance)
-			float lod = max(log2(max(t * pix, 1.0) / shape_texel) + 0.5, 0.0);
+			float lod = log2(max(t * pix, 0.5) / shape_texel) + 0.5;   // below 0 near: the detail level uses it
 			float hh;
 			Column col = column(mp.xz);
 			// empty-space skipping by height: above or below this column's layer, jump to where the ray reaches it
