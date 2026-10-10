@@ -41,7 +41,7 @@ float shadow_od(vec3 mp, vec3 L) {
 	float od1 = 0.0;
 	if (all(greaterThan(uv1, vec2(0.0))) && all(lessThan(uv1, vec2(1.0)))) {
 		vec4 v = textureLod(shadow1_tex, uv1, 0.0);
-		od1 = v.x * (1.0 - saturate((mp.y - v.y) / max(v.z - v.y, 1.0)));
+		od1 = v.x * (1.0 - smoothstep(v.y - 150.0, v.z + 150.0, mp.y));
 	}
 	// cascade 0, fading into cascade 1 over its outer tenth
 	vec2 e = abs(uv0 - 0.5) * 2.0;
@@ -50,7 +50,7 @@ float shadow_od(vec3 mp, vec3 L) {
 		return od1;
 	}
 	vec4 v = textureLod(shadow0_tex, uv0, 0.0);
-	float od0 = v.x * (1.0 - saturate((mp.y - v.y) / max(v.z - v.y, 1.0)));
+	float od0 = v.x * (1.0 - smoothstep(v.y - 150.0, v.z + 150.0, mp.y));
 	return mix(od1, od0, w0);
 }
 

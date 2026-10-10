@@ -20,7 +20,9 @@ float _cloud_cascade(sampler2D s, vec4 inf, vec2 q, float y, out float w) {
 		return 0.0;
 	}
 	vec4 v = textureLod(s, uv, 0.0);
-	return v.x * (1.0 - clamp((y - v.y) / max(v.z - v.y, 1.0), 0.0, 1.0));
+	// the share of the cloud above this height: a smooth split with a margin (a straight-line split had kinks at the
+	// cloud's bottom and top heights, which showed on mountain slopes inside cloud as contour lines)
+	return v.x * (1.0 - smoothstep(v.y - 150.0, v.z + 150.0, y));
 }
 
 // Optical depth of cloud between a point and the sun. mp: map x, true height, map z.
