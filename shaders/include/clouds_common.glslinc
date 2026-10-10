@@ -103,7 +103,7 @@ float density_in(vec3 mp, Column c, float lod, float detail_amt, out float h_out
 	vec2 wv = textureLod(shape_tex, vec3(wq.x, 0.41, wq.y), 3.0).gb;
 	qx += (wv - 0.47) * 0.25;
 	// the noise stretched upright: convection builds towers taller than they are wide, not round blobs
-	vec3 q = vec3(qx.x, mp.y / (SHAPE_SCALE * 1.5), qx.y);
+	vec3 q = vec3(qx.x, mp.y / (SHAPE_SCALE * ((p.ranges.w > 8.5 && p.ranges.w < 9.5) ? 1.0 : 1.5)), qx.y);   // (debug 9: not upright)
 	vec4 s = textureLod(shape_tex, q, lod);
 	float wf = s.g * 0.625 + s.b * 0.25 + s.a * 0.125;
 	float base_shape = remap(s.r, wf - 1.0, 1.0, 0.0, 1.0);
@@ -130,7 +130,7 @@ float density_in(vec3 mp, Column c, float lod, float detail_amt, out float h_out
 	const float M_MEAN = 0.5;             // the detail pattern's average erosion (it lies around 0.47 .. 0.53)
 	float m = M_MEAN;
 	float dlod = lod + 2.0;               // its texels are a quarter of the shape's (420 m / 64 against 3400 m / 128)
-	if (detail_amt > 0.5 && dlod < 2.25) {
+	if (detail_amt > 0.5 && dlod < 2.25 && (p.ranges.w < 7.5 || p.ranges.w > 8.5)) {     // (debug 8: no detail)
 		// the detail drifts with the cloud it belongs to (each cloud a rigid shape carried by the wind), and rises
 		// through it very slowly (p.cam_pos.w: about 0.1 m/s), so the billows still evolve, almost too slowly to see
 		vec2 dx = mat2(vec2(0.5, -0.866), vec2(0.866, 0.5)) * vec2(mp.x + p.wind.x, mp.z + p.wind.y) / DETAIL_SCALE;
