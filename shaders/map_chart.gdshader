@@ -10,15 +10,9 @@ uniform vec4 bg : source_color = vec4(0.07, 0.08, 0.09, 1.0);
 uniform int dbg = 0;                  // development (--map-debug=N): 1 the fade, 2 the soft copy only, 3 the sharp chart only
 uniform sampler2D soft_tex : filter_linear, repeat_disable;   // the chart at 1/16 (scripts/ui/map_view.gd)
 
-float hash(vec2 p) {
-	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-}
-
-float vnoise(vec2 p) {
-	vec2 i = floor(p);
-	vec2 f = fract(p);
-	f = f * f * (3.0 - 2.0 * f);
-	return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+// a smooth wobble (0..1) for the line the chart fades along
+float wobble(vec2 p) {
+	return 0.5 + 0.25 * sin(p.x * 9.1 + sin(p.y * 7.3) * 1.7) + 0.25 * sin(p.y * 11.7 + sin(p.x * 5.9) * 1.3 + 1.1);
 }
 
 void fragment() {
@@ -28,7 +22,7 @@ void fragment() {
 	vec2 o = max(max(-uv, uv - 1.0), vec2(0.0));
 	vec2 inn = min(uv, 1.0 - uv);
 	float d = length(vec2(o.x, o.y * aspect)) > 0.0 ? length(vec2(o.x, o.y * aspect)) : -min(inn.x, inn.y * aspect);
-	float n = vnoise(uv * vec2(3.0, 3.0 * aspect) + 7.3) * 0.65 + vnoise(uv * vec2(7.0, 7.0 * aspect) + 1.7) * 0.35;
+	float n = wobble(vec2(uv.x, uv.y * aspect));
 	d += (n - 0.5) * 0.14;
 	// mirrored back into the chart
 	vec2 m = clamp(1.0 - abs(1.0 - abs(uv)), vec2(0.0), vec2(1.0));

@@ -41,17 +41,8 @@ def tint(h):
     return out
 
 
-def main():
-    tdir, out = sys.argv[1], sys.argv[2]
-    lv = int(sys.argv[3]) if len(sys.argv) > 3 else 3
-    meta = json.load(open(os.path.join(tdir, "terrain.json")))
-    tq, ts = meta["tile_quads"], meta["tile_samples"]
-    nx, nz = meta["tiles"][lv]
-    s = meta["spacing"] * (1 << lv)
-    raw = read_level(tdir, "h", "i", lv, nx, nz, ts, tq, "<u2")
-    h = raw.astype(np.float32) * meta["h_scale"] + meta["h_offset"]
-    cover = read_level(tdir, "lc", "lci", lv, nx, nz, ts, tq, np.uint8) if "landcover" in meta else np.zeros(h.shape, np.uint8)
-
+def render(h, cover, s):
+    """The chart's colours (0..1 rgb) from heights h (m) and land cover, s metres per sample."""
     img = tint(h)
     # hillshade, light from the north west, 45 degrees up (map rows grow south, columns east)
     gz, gx = np.gradient(h, s)
@@ -78,6 +69,21 @@ def main():
 
     img[h < -400.0] = (0.3, 0.3, 0.32)                               # outside the elevation data
     img = np.clip(img, 0.0, 1.0) ** (1 / 1.1)
+    return img
+
+
+def main():
+    tdir, out = sys.argv[1], sys.argv[2]
+    lv = int(sys.argv[3]) if len(sys.argv) > 3 else 3
+    meta = json.load(open(os.path.join(tdir, "terrain.json")))
+    tq, ts = meta["tile_quads"], meta["tile_samples"]
+    nx, nz = meta["tiles"][lv]
+    s = meta["spacing"] * (1 << lv)
+    raw = read_level(tdir, "h", "i", lv, nx, nz, ts, tq, "<u2")
+    h = raw.astype(np.float32) * meta["h_scale"] + meta["h_offset"]
+    cover = read_level(tdir, "lc", "lci", lv, nx, nz, ts, tq, np.uint8) if "landcover" in meta else np.zeros(h.shape, np.uint8)
+
+    img = render(h, cover, s)
     rgb = (img * 255 + 0.5).astype(np.uint8)
     os.makedirs(out, exist_ok=True)
     open(os.path.join(out, "map.jpg"), "wb").write(imagecodecs.jpeg8_encode(rgb, level=88))

@@ -12,7 +12,12 @@ const T = preload("res://scripts/ui/ui_theme.gd")
 const R_EARTH := 6371008.8
 const TRAIL_EVERY := 2.0               # s between track points
 const TRAIL_MAX := 1800
-const MIN_SCALE := 40.0                # m per pixel, zoomed in (the chart has a pixel every 256 m)
+const MIN_SCALE := 25.0                # m per pixel, zoomed in (the detail tiles have a pixel every 64 m)
+const OPEN_SCALE := 60.0               # opening the map: close in around you
+const DETAIL_FROM := 230.0             # the detail tiles fade in below this many m per pixel ...
+const DETAIL_FULL := 150.0             # ... and cover the chart from here in
+const TILE_CACHE := 96                 # detail tiles kept loaded
+const TILE_LOADS := 3                  # detail tiles loaded per frame at most
 const MAX_SCALE := 2000.0
 const PANEL_W := 380.0
 const CHART_PAD := 0.35               # the chart's soft surround on each side, as a share of its size
@@ -52,7 +57,14 @@ var _ext := {}                         # map.json: x0, z0, x1, z1 (centres of th
 var _lat0 := 34.55
 var _lon0 := 76.4
 var _centre := Vector2.ZERO            # world x, z at the middle of the chart
-var _scale := 400.0                    # metres per pixel
+var _scale := OPEN_SCALE               # metres per pixel
+var _open_scale := OPEN_SCALE
+var _detail: Control                   # the detail tiles, over the chart (assets/<map>/chart1.json, tools/build_chart_tiles.py)
+var _tiles := {}                       # chart1.json
+var _tile_dir := ""
+var _tile_tex := {}                    # Vector2i -> ImageTexture
+var _tile_lru: Array[Vector2i] = []
+var _packs := {}                       # pack index -> FileAccess
 var _follow := true
 var _drag_from = null
 var _dragged := false
@@ -110,6 +122,12 @@ func _ready() -> void:
 	_ink.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_ink.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ink.draw.connect(_draw_chart)
+	_detail = Control.new()
+	_detail.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_detail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_detail.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	_detail.draw.connect(_draw_detail)
+	_chart.add_child(_detail)
 	_chart.add_child(_ink)
 	# side panel: own data, nearest field, the ruler, markers, controls
 	var panel := T.glass(0.78)
@@ -181,7 +199,7 @@ func _ready() -> void:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--map-open"):        # development: start with the map up (`--map-open=<m per px>`)
 			if arg.contains("="):
-				_scale = clampf(arg.get_slice("=", 1).to_float(), MIN_SCALE, MAX_SCALE)
+				_open_scale = clampf(arg.get_slice("=", 1).to_float(), MIN_SCALE, MAX_SCALE)
 			open.call_deferred()
 		elif arg.begins_with("--map-mark="):      # development: a marker at x,z
 			var xz := arg.trim_prefix("--map-mark=").split(",")
@@ -256,6 +274,10 @@ func _load_chart() -> void:
 		_lon0 = float(proj.lon0)
 	if ResourceLoader.exists(dir + "/map.jpg"):
 		_tex = load(dir + "/map.jpg")
+	_tile_dir = WorldData.terrain_dir
+	var ti = JSON.parse_string(FileAccess.get_file_as_string(_tile_dir + "/chart1.json")) if FileAccess.file_exists(_tile_dir + "/chart1.json") else null
+	if typeof(ti) == TYPE_DICTIONARY:
+		_tiles = ti
 	var r = JSON.parse_string(FileAccess.get_file_as_string(dir + "/region.json")) if FileAccess.file_exists(dir + "/region.json") else null
 	if typeof(r) == TYPE_DICTIONARY:
 		for q in r.get("outline", []):
@@ -276,6 +298,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func open() -> void:
+	_scale = _open_scale
 	_root.visible = true
 	Game.map_open = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -311,6 +334,8 @@ func _process(delta: float) -> void:
 	_update_info(me)
 	_update_cursor()
 	_relief.queue_redraw()
+	_load_tiles()
+	_detail.queue_redraw()
 	_ink.queue_redraw()
 
 
@@ -582,6 +607,89 @@ func _update_cursor() -> void:
 	_cursor.text = t
 	_cursor_box.visible = true
 	_cursor_box.reset_size()
+
+
+# ---------------- detail tiles ----------------
+func _detail_alpha() -> float:
+	return 1.0 - smoothstep(DETAIL_FULL, DETAIL_FROM, _scale)
+
+
+## The detail tiles in view (and a ring around it), nearest the middle first
+func _tiles_in_view() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	if _tiles.is_empty() or _detail_alpha() <= 0.0:
+		return out
+	var span := float(_tiles.m_per_px) * float(_tiles.tile_px)
+	var a := _to_map(Vector2.ZERO)
+	var b := _to_map(_chart.size)
+	var x0 := float(_tiles.x0)
+	var z0 := float(_tiles.z0)
+	var i0 := maxi(int(floor((a.x - x0) / span)) - 1, 0)
+	var i1 := mini(int(floor((b.x - x0) / span)) + 1, int(_tiles.tiles_x) - 1)
+	var j0 := maxi(int(floor((a.y - z0) / span)) - 1, 0)
+	var j1 := mini(int(floor((b.y - z0) / span)) + 1, int(_tiles.tiles_z) - 1)
+	for j in range(j0, j1 + 1):
+		for i in range(i0, i1 + 1):
+			out.append(Vector2i(i, j))
+	var mid := _centre
+	out.sort_custom(func(p, q): return _tile_centre(p).distance_squared_to(mid) < _tile_centre(q).distance_squared_to(mid))
+	return out
+
+
+func _tile_centre(t: Vector2i) -> Vector2:
+	var span := float(_tiles.m_per_px) * float(_tiles.tile_px)
+	return Vector2(float(_tiles.x0) + (t.x + 0.5) * span, float(_tiles.z0) + (t.y + 0.5) * span)
+
+
+## A few missing tiles a frame (a JPEG and its mip levels each), the oldest dropped beyond the cache
+func _load_tiles() -> void:
+	var n := 0
+	for t in _tiles_in_view():
+		if _tile_tex.has(t):
+			_tile_lru.erase(t)
+			_tile_lru.append(t)
+			continue
+		if n >= TILE_LOADS:
+			continue
+		n += 1
+		var e: Array = _tiles.tiles[t.y * int(_tiles.tiles_x) + t.x]
+		var pk := int(e[0])
+		if not _packs.has(pk):
+			_packs[pk] = FileAccess.open(_tile_dir + "/" + String(_tiles.packs[pk]), FileAccess.READ)
+		var f: FileAccess = _packs[pk]
+		if f == null:
+			continue
+		f.seek(int(e[1]))
+		var img := Image.new()
+		if img.load_jpg_from_buffer(f.get_buffer(int(e[2]))) != OK:
+			continue
+		img.generate_mipmaps()
+		_tile_tex[t] = ImageTexture.create_from_image(img)
+		_tile_lru.append(t)
+		while _tile_lru.size() > TILE_CACHE:
+			_tile_tex.erase(_tile_lru.pop_front())
+
+
+func _draw_detail() -> void:
+	var al := _detail_alpha()
+	if al <= 0.0 or _tiles.is_empty() or _ext.is_empty():
+		return
+	var s := float(_tiles.m_per_px)
+	var tp := float(_tiles.tile_px)
+	# not in the chart's soft outer strip (it fades out there; shaders/map_chart.gdshader)
+	var w := float(_ext.x1) - float(_ext.x0)
+	var h := float(_ext.z1) - float(_ext.z0)
+	var inner := Rect2(float(_ext.x0) + w * 0.12, float(_ext.z0) + h * 0.12, w * 0.76, h * 0.76)
+	for t in _tile_tex:
+		var c := _tile_centre(t)
+		if not inner.has_point(c):
+			continue
+		var a := Vector2(float(_tiles.x0) + (t.x * tp - 0.5) * s, float(_tiles.z0) + (t.y * tp - 0.5) * s)
+		var p0 := _to_screen(a)
+		var p1 := _to_screen(a + Vector2(tp * s, tp * s))
+		if p1.x < 0.0 or p1.y < 0.0 or p0.x > _detail.size.x or p0.y > _detail.size.y:
+			continue
+		_detail.draw_texture_rect(_tile_tex[t], Rect2(p0, p1 - p0), false, Color(1, 1, 1, al))
 
 
 # ---------------- drawing ----------------
