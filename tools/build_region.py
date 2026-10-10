@@ -1,13 +1,10 @@
-"""The playable region's outline for the map screen (M): the whole of Kashmir (Jammu and Kashmir with Ladakh,
-Azad Kashmir, Gilgit-Baltistan, the Siachen Glacier, Aksai Chin, the Shaksgam valley and Demchok), drawn as a
-border and used to dim everything outside it.
+"""Kashmir's outline for the map screen (M): the whole of Kashmir (Jammu and Kashmir with Ladakh, Azad Kashmir,
+Gilgit-Baltistan, the Siachen Glacier, Aksai Chin, the Shaksgam valley and Demchok), drawn as a red border.
 
 Source: Natural Earth 1:10m "admin 0 disputed areas" (public domain), the parts above joined into one outline.
 
 Writes, next to the chart (tools/build_map_image.py, whose map.json gives the extent and projection):
   region.json       the outline in map metres (x east, z south), simplified to about 150 m
-  region_mask.png   8-bit mask over the chart's extent at half its resolution: 255 inside, 0 outside, softened over
-                    about 1 km
 
 Usage: python build_region.py <map_dir> [disputed_areas.geojson]
 (without the file it is fetched from the Natural Earth repository on GitHub)
@@ -18,15 +15,12 @@ import os
 import sys
 import urllib.request
 
-import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
 from shapely.geometry import shape
 from shapely.ops import unary_union
 
 URL = "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_disputed_areas.geojson"
 PARTS = ["Jammu and Kashmir", "Azad Kashmir", "Gilgit-Baltistan", "Siachen Glacier", "Aksai Chin", "Shaksam Valley",
          "Demchok"]
-SUPER = 4          # supersampling of the mask
 
 
 def project(lat, lon, lat0, lon0, r):
@@ -62,19 +56,7 @@ def main():
     outline = [[round(x, 1), round(z, 1)] for x, z in poly.exterior.coords]
     json.dump({"source": "Natural Earth (public domain)", "parts": PARTS, "outline": outline},
               open(os.path.join(out, "region.json"), "w"))
-    # the mask, over the chart's own rectangle (corner pixel centres x0 z0 .. x1 z1)
-    s = (m["x1"] - m["x0"]) / (m["width"] - 1)
-    left, top = m["x0"] - s * 0.5, m["z0"] - s * 0.5
-    span_x, span_z = m["width"] * s, m["height"] * s
-    w, h = (m["width"] + 1) // 2, (m["height"] + 1) // 2
-    img = Image.new("L", (w * SUPER, h * SUPER), 0)
-    ImageDraw.Draw(img).polygon([((x - left) / span_x * w * SUPER, (z - top) / span_z * h * SUPER) for x, z in outline],
-                                fill=255)
-    img = img.resize((w, h), Image.LANCZOS).filter(ImageFilter.GaussianBlur(1.0))
-    img.save(os.path.join(out, "region_mask.png"), optimize=True)
-    a = np.asarray(img)
-    print("outline: %d points, area %.0f km2; mask %dx%d, %.1f %% inside" %
-          (len(outline), poly.area / 1e6, w, h, 100.0 * (a > 127).mean()))
+    print("outline: %d points, area %.0f km2" % (len(outline), poly.area / 1e6))
 
 
 if __name__ == "__main__":

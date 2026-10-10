@@ -1,8 +1,8 @@
 extends CanvasLayer
 ## Map screen (M): a shaded relief chart of the map (data/maps/<map>/map.jpg, tools/build_map_image.py) with the
-## airfields, your own position and track, other jets, a latitude / longitude grid and your own markers. The playable
-## region (Kashmir: data/maps/<map>/region.json, tools/build_region.py) has a border, and the land outside it is
-## dimmed and blurred (shaders/map_chart.gdshader).
+## airfields, your own position and track, other jets, a latitude / longitude grid and your own markers. Kashmir
+## (data/maps/<map>/region.json, tools/build_region.py) has a red border; the chart fades out softly at its edges
+## (shaders/map_chart.gdshader).
 ## The flight carries on underneath (it is a chart on your knee, not a pause).
 ## Mouse: wheel zooms about the cursor, left drag pans, left click drops a marker; right drag measures (bearing,
 ## distance and time from one point to another, as the F10 ruler in DCS: start or end it on a jet, an airfield or a
@@ -46,7 +46,6 @@ var _marks_lbl: Label
 var _cursor: Label
 var _cursor_box: Control
 var _tex: Texture2D
-var _mask: Texture2D
 var _region := PackedVector2Array()    # the playable region's outline (map x, z)
 var _ext := {}                         # map.json: x0, z0, x1, z1 (centres of the corner pixels), width, height
 var _lat0 := 34.55
@@ -93,7 +92,6 @@ func _ready() -> void:
 	_relief.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	var mat := ShaderMaterial.new()
 	mat.shader = preload("res://shaders/map_chart.gdshader")
-	mat.set_shader_parameter("mask_tex", _mask)
 	mat.set_shader_parameter("bg", bg.color)
 	_relief.material = mat
 	_relief.draw.connect(_draw_relief)
@@ -246,12 +244,6 @@ func _load_chart() -> void:
 		_lon0 = float(proj.lon0)
 	if ResourceLoader.exists(dir + "/map.jpg"):
 		_tex = load(dir + "/map.jpg")
-	if ResourceLoader.exists(dir + "/region_mask.png"):
-		_mask = load(dir + "/region_mask.png")
-	else:
-		var white := Image.create(1, 1, false, Image.FORMAT_L8)
-		white.fill(Color.WHITE)
-		_mask = ImageTexture.create_from_image(white)
 	var r = JSON.parse_string(FileAccess.get_file_as_string(dir + "/region.json")) if FileAccess.file_exists(dir + "/region.json") else null
 	if typeof(r) == TYPE_DICTIONARY:
 		for q in r.get("outline", []):
@@ -306,7 +298,6 @@ func _process(delta: float) -> void:
 		_centre = me
 	_update_info(me)
 	_update_cursor()
-	(_relief.material as ShaderMaterial).set_shader_parameter("zoom_lod", log(_scale / _texel()) / log(2.0))
 	_relief.queue_redraw()
 	_ink.queue_redraw()
 
@@ -587,7 +578,11 @@ func _draw_relief() -> void:
 		var s := _texel()
 		var a := _to_screen(Vector2(float(_ext.x0) - s * 0.5, float(_ext.z0) - s * 0.5))
 		var b := _to_screen(Vector2(float(_ext.x1) + s * 0.5, float(_ext.z1) + s * 0.5))
-		_relief.draw_texture_rect(_tex, Rect2(a, b - a), false)
+		# drawn larger than the chart: beyond its edge the shader fades it out softly (shaders/map_chart.gdshader)
+		var pad: float = (_relief.material as ShaderMaterial).get_shader_parameter("pad")
+		var sz := b - a
+		(_relief.material as ShaderMaterial).set_shader_parameter("aspect", sz.y / maxf(sz.x, 1.0))
+		_relief.draw_texture_rect(_tex, Rect2(a - sz * pad, sz * (1.0 + 2.0 * pad)), false)
 
 
 func _draw_chart() -> void:
@@ -790,14 +785,6 @@ func _draw_fields(font: Font) -> void:
 		var q := _to_screen(Vector2(float(a.x), float(a.z)))
 		if not Rect2(Vector2(-100, -100), c.size + Vector2(200, 200)).has_point(q):
 			continue
-		# airfields outside the region: faint, and named only up close (they crowded the border)
-		var inside := _in_region(Vector2(float(a.x), float(a.z)))
-		if not inside:
-			c.draw_arc(q, 8.0, 0.0, TAU, 24, Color(1, 1, 1, 0.45), 3.0, true)
-			c.draw_arc(q, 8.0, 0.0, TAU, 24, Color(FIELD_COL, 0.6), 1.5, true)
-			if _scale < 500.0:
-				_text(font, q + Vector2(12, -6), String(a.id), 14, Color(FIELD_COL, 0.7), Color(1, 1, 1, 0.4))
-			continue
 		# runways at their true length and heading, but never shorter than a readable symbol
 		for r in a.runways:
 			var A := Vector2(r.a[0], r.a[2])
@@ -818,17 +805,6 @@ func _draw_fields(font: Font) -> void:
 			var r0: Dictionary = a.runways[0]
 			var elev := int(float(r0.a[1]) * 3.28084)
 			_text(font, q + Vector2(17, 10), "%s/%s   %d ft" % [r0.ids[0], r0.ids[1], elev], 14, FIELD_COL, Color(1, 1, 1, 0.6))
-
-
-var _inside_cache := {}
-
-
-func _in_region(p: Vector2) -> bool:
-	if _region.size() < 3:
-		return true
-	if not _inside_cache.has(p):
-		_inside_cache[p] = Geometry2D.is_point_in_polygon(p, _region)
-	return _inside_cache[p]
 
 
 func _draw_others(font: Font) -> void:

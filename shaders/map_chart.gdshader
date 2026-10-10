@@ -1,30 +1,27 @@
 shader_type canvas_item;
-// The map screen's chart (scripts/ui/map_view.gd): the shaded relief, crisp inside the playable region (Kashmir,
-// data/maps/<map>/region_mask.png from tools/build_region.py) and pushed back outside it: blurred, greyed and
-// darkened, so the land around is there for orientation but the eye stays on where you can fly. The chart's own
-// rectangle fades into the background at its edges instead of ending in a hard square.
+// The map screen's chart (scripts/ui/map_view.gd): the shaded relief, as it is, over the whole map. Drawn over a
+// larger rectangle than the chart itself (`pad` on every side): beyond the chart's edge the relief carries on as its
+// own mirror image, more and more blurred, and fades into the background over a long, soft ramp, so the chart has
+// no hard square edge.
 
-uniform sampler2D mask_tex : filter_linear, repeat_disable;
-uniform float zoom_lod = 0.0;         // log2 of chart texels per screen pixel (the level the chart is seen at)
+uniform float pad = 0.35;             // the extra on each side, as a share of the chart's own width / height
+uniform float aspect = 1.0;           // the chart's height / width
 uniform vec4 bg : source_color = vec4(0.07, 0.08, 0.09, 1.0);
 
 void fragment() {
-	float inside = texture(mask_tex, UV).r;
-	vec3 sharp = texture(TEXTURE, UV).rgb;
-	// outside: a few levels coarser than the chart is seen at, from a ring of samples so the blur is round
-	float lod = max(zoom_lod, 0.0) + 2.5;
-	vec2 tx = vec2(textureSize(TEXTURE, 0));
-	vec2 r = exp2(lod) / tx;
-	vec3 soft = textureLod(TEXTURE, UV, lod).rgb * 0.4;
-	soft += textureLod(TEXTURE, UV + vec2(r.x, 0.0), lod).rgb * 0.15;
-	soft += textureLod(TEXTURE, UV - vec2(r.x, 0.0), lod).rgb * 0.15;
-	soft += textureLod(TEXTURE, UV + vec2(0.0, r.y), lod).rgb * 0.15;
-	soft += textureLod(TEXTURE, UV - vec2(0.0, r.y), lod).rgb * 0.15;
-	float grey = dot(soft, vec3(0.299, 0.587, 0.114));
-	vec3 outside = mix(bg.rgb, mix(vec3(grey), soft, 0.35) * vec3(0.8, 0.84, 0.9), 0.5);
-	vec3 c = mix(outside, sharp, inside);
-	// the chart's edges: faded into the background over the outer 8 %
-	vec2 e = min(UV, 1.0 - UV);
-	float edge = smoothstep(0.0, 0.08, min(e.x, e.y * tx.y / tx.x));     // (the same width in x and y)
-	COLOR = vec4(mix(bg.rgb, c, edge), 1.0);
+	vec2 uv = UV * (1.0 + 2.0 * pad) - pad;
+	// how far beyond the chart's edge, in widths of the chart (0 inside)
+	vec2 o = max(max(-uv, uv - 1.0), vec2(0.0));
+	float out_d = length(vec2(o.x, o.y * aspect));
+	// mirrored back into the chart
+	vec2 m = 1.0 - abs(1.0 - abs(uv));
+	m = clamp(m, vec2(0.0), vec2(1.0));
+	float lod = 7.0 * smoothstep(0.0, 0.12, out_d);
+	vec3 c = textureLod(TEXTURE, m, lod).rgb;
+	vec3 sharp = texture(TEXTURE, m).rgb;
+	c = mix(sharp, c, smoothstep(0.0, 0.02, out_d));
+	// a long, soft fade into the background
+	float keep = 1.0 - smoothstep(0.0, 0.3, out_d);
+	keep = keep * keep * (3.0 - 2.0 * keep);
+	COLOR = vec4(mix(bg.rgb, c, keep), 1.0);
 }
