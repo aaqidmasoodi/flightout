@@ -128,7 +128,7 @@ func _process(delta: float) -> void:
 		var fx = null if _orphan else anchor.get("fx")
 		var night := float(fx.get("_night_set")) if fx != null else 0.0
 		var dark := smoothstep(0.3, 0.85, night)
-		var f := ab * dark * 2.5
+		var f := ab * dark * 0.9
 		if f != _flame:
 			_flame = f
 			_mat.set_shader_parameter("flame", f)

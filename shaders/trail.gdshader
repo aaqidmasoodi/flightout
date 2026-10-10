@@ -26,7 +26,7 @@ uniform float opacity = 0.6;
 uniform float wisp = 0.5;             // how broken up (noise) the ribbon looks
 uniform float self_lit = 0.0;         // extra brightness in daylight: smoke and vapour scatter sunlight from every side
 uniform float flame = 0.0;            // afterburner light on the trail right behind the nozzle (engine trails only)
-uniform float flame_reach = 45.0;     // metres it reaches along the trail, fading
+uniform float flame_reach = 22.0;     // metres it reaches along the trail, fading
 uniform vec3 flame_color : source_color = vec3(1.0, 0.5, 0.18);
 global uniform vec3 sun_dir;
 

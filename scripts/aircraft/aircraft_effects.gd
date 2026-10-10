@@ -23,7 +23,7 @@ var _lamp_on := {}                      # lamp name -> state last applied (light
 var _night_set := -1.0
 var _eng_set := -1.0
 var _ab_light: OmniLight3D
-const AB_LIGHT_ENERGY := 3.0
+const AB_LIGHT_ENERGY := 2.2
 const AB_LIGHT_RANGE := 11.0
 
 ## Which exterior lights each type really has (anything not listed: the full set). The Su-27S carries steady
