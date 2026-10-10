@@ -1,7 +1,7 @@
 extends Node
-## Rear-view mirrors on the canopy's front arch, as on the Su-27: a wide one under the top of the arch and a long
-## narrow one along each upper side, sitting snug against the arch's inner face, built at run time from the arch's
-## shape (they replace the hand-hold pads the cockpit model has there).
+## Rear-view mirrors on the canopy's front arch, as on the Su-27: a wide one across the top of the arch and a long
+## narrow one along each upper side, mounted on the arch itself (on its face towards the pilot, covering the frame),
+## built at run time from the arch's shape (they replace the hand-hold pads the cockpit model has there).
 ##
 ## Each mirror is angled so that, from the design eye point, it shows the view behind the jet (the top one straight
 ## back and a little up, the side ones back and a little outboard). Its picture is a true planar reflection: a camera
@@ -14,17 +14,19 @@ const GLASS_SHADER := preload("res://shaders/cockpit/mirror_glass.gdshader")
 const PIXELS_PER_M := 1100.0                 # reflection picture resolution (a 22 cm mirror: 242 pixels)
 const RATE_HZ := 12.0                        # per mirror
 const FAR := 5000.0
-# the arch's inner face (aircraft space): distance from its centre line (x = 0, y = ARCH_Y) by angle from the top
+# the arch's face towards the pilot (aircraft space, z = ARCH_FACE): its band's inner and outer edge, as distances
+# from the arch's centre line (x = 0, y = ARCH_Y), by angle from the top (measured from the cockpit model)
 const ARCH_Y := 0.9
-const ARCH_Z := -6.30
-const ARCH_R := [[0.0, 0.375], [12.0, 0.376], [24.0, 0.386], [36.0, 0.395], [48.0, 0.409], [60.0, 0.424],
-	[72.0, 0.445], [84.0, 0.47]]
+const ARCH_FACE := -6.258
+const ARCH_R := [[0.0, 0.375, 0.462], [12.0, 0.376, 0.467], [24.0, 0.386, 0.478], [36.0, 0.395, 0.488],
+	[48.0, 0.409, 0.504], [60.0, 0.425, 0.518], [72.0, 0.445, 0.535], [84.0, 0.47, 0.569]]
+const STANDOFF := 0.02                       # glass centre in front of the arch's face (the housing fills the gap)
 # mirrors: angle from the top of the arch (degrees, + to the right), glass width and height (m), where it looks
 # (aircraft space: forward -Z, right +X, up +Y)
 const MIRRORS := [
-	[0.0, 0.24, 0.055, Vector3(0.0, 0.12, 1.0)],
-	[-52.0, 0.22, 0.05, Vector3(-0.12, 0.08, 1.0)],
-	[52.0, 0.22, 0.05, Vector3(0.12, 0.08, 1.0)],
+	[0.0, 0.26, 0.075, Vector3(0.0, 0.12, 1.0)],
+	[-50.0, 0.22, 0.07, Vector3(-0.12, 0.08, 1.0)],
+	[50.0, 0.22, 0.07, Vector3(0.12, 0.08, 1.0)],
 ]
 
 var ac: Node3D
@@ -37,13 +39,16 @@ var _dev_dir := ""                           # development: --dev-mirror-shot=<d
 var _dev_t := 0.0
 
 
+## Middle of the arch's band at an angle from the top (metres from its centre line).
 static func _arch_r(deg: float) -> float:
 	var a := absf(deg)
 	for i in ARCH_R.size() - 1:
 		if a <= float(ARCH_R[i + 1][0]):
 			var k := (a - float(ARCH_R[i][0])) / (float(ARCH_R[i + 1][0]) - float(ARCH_R[i][0]))
-			return lerpf(float(ARCH_R[i][1]), float(ARCH_R[i + 1][1]), k)
-	return float(ARCH_R[-1][1])
+			var lo := lerpf(float(ARCH_R[i][1]), float(ARCH_R[i + 1][1]), k)
+			var hi := lerpf(float(ARCH_R[i][2]), float(ARCH_R[i + 1][2]), k)
+			return (lo + hi) * 0.5
+	return (float(ARCH_R[-1][1]) + float(ARCH_R[-1][2])) * 0.5
 
 
 ## pads: the canopy's hand-hold pads (hidden: the mirrors take their place). eye: design eye point in aircraft space.
@@ -59,14 +64,13 @@ func build(aircraft: Node3D, root: Node3D, pads: MeshInstance3D, eye: Vector3, m
 		var th := deg_to_rad(deg)
 		var radial := Vector3(sin(th), cos(th), 0.0)          # outwards from the arch's centre line
 		var tangent := Vector3(cos(th), -sin(th), 0.0)        # along the arch, left to right
-		var on_arch := Vector3(0.0, ARCH_Y, ARCH_Z) + radial * _arch_r(deg)
-		# a flat glass under a curved arch: its ends touch the arch, its middle sits the arch's sagitta below it
-		var half := size.x * 0.5 / _arch_r(deg)
-		var sag := _arch_r(deg) * (1.0 - cos(half))
-		var mount := on_arch - radial * (size.y * 0.5 + 0.007 + sag)
-		# glass normal: halfway between "towards the eye" and "towards what it should show"
+		# on the arch's face, in the middle of its band (the glass covers the frame there)
+		var on_arch := Vector3(0.0, ARCH_Y, ARCH_FACE) + radial * _arch_r(deg)
+		# glass normal: halfway between "towards the eye" and "towards what it should show" (a few degrees off the
+		# arch's own face, so the mirrors sit almost flat on it)
 		var look := (spec[3] as Vector3).normalized()
-		var n := ((eye - mount).normalized() + look).normalized()
+		var n := ((eye - on_arch).normalized() + look).normalized()
+		var mount := on_arch + n * STANDOFF
 		var x := (tangent - n * tangent.dot(n)).normalized()
 		var y := n.cross(x).normalized()
 		if y.dot(radial) < 0.0:
@@ -77,12 +81,12 @@ func build(aircraft: Node3D, root: Node3D, pads: MeshInstance3D, eye: Vector3, m
 		var rb := to_root.basis * basis
 		var rc := to_root * mount
 		var m := {"centre": rc, "x": rb.x.normalized(), "y": rb.y.normalized(), "n": rb.z.normalized(), "size": size}
-		# frame: a thin dark bezel behind the glass
+		# housing: a dark bezel around and behind the glass, deep enough to reach back to the arch at both ends
 		var frame := MeshInstance3D.new()
 		var fb := BoxMesh.new()
-		fb.size = Vector3(size.x + 0.012, size.y + 0.012, 0.012)
+		fb.size = Vector3(size.x + 0.012, size.y + 0.012, STANDOFF + 0.022)
 		frame.mesh = fb
-		frame.transform = Transform3D(rb, rc - rb.z.normalized() * 0.0065)
+		frame.transform = Transform3D(rb, rc - rb.z.normalized() * (fb.size.z * 0.5 + 0.0005))
 		frame.set_surface_override_material(0, material_of.call("CP_PaintDark"))
 		var glass := MeshInstance3D.new()
 		var q := QuadMesh.new()
