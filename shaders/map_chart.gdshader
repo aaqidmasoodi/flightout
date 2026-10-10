@@ -7,6 +7,7 @@ shader_type canvas_item;
 uniform float pad = 0.35;             // the extra on each side, as a share of the chart's own width / height
 uniform float aspect = 1.0;           // the chart's height / width
 uniform vec4 bg : source_color = vec4(0.07, 0.08, 0.09, 1.0);
+uniform int dbg = 0;                  // development (--map-debug=N): 1 the fade, 2 the soft copy only, 3 the sharp chart only
 uniform sampler2D soft_tex : filter_linear, repeat_disable;   // the chart at 1/16 (scripts/ui/map_view.gd)
 
 float hash(vec2 p) {
@@ -44,4 +45,11 @@ void fragment() {
 	float keep = 1.0 - smoothstep(-0.14, 0.2, d);
 	keep = keep * keep * (3.0 - 2.0 * keep);
 	COLOR = vec4(mix(bg.rgb, c, keep), 1.0);
+	if (dbg == 1) {
+		COLOR = vec4(vec3(keep), 1.0);
+	} else if (dbg == 2) {
+		COLOR = vec4(texture(soft_tex, m).rgb, 1.0);
+	} else if (dbg == 3) {
+		COLOR = vec4(texture(TEXTURE, m).rgb, 1.0);
+	}
 }

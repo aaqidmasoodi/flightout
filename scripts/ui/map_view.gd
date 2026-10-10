@@ -186,6 +186,8 @@ func _ready() -> void:
 		elif arg.begins_with("--map-mark="):      # development: a marker at x,z
 			var xz := arg.trim_prefix("--map-mark=").split(",")
 			_markers.append(Vector2(xz[0].to_float(), xz[1].to_float()))
+		elif arg.begins_with("--map-debug="):     # development: the chart shader's debug views
+			(_relief.material as ShaderMaterial).set_shader_parameter("dbg", arg.trim_prefix("--map-debug=").to_int())
 		elif arg.begins_with("--map-ruler="):     # development: a ruler from your jet to x,z
 			var xz := arg.trim_prefix("--map-ruler=").split(",")
 			_ruler = {"a": {"kind": "me", "name": "YOU", "pos": Vector2.ZERO},
