@@ -73,31 +73,39 @@ void main() {
 		}
 	}
 	cl = clamp(cl, lo, hi);
-	// At a depth edge (a mountain or the jet against the sky or the clouds), the four nearest texels saw different
-	// scenes: blend only those whose scene lies at this pixel's depth (joint bilateral). Smooth B-spline and
-	// Catmull-Rom weights mix the mountain's and the sky's clouds there: streaks along every ridge in cloud.
-	float sd[4];
+	// At a depth edge (a ridge or the jet against the sky or the clouds), the nearby texels saw different scenes
+	// (each marched to the nearest surface it covered): blend only those whose scene lies at this pixel's depth
+	// (joint bilateral), over the 4 x 4 around it, with smooth B-spline weights.
+	float ld = log2(min(dist, 1e9));
 	float smin = 1e30;
 	float smax = 0.0;
+	float dnear = 1e30;
 	for (int j = 0; j < 2; j++) {
 		for (int i = 0; i < 2; i++) {
 			ivec2 q = clamp(b + ivec2(i, j), ivec2(0), ivec2(p.sizes.xy) - 1);
 			float v = texelFetch(cloud_depth, q, 0).w;
-			sd[j * 2 + i] = v;
 			smin = min(smin, v);
 			smax = max(smax, v);
+			dnear = min(dnear, abs(log2(max(v, 1.0)) - ld));
 		}
 	}
-	float ld = log2(min(dist, 1e9));
-	if (log2(smax) - log2(max(smin, 1.0)) > 0.3) {
+	if (log2(smax) - log2(max(smin, 1.0)) > 0.3 || dnear > 0.3) {
+		vec2 f2 = f * f;
+		vec2 f3 = f2 * f;
+		vec2 b0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+		vec2 b1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+		vec2 b2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+		vec2 b3 = f3 / 6.0;
+		float bx[4] = float[4](b0.x, b1.x, b2.x, b3.x);
+		float by[4] = float[4](b0.y, b1.y, b2.y, b3.y);
 		vec4 acc = vec4(0.0);
 		float wsum_b = 0.0;
-		for (int j = 0; j < 2; j++) {
-			for (int i = 0; i < 2; i++) {
-				float bw = (i == 0 ? 1.0 - f.x : f.x) * (j == 0 ? 1.0 - f.y : f.y) + 1e-3;
-				float dd = abs(log2(max(sd[j * 2 + i], 1.0)) - ld);
-				bw *= 1.0 / (1.0 + dd * dd * 64.0);
-				acc += trimmed(b + ivec2(i, j), dist) * bw;
+		for (int j = 0; j < 4; j++) {
+			for (int i = 0; i < 4; i++) {
+				ivec2 q = clamp(b + ivec2(i - 1, j - 1), ivec2(0), ivec2(p.sizes.xy) - 1);
+				float dd = abs(log2(max(texelFetch(cloud_depth, q, 0).w, 1.0)) - ld);
+				float bw = (bx[i] * by[j] + 1e-4) / (1.0 + dd * dd * 64.0);
+				acc += trimmed(b + ivec2(i - 1, j - 1), dist) * bw;
 				wsum_b += bw;
 			}
 		}

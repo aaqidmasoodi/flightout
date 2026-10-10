@@ -585,7 +585,9 @@ func _write_params(cam_xf: Transform3D, proj: Projection, size: Vector2i) -> voi
 	var dv := 4 if resolution_div >= 4 else 2
 	var hs := Vector2i(maxi((size.x + dv - 1) / dv, 1), maxi((size.y + dv - 1) / dv, 1))
 	data.append_array([float(hs.x), float(hs.y), float(size.x), float(size.y)])
-	data.append_array([float(primary_steps), float(light_steps), float(max_iterations), float(max_dense)])
+	# a longer march from high up (range_scale) gets more steps to go with it, or it runs out before its end
+	var sk := range_scale(cam_xf.origin.y, Vector2(cam_xf.origin.x + WorldData.origin_x, cam_xf.origin.z + WorldData.origin_z))
+	data.append_array([float(primary_steps), float(light_steps), float(max_iterations) * minf(sk, 2.5), float(max_dense) * minf(sk, 2.0)])
 	data.append_array([hor_toward.r, hor_toward.g, hor_toward.b, sun_xz.x])
 	data.append_array([hor_away.r, hor_away.g, hor_away.b, sun_xz.y])
 	# the ground the layers stand on, and the Earth's curvature (the clouds sink with distance as the terrain does)

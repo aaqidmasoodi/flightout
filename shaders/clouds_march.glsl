@@ -173,13 +173,20 @@ void main() {
 		return;
 	}
 	vec2 uv = (vec2(px) + 0.5) / vec2(hsize);
-	// march as far as the farthest of the full-resolution pixels this texel covers; the composite trims it back per
-	// pixel, so the background beside an object still gets its clouds
+	// How far to march: to the NEAREST surface among the full-resolution pixels this texel covers. Where a ridge
+	// rises into cloud, the pixels beside it (sky, the far slope) take their clouds from the neighbouring texels
+	// that saw their own depth (the composite's depth-aware upsampling). Marching to the farthest instead, and
+	// trimming back per pixel by a straight-line guess, painted the cloud behind a mountain over its slope: white
+	// ribbons draped along the ridges, sliding as the view moved.
 	int r = int(p.sizes.z / p.sizes.x + 0.5);
 	ivec2 f0 = px * r;
 	ivec2 fmax = ivec2(p.sizes.zw) - 1;
-	float scene_dist = max(max(scene_distance(min(f0, fmax)), scene_distance(min(f0 + ivec2(r - 1, 0), fmax))),
-		max(scene_distance(min(f0 + ivec2(0, r - 1), fmax)), scene_distance(min(f0 + ivec2(r - 1, r - 1), fmax))));
+	float sd0 = scene_distance(min(f0, fmax));
+	float sd1 = scene_distance(min(f0 + ivec2(r - 1, 0), fmax));
+	float sd2 = scene_distance(min(f0 + ivec2(0, r - 1), fmax));
+	float sd3 = scene_distance(min(f0 + ivec2(r - 1, r - 1), fmax));
+	float scene_near = min(min(sd0, sd1), min(sd2, sd3));
+	float scene_far = max(max(sd0, sd1), max(sd2, sd3));
 	vec4 vfar = p.inv_proj * vec4(uv * 2.0 - 1.0, 0.5, 1.0);
 	vec3 ro = p.cam_pos.xyz;
 	vec3 rd = normalize(mat3(p.cam_xform) * normalize(vfar.xyz / vfar.w));
@@ -202,7 +209,11 @@ void main() {
 	}
 	// Objects nearer than the clouds (the jet, nearby scenery) do not stop the march: the composite trims each
 	// pixel to its own depth anyway, and marching through them keeps the cloud image continuous
-	float max_dist = (scene_dist < max(t0, 300.0)) ? reach : min(scene_dist, reach);
+	// Something nearer than the clouds (the jet, close scenery) does not stop the march: those pixels get no cloud
+	// anyway, and marching past them to what lies behind keeps the cloud picture whole, so a moving jet uncovers
+	// real cloud instead of a jet-shaped hole that smears into streaks.
+	float scene_dist = (scene_near < max(t0, 300.0)) ? scene_far : scene_near;
+	float max_dist = min(scene_dist, reach);
 	t1 = min(t1, max_dist);
 	if (p.ranges.w > 0.5 && p.ranges.w < 1.5) {
 		// debug 1: red where the ray crosses the cloud slab (brightness: how long), blue where it does not
@@ -400,8 +411,9 @@ void main() {
 				float sl = sun_light(od, cos_t, dens);
 				// the relief of the cloud tops (from the map): flanks towards the sun brighter, lee sides darker
 				vec3 n = normalize(vec3(-grad.x, 1.0, -grad.y));
-				float relief = clamp(0.3 + 0.7 * dot(n, L) / max(L.y, 0.15), 0.3, 1.6);
-				sl *= mix(1.0, relief, frac);
+				float relief = clamp(0.55 + 0.45 * dot(n, L) / max(L.y, 0.2), 0.55, 1.3);
+				// only far away: where the march ran out before its range, up close, the map stands in plainly
+				sl *= mix(1.0, relief, frac * smoothstep(0.5 * march_end, march_end, tk));
 				float hgt = frac;
 				vec3 amb = mix(p.amb_bottom.rgb, p.amb_top.rgb, hgt) * p.sun_color.w;
 				amb += p.sun_color.rgb * p.sun_dir.w * 0.045 * (0.35 + 0.65 * hgt);
