@@ -208,7 +208,9 @@ void main() {
 					gap = (col.base - mp.y) / rd.y;
 				}
 				if (gap > big) {
-					t += min(gap - big * 0.5, 3000.0);
+					// land short of the layer by this pixel's own random share of a step, so the samples inside
+					// keep their spread (landing everyone at the same point showed the steps as bands)
+					t += min(gap - big * (0.25 + 0.75 * jitter), 3000.0);
 					continue;
 				}
 			}
@@ -282,17 +284,17 @@ void main() {
 			}
 			t += step_here;
 		}
-		// ---- far: the far-cloud map. Each column is met at three heights through its cloud (a third of its
-		// optical depth each, along the slant of the ray), from the camera's side first. No random samples: the far
-		// clouds are as steady as the terrain. Beyond the map, the weather's mean density. ----
+		// ---- far: the far-cloud map. Each column is met once, at the face the camera sees (its base from below,
+		// its top from above), with all of its optical depth along the slant of the ray. No random samples: the far
+		// clouds are as steady as the terrain. (Three slices through each column showed each cloud three times,
+		// kilometres apart, at the shallow angles seen from the ground.) Beyond the map, the weather's mean
+		// density. ----
 		float fa = max(march_end * 0.75, t0);
 		if (t1 > fa && T > 0.01) {
 			float slant = 1.0 / max(abs(rd.y), 0.12);
-			for (int k = 0; k < 3; k++) {
-				float frac = (float(k) + 0.5) / 3.0;
-				if (rd.y < 0.0) {
-					frac = 1.0 - frac;               // looking down, the top of the cloud is nearest
-				}
+			for (int k = 0; k < 2; k++) {
+				// the face towards the camera; the other one if that lies behind it
+				float frac = (rd.y < 0.0) == (k == 0) ? 0.8 : 0.2;
 				// where the ray meets this height of the local cloud (the height comes from the map: iterate)
 				float tk = max(fa, (mix(p.cirrus.w, p.lights_n.y, frac) - ro.y) / (abs(rd.y) > 1e-4 ? rd.y : 1e-4));
 				const float FAR_TEXEL = 2.0 * 120000.0 / 1024.0;
@@ -333,7 +335,7 @@ void main() {
 				}
 				// fade in over the end of the march (the march fades out there)
 				float fin = smoothstep(march_end * 0.75, march_end, tk);
-				float od_k = col.x / 3.0 * min(slant, 4.0) * fin;
+				float od_k = col.x * min(slant, 4.0) * fin;
 				float tr = exp(-od_k);
 				if (tr > 0.999) {
 					continue;
@@ -358,9 +360,7 @@ void main() {
 				wsum += a;
 				wdist += a * tk;
 				T *= tr;
-				if (T < 0.01) {
-					break;
-				}
+				break;
 			}
 		}
 	}
