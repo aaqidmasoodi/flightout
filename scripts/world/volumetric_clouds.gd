@@ -19,7 +19,7 @@ extends CompositorEffect
 ##            shaders/include/cloud_cover.gdshaderinc)
 ## The sky system sets the public parameters every frame from the time of day and weather.
 
-const UBO_FLOATS := 3 * 16 + 22 * 4 + 12 * 4
+const UBO_FLOATS := 3 * 16 + 23 * 4 + 12 * 4
 const CloudGround = preload("res://scripts/world/cloud_ground.gd")
 const CloudWeather = preload("res://scripts/world/cloud_weather.gd")
 const SHAPE_N := 128
@@ -32,9 +32,10 @@ const SH1_N := 256
 const SH1_HALF := 204800.0        # cascade 1: 410 km, 1.6 km texels
 const SH_ROWS := 4                # each cascade updates a quarter of its rows per frame
 const CIRRUS_HEIGHT := 9000.0
-const FAR_N := 1024               # the far-cloud map (clouds_far.glsl): 1024 x 1024
-const FAR_HALF := 120000.0        # over 240 km, 234 m texels
-const FAR_ROWS := 64              # rows built per frame: a new map every 16 frames
+const FAR_N := 1024               # the far-cloud maps (clouds_far.glsl): 1024 x 1024 each
+const FAR_HALF := [120000.0, 480000.0]   # near: 240 km (234 m texels); wide: 960 km (938 m), to the horizon
+const FAR_ROWS := [64, 32]        # rows built per frame: a new near map every 16 frames, wide every 32
+const FAR_LOD := [2.3, 4.3]       # the shape noise's level for a texel's footprint
 
 var sun_dir := Vector3.UP
 var light_intensity := 1.0
@@ -97,12 +98,13 @@ var _sh_info := RID()
 var _sh_centre := [Vector2(INF, INF), Vector2(INF, INF)]
 var _sh_phase := 0
 var _cam_buf := RID()
-var _far := [RID(), RID()]
-var _far_levels := [[], []]       # one view per mip level (the build writes level 0, the mip pass the rest)
-var _far_front := 0
-var _far_centre := [Vector2.ZERO, Vector2.ZERO]   # wind space
-var _far_valid := [false, false]
-var _far_row := 0                 # next row of the copy being built
+# per far map (near, wide), two copies each: one in use while the other is built
+var _far := [[RID(), RID()], [RID(), RID()]]
+var _far_levels := [[[], []], [[], []]]   # one view per mip level (the build writes level 0, the mip pass the rest)
+var _far_front := [0, 0]
+var _far_centre := [[Vector2.ZERO, Vector2.ZERO], [Vector2.ZERO, Vector2.ZERO]]   # wind space
+var _far_valid := [[false, false], [false, false]]
+var _far_row := [0, 0]            # next row of the copy being built
 var _cam_pending := false
 var _cam_frame := 0
 var _no_readback := false     # --clouds-no-readback (development)
@@ -197,17 +199,18 @@ func _setup() -> void:
 	_sh[1] = _target(RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, Vector2i(SH1_N, SH1_N))
 	for i in 2:
 		_rd.texture_clear(_sh[i], Color(0.0, 0.0, 0.0, 1.0), 0, 1, 0, 1)
-		var ff := RDTextureFormat.new()
-		ff.format = RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT
-		ff.width = FAR_N
-		ff.height = FAR_N
-		ff.mipmaps = int(log(float(FAR_N)) / log(2.0)) + 1
-		ff.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT \
-			| RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT
-		_far[i] = _rd.texture_create(ff, RDTextureView.new())
-		_rd.texture_clear(_far[i], Color(0.0, 0.0, 0.0, 1.0), 0, ff.mipmaps, 0, 1)
-		for lv in ff.mipmaps:
-			_far_levels[i].append(_rd.texture_create_shared_from_slice(RDTextureView.new(), _far[i], 0, lv, 1, RenderingDevice.TEXTURE_SLICE_2D))
+		for c in 2:
+			var ff := RDTextureFormat.new()
+			ff.format = RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT
+			ff.width = FAR_N
+			ff.height = FAR_N
+			ff.mipmaps = int(log(float(FAR_N)) / log(2.0)) + 1
+			ff.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT \
+				| RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT
+			_far[c][i] = _rd.texture_create(ff, RDTextureView.new())
+			_rd.texture_clear(_far[c][i], Color(0.0, 0.0, 0.0, 1.0), 0, ff.mipmaps, 0, 1)
+			for lv in ff.mipmaps:
+				_far_levels[c][i].append(_rd.texture_create_shared_from_slice(RDTextureView.new(), _far[c][i], 0, lv, 1, RenderingDevice.TEXTURE_SLICE_2D))
 	var inf := RDTextureFormat.new()
 	inf.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
 	inf.width = 4
@@ -286,11 +289,11 @@ func _all_targets() -> Array:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE and _rd:
 		# the far map's per-level views first: they depend on the far map's textures
-		for lv in _far_levels[0] + _far_levels[1]:
+		for lv in _far_levels[0][0] + _far_levels[0][1] + _far_levels[1][0] + _far_levels[1][1]:
 			if (lv as RID).is_valid() and _rd.texture_is_valid(lv):
 				_rd.free_rid(lv)
 		var rids: Array = [_raw_color, _raw_depth, _hist_color[0], _hist_color[1], _hist_depth[0], _hist_depth[1], _repeat_sampler, _clamp_sampler, _point_sampler, _ubo, _layer, _overlay,
-			_shape, _detail, _weather, _sh[0], _sh[1], _sh_info, _far[0], _far[1]]
+			_shape, _detail, _weather, _sh[0], _sh[1], _sh_info, _far[0][0], _far[0][1], _far[1][0], _far[1][1]]
 		if not _cam_pending:
 			rids.append(_cam_buf)      # (a readback may still be reading it: then it goes with the device)
 		for k in _pipes:
@@ -479,27 +482,29 @@ func _shadow_callback(render_data: RenderData) -> void:
 		if centre != _sh_centre[c]:
 			_sh_centre[c] = centre
 			full[c] = true
-	# the far-cloud map: a finished copy takes over, then the next is begun around where the camera is now
-	if _far_row >= FAR_N:
-		# finished: its mip levels (the march picks the level of each pixel's footprint: no aliasing far away)
-		var fbk := 1 - _far_front
-		var msz := FAR_N
-		for lv in range(1, _far_levels[fbk].size()):
-			msz /= 2
-			_dispatch("mip2d", [_u_image(0, _far_levels[fbk][lv - 1]), _u_image(1, _far_levels[fbk][lv])], Vector2i(msz, msz),
-				PackedFloat32Array([float(msz), 0.0, 0.0, 0.0]))
-		_far_front = 1 - _far_front
-		_far_valid[_far_front] = true
-		_far_row = 0
-	if _far_row == 0:
-		var snap := 2.0 * FAR_HALF / FAR_N * 16.0
-		_far_centre[1 - _far_front] = ((cam_map + wind) / snap).round() * snap
+	# the far-cloud maps: a finished copy takes over, then the next is begun around where the camera is now
+	for c in 2:
+		if _far_row[c] >= FAR_N:
+			# finished: its mip levels (the march picks the level of each pixel's footprint: no aliasing far away)
+			var fbk: int = 1 - _far_front[c]
+			var msz := FAR_N
+			for lv in range(1, _far_levels[c][fbk].size()):
+				msz /= 2
+				_dispatch("mip2d", [_u_image(0, _far_levels[c][fbk][lv - 1]), _u_image(1, _far_levels[c][fbk][lv])], Vector2i(msz, msz),
+					PackedFloat32Array([float(msz), 0.0, 0.0, 0.0]))
+			_far_front[c] = fbk
+			_far_valid[c][fbk] = true
+			_far_row[c] = 0
+		if _far_row[c] == 0:
+			var snap: float = 2.0 * FAR_HALF[c] / FAR_N * 16.0
+			_far_centre[c][1 - _far_front[c]] = ((cam_map + wind) / snap).round() * snap
 	_write_params(cam_xf, proj, size)
-	var fb := 1 - _far_front
-	var fc: Vector2 = _far_centre[fb]
-	_dispatch("far", _model_uniforms() + [_u_image(6, _far_levels[fb][0])], Vector2i(FAR_N, FAR_ROWS),
-		PackedFloat32Array([fc.x, fc.y, FAR_HALF, float(_far_row), float(FAR_N), float(FAR_ROWS), 0.0, 0.0]))
-	_far_row += FAR_ROWS
+	for c in 2:
+		var fb: int = 1 - _far_front[c]
+		var fc: Vector2 = _far_centre[c][fb]
+		_dispatch("far", _model_uniforms() + [_u_image(6, _far_levels[c][fb][0])], Vector2i(FAR_N, FAR_ROWS[c]),
+			PackedFloat32Array([fc.x, fc.y, FAR_HALF[c], float(_far_row[c]), float(FAR_N), float(FAR_ROWS[c]), FAR_LOD[c], 0.0]))
+		_far_row[c] += FAR_ROWS[c]
 	var info := PackedFloat32Array([_sh_centre[0].x, _sh_centre[0].y, SH0_HALF, SH0_N,
 		_sh_centre[1].x, _sh_centre[1].y, SH1_HALF, SH1_N,
 		_slab_bottom(), 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
@@ -537,6 +542,14 @@ static func _on_cam_light(data: PackedByteArray) -> void:
 	_cam_arrived = true
 	if data.size() >= 4:
 		_cam_result = data.decode_float(0)
+
+
+## How much farther the march reaches with the camera's height above the cloud tops under it: 1 at and below
+## them, up to 4 from 7.5 km above.
+func range_scale(cam_y: float, cam_map: Vector2) -> float:
+	var g: Vector2 = CloudGround.at(cam_map.x, cam_map.y)
+	var top_here := lerpf(g.x, g.y, ground_mix) + top
+	return clampf(1.0 + (cam_y - top_here) / 2500.0, 1.0, 4.0)
 
 
 ## The lowest any cloud can be (true height), and the highest.
@@ -584,13 +597,17 @@ func _write_params(cam_xf: Transform3D, proj: Projection, size: Vector2i) -> voi
 	data.append_array([_sh_centre[1].x, _sh_centre[1].y, SH1_HALF, float(SH1_N)])
 	# far reach: to the horizon (from high up, hundreds of km)
 	var reach := clampf(sqrt(maxf(cam_xf.origin.y + 2000.0, 0.0) / maxf(curve, 1e-9)) * 1.5, 120000.0, 450000.0) if curve > 0.0 else 120000.0
-	data.append_array([near_end, march_end, reach, float(_dbg_mode)])
+	# the higher above the clouds, the farther the full march and its detail reach: from up there every cloud is
+	# far away, and each ray crosses the layer only once (the empty air above it is skipped), so it costs little
+	var rk := range_scale(cam_xf.origin.y, Vector2(cam_xf.origin.x + WorldData.origin_x, cam_xf.origin.z + WorldData.origin_z))
+	data.append_array([near_end * rk, march_end * rk, reach, float(_dbg_mode)])
 	var pix := 2.0 / (absf(proj.y.y) * float(hs.y))
 	data.append_array([CIRRUS_HEIGHT, cirrus, pix, _slab_bottom()])
 	var lights := _lights(cam_xf.origin)
 	data.append_array([float(lights.size()), _slab_top(), 0.0, 0.0])
-	var ff: Vector2 = _far_centre[_far_front]
-	data.append_array([ff.x, ff.y, FAR_HALF, 1.0 if _far_valid[_far_front] else 0.0])
+	for c in 2:
+		var ff: Vector2 = _far_centre[c][_far_front[c]]
+		data.append_array([ff.x, ff.y, FAR_HALF[c], 1.0 if _far_valid[c][_far_front[c]] else 0.0])
 	for k in 3:
 		for i in 4:
 			if i < lights.size():
@@ -670,7 +687,8 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 		var depth := buffers.get_depth_layer(view)
 		_dispatch("march", _model_uniforms() + [_u_tex(5, _point_sampler, _blue), _u_tex(6, _point_sampler, depth),
 			_u_tex(7, _clamp_sampler, _sh[0]), _u_tex(8, _clamp_sampler, _sh[1]),
-			_u_image(9, _raw_color), _u_image(10, _raw_depth), _u_tex(11, _clamp_sampler, _far[_far_front])], _half_size)
+			_u_image(9, _raw_color), _u_image(10, _raw_depth), _u_tex(11, _clamp_sampler, _far[0][_far_front[0]]),
+			_u_tex(12, _clamp_sampler, _far[1][_far_front[1]])], _half_size)
 		_dispatch("resolve", [_u_ubo(), _u_image(1, _hist_color[_cur]), _u_image(2, _hist_depth[_cur]),
 			_u_tex(3, _point_sampler, _raw_color), _u_tex(4, _point_sampler, _raw_depth),
 			_u_tex(5, _clamp_sampler, _hist_color[1 - _cur]), _u_tex(6, _point_sampler, _hist_depth[1 - _cur])], _half_size)

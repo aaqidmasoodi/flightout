@@ -25,7 +25,8 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 ranges;           // x end of the detail (m), y end of the full march, z far reach, w debug view
 	vec4 cirrus;           // x height (m above sea level), y cover, z pixel angle (rad, for the noise level), w slab bottom
 	vec4 lights_n;         // x number of local lights (the jets' afterburners and landing lights), y slab top (true)
-	vec4 far_map;          // the far-cloud map (clouds_far.glsl): xy centre (wind space), z half extent, w 1 when ready
+	vec4 far_map;          // the near far-cloud map (clouds_far.glsl): xy centre (wind space), z half extent, w 1 when ready
+	vec4 far_map1;         // the wide one
 	vec4 light_pos[4];     // xyz scene, w range
 	vec4 light_col[4];     // rgb colour times energy, w cos of the spot's half angle (-2 for an omni light)
 	vec4 light_dir[4];     // xyz the spot's direction

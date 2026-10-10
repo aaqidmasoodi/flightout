@@ -73,6 +73,36 @@ void main() {
 		}
 	}
 	cl = clamp(cl, lo, hi);
+	// At a depth edge (a mountain or the jet against the sky or the clouds), the four nearest texels saw different
+	// scenes: blend only those whose scene lies at this pixel's depth (joint bilateral). Smooth B-spline and
+	// Catmull-Rom weights mix the mountain's and the sky's clouds there: streaks along every ridge in cloud.
+	float sd[4];
+	float smin = 1e30;
+	float smax = 0.0;
+	for (int j = 0; j < 2; j++) {
+		for (int i = 0; i < 2; i++) {
+			ivec2 q = clamp(b + ivec2(i, j), ivec2(0), ivec2(p.sizes.xy) - 1);
+			float v = texelFetch(cloud_depth, q, 0).w;
+			sd[j * 2 + i] = v;
+			smin = min(smin, v);
+			smax = max(smax, v);
+		}
+	}
+	float ld = log2(min(dist, 1e9));
+	if (log2(smax) - log2(max(smin, 1.0)) > 0.3) {
+		vec4 acc = vec4(0.0);
+		float wsum_b = 0.0;
+		for (int j = 0; j < 2; j++) {
+			for (int i = 0; i < 2; i++) {
+				float bw = (i == 0 ? 1.0 - f.x : f.x) * (j == 0 ? 1.0 - f.y : f.y) + 1e-3;
+				float dd = abs(log2(max(sd[j * 2 + i], 1.0)) - ld);
+				bw *= 1.0 / (1.0 + dd * dd * 64.0);
+				acc += trimmed(b + ivec2(i, j), dist) * bw;
+				wsum_b += bw;
+			}
+		}
+		cl = acc / wsum_b;
+	}
 	if (p.ranges.w > 3.5) {
 		// debug 4 / 5: the march-resolution picture itself, nearest texel, opacity as white on black (5: without
 		// the temporal pass)

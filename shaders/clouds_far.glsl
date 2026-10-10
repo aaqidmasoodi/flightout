@@ -23,7 +23,7 @@ layout(set = 0, binding = 4) uniform sampler3D detail_tex;
 layout(rgba16f, set = 0, binding = 6) uniform restrict writeonly image2D out_far;
 layout(push_constant, std430) uniform PC {
 	vec4 a;            // x, y centre (wind space), z half extent, w first row
-	vec4 b;            // x resolution, y rows this dispatch
+	vec4 b;            // x resolution, y rows this dispatch, z noise level of a texel's footprint
 } pc;
 
 void main() {
@@ -45,8 +45,8 @@ void main() {
 		for (int i = 0; i < N; i++) {
 			float y = c.base + dy * (float(i) + 0.5);
 			float hh;
-			// the noise level of a texel's footprint (240 m)
-			float d = density(vec3(m.x, y, m.y), 2.3, 0.0, hh);
+			// the noise level of a texel's footprint
+			float d = density(vec3(m.x, y, m.y), pc.b.z, 0.0, hh);
 			if (d > 0.0) {
 				od += d * EXT * dy;
 				lo = min(lo, y - dy * 0.5);

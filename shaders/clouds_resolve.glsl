@@ -118,7 +118,7 @@ void main() {
 	// this frame missed but the picture still holds cloud, take the span of the clouds around it.
 	vec4 dout = d;
 	if (d.x >= 1e8 && result.a < 0.998 && dmax > 0.0) {
-		dout = vec4(dmin, dmax, 0.5 * (dmin + dmax), 0.0);
+		dout = vec4(dmin, dmax, 0.5 * (dmin + dmax), d.w);
 	}
 	imageStore(out_color, px, result);
 	imageStore(out_depth, px, dout);

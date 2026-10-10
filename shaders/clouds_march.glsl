@@ -27,7 +27,8 @@ layout(set = 0, binding = 7) uniform sampler2D shadow0_tex;
 layout(set = 0, binding = 8) uniform sampler2D shadow1_tex;
 layout(rgba16f, set = 0, binding = 9) uniform restrict writeonly image2D out_color;
 layout(rgba32f, set = 0, binding = 10) uniform restrict writeonly image2D out_depth;
-layout(set = 0, binding = 11) uniform sampler2D far_tex;           // the far-cloud map (clouds_far.glsl)
+layout(set = 0, binding = 11) uniform sampler2D far_tex;           // the far-cloud maps (clouds_far.glsl): near
+layout(set = 0, binding = 12) uniform sampler2D far_tex1;          // ... and wide
 
 const float NO_CLOUD = 1e9;
 
@@ -51,6 +52,64 @@ float shadow_od(vec3 mp, vec3 L) {
 	vec4 v = textureLod(shadow0_tex, uv0, 0.0);
 	float od0 = v.x * (1.0 - saturate((mp.y - v.y) / max(v.z - v.y, 1.0)));
 	return mix(od1, od0, w0);
+}
+
+float pix_angle;                        // radians per march pixel (set first in main)
+
+// One far map at a map position: its texel (x opacity straight down, y cloud start, z cloud end, w opacity on a
+// 4x slant) at the level of this pixel's footprint, and the slope of the cloud tops there (dh/dx, dh/dz).
+vec4 far_map_at(sampler2D tex, vec4 fm, vec2 w, float fp, out vec2 grad) {
+	float texel = 2.0 * fm.z / 1024.0;
+	vec2 uv = (w - fm.xy) / (2.0 * fm.z) + 0.5;
+	float lod = max(log2(fp / texel), 0.0);
+	vec4 c = textureLod(tex, uv, lod);
+	// the surface the sun lights: the cloud's top where there is cloud, down to its base where there is not
+	float step_uv = exp2(lod) / 1024.0;
+	float step_m = exp2(lod) * texel;
+	vec4 cx0 = textureLod(tex, uv - vec2(step_uv, 0.0), lod);
+	vec4 cx1 = textureLod(tex, uv + vec2(step_uv, 0.0), lod);
+	vec4 cz0 = textureLod(tex, uv - vec2(0.0, step_uv), lod);
+	vec4 cz1 = textureLod(tex, uv + vec2(0.0, step_uv), lod);
+	float hx0 = mix(cx0.y, cx0.z, cx0.x);
+	float hx1 = mix(cx1.y, cx1.z, cx1.x);
+	float hz0 = mix(cz0.y, cz0.z, cz0.x);
+	float hz1 = mix(cz1.y, cz1.z, cz1.x);
+	grad = vec2(hx1 - hx0, hz1 - hz0) / (2.0 * step_m);
+	return c;
+}
+
+// The far clouds at a map position (map = scene + origin): the near map, fading into the wide one over its outer
+// tenth, and beyond both the weather's mean density.
+vec4 far_sample(vec2 m, float tk, float slant, Column cc, out vec2 grad) {
+	vec2 w = m + p.wind.xy;
+	float fp = tk * pix_angle * min(slant, 8.0);
+	vec2 uv0 = (w - p.far_map.xy) / (2.0 * p.far_map.z) + 0.5;
+	vec2 uv1 = (w - p.far_map1.xy) / (2.0 * p.far_map1.z) + 0.5;
+	vec2 e0 = abs(uv0 - 0.5) * 2.0;
+	vec2 e1 = abs(uv1 - 0.5) * 2.0;
+	float w0 = p.far_map.w > 0.5 ? 1.0 - smoothstep(0.85, 0.98, max(e0.x, e0.y)) : 0.0;
+	float w1 = p.far_map1.w > 0.5 ? 1.0 - smoothstep(0.9, 0.99, max(e1.x, e1.y)) : 0.0;
+	w1 *= 1.0 - w0;
+	vec4 c = vec4(0.0);
+	grad = vec2(0.0);
+	if (w0 > 0.0) {
+		vec2 g;
+		c += w0 * far_map_at(far_tex, p.far_map, w, fp, g);
+		grad += w0 * g;
+	}
+	if (w1 > 0.0) {
+		vec2 g;
+		c += w1 * far_map_at(far_tex1, p.far_map1, w, fp, g);
+		grad += w1 * g;
+	}
+	float wm = 1.0 - w0 - w1;
+	if (wm > 0.0) {
+		vec3 mp = vec3(m.x, mix(cc.base, cc.top, 0.5), m.y);
+		float hf;
+		float odf = density_far(mp, hf) * EXT * (cc.top - cc.base);
+		c += wm * vec4(1.0 - exp(-odf), cc.base, cc.top, 1.0 - exp(-4.0 * odf));
+	}
+	return c;
 }
 
 // distance to the scene for a full-resolution texel (reverse-Z: 0 = sky)
@@ -167,6 +226,7 @@ void main() {
 	float toward = pow(clamp(dot(dh, vec2(p.hor_a.w, p.hor_b.w)) * 0.5 + 0.5, 0.0, 1.0), 3.0);
 	vec3 fc = mix(p.hor_b.rgb, p.hor_a.rgb, toward);
 	float pix = p.cirrus.z;                 // radians per march pixel
+	pix_angle = pix;
 	float shape_texel = SHAPE_SCALE / 128.0;
 	float near_end = p.ranges.x;
 	float march_end = min(p.ranges.y, t1);
@@ -241,7 +301,7 @@ void main() {
 			float hgt;
 			float dens = density_in(mp, col, lod, detail_amt, hgt);
 			// approaching the end of the march, hand over to the far-cloud map (which fades in over the same band)
-			dens *= 1.0 - smoothstep(p.ranges.y * 0.75, p.ranges.y, t);
+			dens *= 1.0 - smoothstep(p.ranges.y * 0.5, p.ranges.y, t);
 			if (dens > 0.0) {
 				if (first >= NO_CLOUD) {
 					first = t;
@@ -286,68 +346,62 @@ void main() {
 			}
 			t += step_here;
 		}
-		// ---- far: the far-cloud map. Each column is met once, at the face the camera sees (its base from below,
-		// its top from above), with all of its optical depth along the slant of the ray. No random samples: the far
-		// clouds are as steady as the terrain. (Three slices through each column showed each cloud three times,
-		// kilometres apart, at the shallow angles seen from the ground.) Beyond the map, the weather's mean
-		// density. ----
-		float fa = max(march_end * 0.75, t0);
+		// ---- far: the far-cloud maps (clouds_far.glsl). Each column is met once, at the face the camera sees (its
+		// base from below, its top from above), at the height of the smooth weather layer there (the maps' own
+		// heights jump between cloudy and clear texels: as the meeting height they bent the far field into ripples).
+		// Its opacity comes from the map; its shading from the sun, the shadow map and the relief of the cloud tops
+		// in the map (sunlit tops and flanks, shaded lee sides): no march, no random samples, steady. The near map
+		// (240 km) hands over to the wide one (960 km), and beyond that the weather's mean. Where the march ran out
+		// of steps before its end, the maps take over from there. ----
+		float t_done = min(t, march_end);
+		float f0 = min(t_done, march_end * 0.5);
+		float fa = max(f0, t0);
 		if (t1 > fa && T > 0.01) {
 			float slant = 1.0 / max(abs(rd.y), 0.12);
 			for (int k = 0; k < 2; k++) {
 				// the face towards the camera; the other one if that lies behind it
-				float frac = (rd.y < 0.0) == (k == 0) ? 0.8 : 0.2;
-				// where the ray meets this height of the local cloud (the height comes from the map: iterate)
-				float tk = max(fa, (mix(p.cirrus.w, p.lights_n.y, frac) - ro.y) / (abs(rd.y) > 1e-4 ? rd.y : 1e-4));
-				const float FAR_TEXEL = 2.0 * 120000.0 / 1024.0;
-				vec4 col = vec4(0.0);
+				float frac = (rd.y < 0.0) == (k == 0) ? 0.75 : 0.2;
+				if (abs(rd.y) < 1e-4) {
+					break;
+				}
+				float tk = max(fa, (mix(p.cirrus.w, p.lights_n.y, frac) - ro.y) / rd.y);
 				bool hit = false;
 				vec3 sp = ro;
+				Column cc;
 				for (int it = 0; it < 3; it++) {
 					tk = clamp(tk, fa, t1);
 					sp = ro + rd * tk;
 					vec2 dc = sp.xz - ro.xz;
-					vec2 w = sp.xz + omap + p.wind.xy;
-					vec2 uv = (w - p.far_map.xy) / (2.0 * p.far_map.z) + 0.5;
-					if (p.far_map.w < 0.5 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
-						// beyond the map: the weather's mean density, at this height of the column
-						vec3 mp = vec3(sp.x + omap.x, 0.0, sp.z + omap.y);
-						Column cc = column(mp.xz);
-						mp.y = mix(cc.base, cc.top, 0.3 + 0.4 * frac);
-						float hf;
-						float dfar = density_far(mp, hf);
-						float odf = dfar * EXT * (cc.top - cc.base);
-						col = vec4(1.0 - exp(-odf), cc.base, cc.top, 1.0 - exp(-4.0 * odf));
-					} else {
-						// the map's mip level for this pixel's footprint on it, stretched along the ray at a grazing
-						// view (the larger of the two: blur rather than alias into streaks)
-						float fp = tk * pix * min(slant, 8.0);
-						col = textureLod(far_tex, uv, max(log2(fp / FAR_TEXEL), 0.0));
-					}
-					float y_true = mix(col.y, col.z, frac);
-					float yr = y_true - dot(dc, dc) * curve;
-					if (abs(rd.y) < 1e-4) {
-						break;
-					}
+					cc = column(sp.xz + omap);
+					float yr = mix(cc.base, cc.top, frac) - dot(dc, dc) * curve;
 					float tn = (yr - ro.y) / rd.y;
 					hit = tn >= fa && tn <= t1;
 					tk = tn;
 				}
-				if (!hit || col.x <= 0.0) {
+				if (!hit) {
 					continue;
 				}
-				// fade in over the end of the march (the march fades out there)
-				float fin = smoothstep(march_end * 0.75, march_end, tk);
+				sp = ro + rd * tk;
+				vec2 grad;
+				vec4 col = far_sample(sp.xz + omap, tk, slant, cc, grad);
+				if (col.x <= 0.001) {
+					continue;
+				}
+				float fin = t_done < march_end * 0.5 ? 1.0 : smoothstep(f0, march_end, tk);
 				// opacity along this ray: between the straight-down and the four-times slant values
 				float a_k = mix(col.x, col.w, saturate((min(slant, 4.0) - 1.0) / 3.0)) * fin;
 				float tr = 1.0 - a_k;
 				if (tr > 0.999) {
 					continue;
 				}
-				vec3 mp = vec3(sp.x + omap.x, mix(col.y, col.z, frac), sp.z + omap.y);
+				vec3 mp = vec3(sp.x + omap.x, mix(cc.base, cc.top, frac), sp.z + omap.y);
 				float dens = -log(max(1.0 - col.x, 1e-4)) / max(EXT * (col.z - col.y), 1.0);
 				float od = shadow_od(mp, L);
 				float sl = sun_light(od, cos_t, dens);
+				// the relief of the cloud tops (from the map): flanks towards the sun brighter, lee sides darker
+				vec3 n = normalize(vec3(-grad.x, 1.0, -grad.y));
+				float relief = clamp(0.3 + 0.7 * dot(n, L) / max(L.y, 0.15), 0.3, 1.6);
+				sl *= mix(1.0, relief, frac);
 				float hgt = frac;
 				vec3 amb = mix(p.amb_bottom.rgb, p.amb_top.rgb, hgt) * p.sun_color.w;
 				amb += p.sun_color.rgb * p.sun_dir.w * 0.045 * (0.35 + 0.65 * hgt);
@@ -417,5 +471,7 @@ void main() {
 	}
 	float wd = wsum > 1e-4 ? wdist / wsum : NO_CLOUD;
 	imageStore(out_color, px, vec4(S, T));
-	imageStore(out_depth, px, vec4(first, last < NO_CLOUD ? last + 60.0 : NO_CLOUD, wd, 0.0));
+	// w: the scene distance this texel's ray marched to (the composite matches each full-resolution pixel to the
+	// texels at its own depth: at a mountain's edge, the mountain's pixels take the mountain's clouds)
+	imageStore(out_depth, px, vec4(first, last < NO_CLOUD ? last + 60.0 : NO_CLOUD, wd, min(scene_dist, 1e9)));
 }
