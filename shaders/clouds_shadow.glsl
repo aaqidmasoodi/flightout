@@ -5,7 +5,7 @@
 // themselves (beyond the first few hundred metres of their own light march).
 //
 // Two cascades of the same layout, each a square of the map centred near the camera (snapped to whole texels so the
-// shadows never crawl): cascade 0 (512 x 512 over 51 km, 100 m texels) from the full cloud shapes, cascade 1
+// shadows never crawl): cascade 0 (1024 x 1024 over 102 km, 100 m texels) from the full cloud shapes, cascade 1
 // (256 x 256 over 410 km, 1.6 km) from the far-field density, for the land seen from high up.
 //
 // Each texel is a straight line of sunlight, fixed by where it crosses the bottom of the cloud slab (`slab bottom`,
@@ -14,7 +14,8 @@
 //   y  the true height where the line enters cloud, z where it leaves (the cloud between is taken as even)
 // A point lit by the sun finds its line (follow the sun direction to the slab bottom), and the share of the optical
 // depth above it gives its sunlight: exp(-depth) for the direct beam, plus what the cloud scatters on forward.
-// Updated a quarter of the rows each frame (all of them when a cascade re-centres), so it costs very little.
+// Cascade 0 is rebuilt continuously into a second copy, 64 rows a frame, and swapped in when complete; cascade 1
+// updates a quarter of its rows each frame (all of them when it re-centres). Either way it costs very little.
 //
 // The same pass also marches the sunlight to the camera itself, exactly (full shape noise), and writes it to a small
 // buffer the CPU reads back: the jets and everything else in the engine's own lighting take their sunlight from it.
@@ -34,7 +35,8 @@ layout(set = 0, binding = 7, std430) restrict buffer CamLight {
 	vec4 cam_light;        // x optical depth from the camera towards the sun
 } cl;
 layout(push_constant, std430) uniform PC {
-	vec4 a;                // x cascade (0 / 1), y row phase, z row step, w 1: also the camera's sunlight
+	vec4 a;                // x cascade (0 / 1), y first row, z row step, w 1: also the camera's sunlight
+	vec4 b;                // the copy being built: x z its centre (map), its half size, its texels across
 } pc;
 
 void main() {
@@ -56,7 +58,7 @@ void main() {
 		cl.cam_light = vec4(od, 0.0, 0.0, 0.0);
 	}
 	bool c1 = pc.a.x > 0.5;
-	vec4 cas = c1 ? p.shadow1 : p.shadow0;
+	vec4 cas = pc.b;       // (cascade 0 is built into a second copy, centred apart from the one in use)
 	int res = int(cas.w);
 	int step_rows = int(pc.a.z);
 	ivec2 id = ivec2(gl_GlobalInvocationID.xy);

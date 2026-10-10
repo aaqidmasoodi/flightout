@@ -123,17 +123,22 @@ float scene_distance(ivec2 fpx) {
 	return length(v.xyz / v.w);
 }
 
+// the shape noise level the light march samples, at every distance (about 50 m: the billows' own shading; the
+// detail's edges are the average erosion, as in the shadow map)
+const float LIGHT_LOD = 1.0;
+
 // sunlight reaching a sample, through the cloud towards the sun (optical depth od), with the multiple scattering
-// that lights a cloud from inside (Wrenninge's octaves: each scatters wider and reaches deeper)
+// that lights a cloud from inside (Wrenninge's octaves: each scatters wider and reaches deeper). The octaves'
+// weights: the sunlit surface gets 1.2 of the sun (it was 1.75: the tops burnt out to flat white, with no shape
+// left in them), the light deep inside (the last octave) as before, so the flanks and shaded sides stand out.
 float sun_light(float od, float cos_t, float dens) {
+	const float W[3] = float[3](0.6, 0.35, 0.25);
 	float s = 0.0;
-	float a = 1.0;
 	float b = 1.0;
 	float c = 1.0;
 	for (int o = 0; o < 3; o++) {
 		float ph = mix(hg(cos_t, 0.6 * c), hg(cos_t, -0.25 * c), 0.3) * 4.0 * PI;
-		s += a * mix(1.0, ph, 0.85) * exp(-od * b);
-		a *= 0.5;
+		s += W[o] * mix(1.0, ph, 0.85) * exp(-od * b);
 		b *= 0.45;
 		c *= 0.5;
 	}
@@ -239,7 +244,6 @@ void main() {
 	float pix = p.cirrus.z;                 // radians per march pixel
 	pix_angle = pix;
 	float shape_texel = SHAPE_SCALE / 128.0;
-	float near_end = p.ranges.x;
 	// debug views (--clouds-debug=N): 6 without the shadow map, 7 without the light march; 11 and 12 the same as
 	// raw opacity (as 5)
 	int dbg = int(p.ranges.w + 0.5);
@@ -322,17 +326,20 @@ void main() {
 					first = t;
 				}
 				last = t;
-				// sunlight: a short march towards the sun near the camera (sharp self-shadowing in the detail), then
-				// the shadow map for the rest of the way up
+				// sunlight: a short march towards the sun (the cloud's own self-shadowing), then the shadow map for
+				// the rest of the way up. The same for every cloud at every distance, in the same steps and at the
+				// same noise level: a cloud's shading belongs to the cloud, and does not change as you fly about it.
+				// (It used to march only within a range of the camera, at a level picked by distance: clouds
+				// changed their shading as they crossed that range.)
 				float od = 0.0;
 				float reach_l = 0.0;
-				if (t < near_end && !dbg_no_lm) {     // (debug 7, 12: without the light march)
+				if (!dbg_no_lm) {     // (debug 7, 12: without the light march)
 					float ls = 60.0;
 					// each sample's own offset along the way (fixed offsets showed as bands at fixed heights)
 					float lj = fract(jitter * 7.13 + float(expensive) * 0.618);
 					for (int j = 0; j < light_steps; j++) {
 						float hl;
-						od += density(mp + L * (reach_l + ls * mix(0.15, 0.85, lj)), lod + 1.0, 0.0, hl) * EXT * ls;
+						od += density(mp + L * (reach_l + ls * mix(0.15, 0.85, lj)), LIGHT_LOD, 0.0, hl) * EXT * ls;
 						reach_l += ls;
 						ls *= 2.0;
 					}

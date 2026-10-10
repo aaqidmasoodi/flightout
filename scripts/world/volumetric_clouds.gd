@@ -26,11 +26,13 @@ const SHAPE_N := 128
 const DETAIL_N := 64
 const WEATHER_N := 1024
 const WEATHER_SEED := 808.0       # fixed: every player sees the same clouds
-const SH0_N := 512
-const SH0_HALF := 25600.0         # cascade 0: 51 km square, 100 m texels
+const SH0_N := 1024
+const SH0_HALF := 51200.0         # cascade 0: 102 km square, 100 m texels (every cloud the march draws in detail)
+const SH0_ROWS := 64              # cascade 0 is rebuilt continuously into a second copy, 64 rows a frame (a new one
+                                  # every 16 frames), and swapped in whole: no frame rebuilds all of it at once
 const SH1_N := 256
 const SH1_HALF := 204800.0        # cascade 1: 410 km, 1.6 km texels
-const SH_ROWS := 4                # each cascade updates a quarter of its rows per frame
+const SH_ROWS := 4                # cascade 1 updates a quarter of its rows per frame
 const CIRRUS_HEIGHT := 9000.0
 const FAR_N := 1024               # the far-cloud maps (clouds_far.glsl): 1024 x 1024 each
 const FAR_HALF := [120000.0, 480000.0]   # near: 240 km (234 m texels); wide: 960 km (938 m), to the horizon
@@ -93,7 +95,12 @@ var _shape := RID()
 var _detail := RID()
 var _weather := RID()
 var _generated := false
-var _sh := [RID(), RID()]
+var _sh := [RID(), RID()]       # the cascades in use: [0] is the front copy of cascade 0
+var _sh0 := [RID(), RID()]      # cascade 0's two copies: the one in use and the one being built
+var _sh0_front := 0
+var _sh0_row := 0               # next row of the copy being built
+var _sh0_centre := [Vector2(INF, INF), Vector2(INF, INF)]
+var _sh0_valid := false
 var _sh_info := RID()
 var _sh_centre := [Vector2(INF, INF), Vector2(INF, INF)]
 var _sh_phase := 0
@@ -198,10 +205,14 @@ func _setup() -> void:
 	wf.height = WEATHER_N
 	wf.usage_bits = u | RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT
 	_weather = _rd.texture_create(wf, RDTextureView.new())
-	_sh[0] = _target(RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, Vector2i(SH0_N, SH0_N))
+	for i in 2:
+		_sh0[i] = _target(RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, Vector2i(SH0_N, SH0_N))
+	_sh[0] = _sh0[0]
 	_sh[1] = _target(RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, Vector2i(SH1_N, SH1_N))
 	for i in 2:
-		_rd.texture_clear(_sh[i], Color(0.0, 0.0, 0.0, 1.0), 0, 1, 0, 1)
+		_rd.texture_clear(_sh0[i], Color(0.0, 0.0, 0.0, 1.0), 0, 1, 0, 1)
+		if i == 1:
+			_rd.texture_clear(_sh[1], Color(0.0, 0.0, 0.0, 1.0), 0, 1, 0, 1)
 		for c in 2:
 			var ff := RDTextureFormat.new()
 			ff.format = RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT
@@ -296,7 +307,7 @@ func _notification(what: int) -> void:
 			if (lv as RID).is_valid() and _rd.texture_is_valid(lv):
 				_rd.free_rid(lv)
 		var rids: Array = [_raw_color, _raw_depth, _hist_color[0], _hist_color[1], _hist_depth[0], _hist_depth[1], _repeat_sampler, _clamp_sampler, _point_sampler, _ubo, _layer, _overlay,
-			_shape, _detail, _weather, _sh[0], _sh[1], _sh_info, _far[0][0], _far[0][1], _far[1][0], _far[1][1]]
+			_shape, _detail, _weather, _sh0[0], _sh0[1], _sh[1], _sh_info, _far[0][0], _far[0][1], _far[1][0], _far[1][1]]
 		if not _cam_pending:
 			rids.append(_cam_buf)      # (a readback may still be reading it: then it goes with the device)
 		for k in _pipes:
@@ -476,15 +487,32 @@ func _shadow_callback(render_data: RenderData) -> void:
 		_prev_vp = _prev_vp * Projection(Transform3D(Basis(), _shift))
 		_shift = Vector3.ZERO
 	var cam_map := Vector2(cam_xf.origin.x + WorldData.origin_x, cam_xf.origin.z + WorldData.origin_z)
-	var full := [false, false]
-	for c in 2:
-		var half := SH0_HALF if c == 0 else SH1_HALF
-		var n := SH0_N if c == 0 else SH1_N
-		var snap := 2.0 * half / n * 32.0
-		var centre := (cam_map / snap).round() * snap
-		if centre != _sh_centre[c]:
-			_sh_centre[c] = centre
-			full[c] = true
+	# cascade 1: re-centred in steps of 32 texels (51 km), all of it rebuilt then (it is small)
+	var full1 := false
+	var snap1 := 2.0 * SH1_HALF / SH1_N * 32.0
+	var centre1 := (cam_map / snap1).round() * snap1
+	if centre1 != _sh_centre[1]:
+		_sh_centre[1] = centre1
+		full1 = true
+	# cascade 0: a finished copy takes over; the next is begun around where the camera is now (snapped to 32 texels,
+	# so the texels of every copy sit on the same grid and a cloud's shading does not shift when they swap). After a
+	# jump (a respawn), or at the start, the copy is built whole in one frame.
+	var snap0 := 2.0 * SH0_HALF / SH0_N * 32.0
+	if not _sh0_valid or cam_map.distance_to(_sh0_centre[_sh0_front]) > SH0_HALF * 0.5:
+		var bk: int = 1 - _sh0_front
+		_sh0_centre[bk] = (cam_map / snap0).round() * snap0
+		_dispatch("shadow", _model_uniforms() + [_u_image(6, _sh0[bk]), _u_buf(7, _cam_buf)], Vector2i(SH0_N, SH0_N),
+			PackedFloat32Array([0.0, 0.0, 1.0, 0.0, _sh0_centre[bk].x, _sh0_centre[bk].y, SH0_HALF, float(SH0_N)]))
+		_sh0_row = SH0_N
+	if _sh0_row >= SH0_N:
+		_sh0_front = 1 - _sh0_front
+		_sh0_row = 0
+		_sh0_valid = true
+		_sh[0] = _sh0[_sh0_front]
+		shadow0_texture.texture_rd_rid = _sh[0]
+	if _sh0_row == 0:
+		_sh0_centre[1 - _sh0_front] = (cam_map / snap0).round() * snap0
+	_sh_centre[0] = _sh0_centre[_sh0_front]
 	# the far-cloud maps: a finished copy takes over, then the next is begun around where the camera is now
 	for c in 2:
 		if _far_row[c] >= FAR_N:
@@ -522,12 +550,16 @@ func _shadow_callback(render_data: RenderData) -> void:
 	elif _cam_pending and _frame - _cam_frame > 30:
 		_cam_pending = false               # (a readback that never came back: ask again)
 	var read_cam := not _cam_pending and not _no_readback
-	for c in 2:
-		var n := SH0_N if c == 0 else SH1_N
-		var rows := 1 if full[c] else SH_ROWS
-		var phase := 0 if full[c] else _sh_phase
-		var u := _model_uniforms() + [_u_image(6, _sh[c]), _u_buf(7, _cam_buf)]
-		_dispatch("shadow", u, Vector2i(n, n / rows), PackedFloat32Array([float(c), float(phase), float(rows), 1.0 if (read_cam and c == 0) else 0.0]))
+	# cascade 0: the next rows of the copy being built (with the camera's own sunlight)
+	var b0: Vector2 = _sh0_centre[1 - _sh0_front]
+	_dispatch("shadow", _model_uniforms() + [_u_image(6, _sh0[1 - _sh0_front]), _u_buf(7, _cam_buf)], Vector2i(SH0_N, SH0_ROWS),
+		PackedFloat32Array([0.0, float(_sh0_row), 1.0, 1.0 if read_cam else 0.0, b0.x, b0.y, SH0_HALF, float(SH0_N)]))
+	_sh0_row += SH0_ROWS
+	# cascade 1: a quarter of its rows (all of them when it re-centres)
+	var rows1 := 1 if full1 else SH_ROWS
+	var phase1 := 0 if full1 else _sh_phase
+	_dispatch("shadow", _model_uniforms() + [_u_image(6, _sh[1]), _u_buf(7, _cam_buf)], Vector2i(SH1_N, SH1_N / rows1),
+		PackedFloat32Array([1.0, float(phase1), float(rows1), 0.0, _sh_centre[1].x, _sh_centre[1].y, SH1_HALF, float(SH1_N)]))
 	if read_cam:
 		_cam_pending = true
 		# a callback on the script, not on this effect: the readback can complete after the effect is gone (at quit),
