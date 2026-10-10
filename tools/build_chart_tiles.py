@@ -4,7 +4,8 @@ level, cut into square JPEG tiles that the map loads as you zoom in (scripts/ui/
 Writes into the terrain folder (shipped with it, not in git):
   chart<level>.json        the index: metres per pixel, tile size, the corner, tiles across and down, and where
                            each tile is: [file, offset, length] (empty where a tile is missing)
-  chart<level>_<n>.bin     the tiles' JPEGs one after another, split into files of at most about 25 MB
+  chart<level>_<n>.bin     a short header, then the tiles' JPEGs one after another, split into files of at most
+                           about 25 MB
 
 Usage: python build_chart_tiles.py <terrain_dir> [level=1] [tile_px=512]
 """
@@ -19,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_map_image import read_level, render   # noqa: E402
 
 PACK_MAX = 25 * 1024 * 1024
+HEADER = b"FLIGHTOUT CHART\n"   # each pack starts with this (16 bytes; offsets count from the file's start)
 MARGIN = 8           # samples around each block, so the shading and land cover blur match across block edges
 
 
@@ -37,15 +39,15 @@ def main():
     print("level %d: %d x %d samples of %.0f m, %d x %d tiles" % (lv, W, H, s, tx, tz), flush=True)
     index = []
     packs = []
-    cur = bytearray()
+    cur = bytearray(HEADER)
 
     def flush():
         nonlocal cur
-        if cur:
+        if len(cur) > len(HEADER):
             name = "chart%d_%d.bin" % (lv, len(packs))
             open(os.path.join(tdir, name), "wb").write(cur)
             packs.append(name)
-            cur = bytearray()
+            cur = bytearray(HEADER)
 
     for j in range(tz):
         for i in range(tx):
