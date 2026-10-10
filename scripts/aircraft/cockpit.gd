@@ -998,6 +998,9 @@ func _update_torch(delta: float) -> void:
 		_torch = SpotLight3D.new()
 		_torch.name = "Torch"
 		_torch.top_level = true
+		# placed every rendered frame from the jet as drawn (below): the engine must not also interpolate it between
+		# physics steps, or at flying speed the lamp trails metres behind the cockpit and jumps (the flicker)
+		_torch.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 		_torch.light_color = Color(1.0, 0.94, 0.84)
 		_torch.light_cull_mask = COCKPIT_LAYER
 		_torch.light_specular = 0.05
