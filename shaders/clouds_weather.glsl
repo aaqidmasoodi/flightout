@@ -7,8 +7,8 @@
 //      not blobs)
 //   g  cloud type: stretches of cumulus, stratocumulus and stratus (features of about 100 km)
 //   b  height and density: where the layer sits higher and thicker (about 40 km)
-//   a  cumulus clustering: where the individual cumulus gather into fields and streets (2 to 6 km), and where they
-//      tower
+//   a  cumulus clustering: where the individual cumulus gather into fields, where they are sparse, and where they
+//      tower (5 to 10 km patches)
 // All four are 0..1 around a mean of 0.5.
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
@@ -86,10 +86,10 @@ void main() {
 	float r = to01(fbm(uv + warp, 6.0, 5), 1.7);
 	float g = to01(fbm(uv + warp * 0.5 + 11.3, 3.0, 4), 1.6);
 	float b = to01(fbm(uv + 23.9, 10.0, 4), 1.6);
-	// cumulus fields: cells of a few km (Worley), broken up and stretched into streets by the warp
-	vec2 uw = uv + warp * 0.35 + vec2(fbm(uv + 5.3, 40.0, 3), fbm(uv + 9.1, 40.0, 3)) * 0.004;
-	float a = worley(uw * 128.0, 128.0) * 0.6 + worley(uw * 256.0, 256.0) * 0.4;
-	a = clamp((a - 0.45) * 1.8 + 0.5, 0.0, 1.0);
-	a = mix(a, to01(fbm(uv, 64.0, 3), 1.6), 0.3);
+	// cumulus fields: where the cumulus gather and where they are sparse, in irregular patches of about 5 to 10 km
+	// (gradient noise, warped). (Cell noise here put the cumulus on a near-regular lattice: from altitude you could
+	// draw straight lines through them.)
+	float a = to01(fbm(uv + warp * 0.6 + 41.7, 48.0, 4), 1.9);
+	a = clamp(a * 0.75 + to01(fbm(uv * 1.0 + 3.3, 160.0, 2), 1.5) * 0.25, 0.0, 1.0);
 	imageStore(out_img, id, vec4(r, g, b, a));
 }
