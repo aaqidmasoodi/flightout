@@ -9,6 +9,8 @@ extends CompositorEffect
 ## Every frame, before the opaque pass (`shadow_pass`, its own compositor effect):
 ##   shadow   the clouds' shadow map in two cascades (clouds_shadow), which the terrain, trees, trails and the
 ##            clouds themselves sample, and the sunlight reaching the camera (read back: the jets' lighting)
+##   far      a band of the far-cloud map (clouds_far): the cloud columns integrated, which the march draws beyond
+##            its own range from (a second copy is built while the first is used, then they swap)
 ## Every frame, before the transparent pass (this effect):
 ##   march    (half or quarter resolution) the clouds along each pixel's ray, near / mid / far ranges and cirrus
 ##   resolve  temporal accumulation, reprojected at the cloud's own distance, with variance clipping
@@ -17,7 +19,7 @@ extends CompositorEffect
 ##            shaders/include/cloud_cover.gdshaderinc)
 ## The sky system sets the public parameters every frame from the time of day and weather.
 
-const UBO_FLOATS := 3 * 16 + 21 * 4 + 12 * 4
+const UBO_FLOATS := 3 * 16 + 22 * 4 + 12 * 4
 const CloudGround = preload("res://scripts/world/cloud_ground.gd")
 const CloudWeather = preload("res://scripts/world/cloud_weather.gd")
 const SHAPE_N := 128
@@ -30,6 +32,9 @@ const SH1_N := 256
 const SH1_HALF := 204800.0        # cascade 1: 410 km, 1.6 km texels
 const SH_ROWS := 4                # each cascade updates a quarter of its rows per frame
 const CIRRUS_HEIGHT := 9000.0
+const FAR_N := 1024               # the far-cloud map (clouds_far.glsl): 1024 x 1024
+const FAR_HALF := 120000.0        # over 240 km, 234 m texels
+const FAR_ROWS := 64              # rows built per frame: a new map every 16 frames
 
 var sun_dir := Vector3.UP
 var light_intensity := 1.0
@@ -87,6 +92,11 @@ var _sh_info := RID()
 var _sh_centre := [Vector2(INF, INF), Vector2(INF, INF)]
 var _sh_phase := 0
 var _cam_buf := RID()
+var _far := [RID(), RID()]
+var _far_front := 0
+var _far_centre := [Vector2.ZERO, Vector2.ZERO]   # wind space
+var _far_valid := [false, false]
+var _far_row := 0                 # next row of the copy being built
 var _cam_pending := false
 var _raw_color := RID()
 var _raw_depth := RID()
@@ -150,7 +160,7 @@ func _on_origin_shifted(delta: Vector3) -> void:
 
 
 func _setup() -> void:
-	for n in ["noise", "mip", "weather", "shadow", "march", "resolve", "composite"]:
+	for n in ["noise", "mip", "weather", "shadow", "far", "march", "resolve", "composite"]:
 		var spirv := (load("res://shaders/clouds_%s.glsl" % n) as RDShaderFile).get_spirv()
 		if spirv.compile_error_compute != "":
 			push_error("Clouds: %s shader: %s" % [n, spirv.compile_error_compute])
@@ -176,6 +186,8 @@ func _setup() -> void:
 	_sh[1] = _target(RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, Vector2i(SH1_N, SH1_N))
 	for i in 2:
 		_rd.texture_clear(_sh[i], Color(0.0, 0.0, 0.0, 1.0), 0, 1, 0, 1)
+		_far[i] = _target(RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, Vector2i(FAR_N, FAR_N))
+		_rd.texture_clear(_far[i], Color(0.0, 0.0, 0.0, 1.0), 0, 1, 0, 1)
 	var inf := RDTextureFormat.new()
 	inf.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
 	inf.width = 4
@@ -254,7 +266,7 @@ func _all_targets() -> Array:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE and _rd:
 		var rids: Array = _all_targets() + [_repeat_sampler, _clamp_sampler, _point_sampler, _ubo, _layer, _overlay,
-			_shape, _detail, _weather, _sh[0], _sh[1], _sh_info, _cam_buf]
+			_shape, _detail, _weather, _sh[0], _sh[1], _sh_info, _cam_buf, _far[0], _far[1]]
 		for k in _pipes:
 			rids.append(_pipes[k][1])
 			rids.append(_pipes[k][0])
@@ -398,7 +410,7 @@ func _model_uniforms() -> Array:
 func _usable() -> bool:
 	if _blue_rid.is_valid():
 		_blue = RenderingServer.texture_get_rd_texture(_blue_rid)
-	return _pipes.size() >= 7 and _generated and _blue.is_valid() and _rd.texture_is_valid(_blue) and coverage > 0.001 and active
+	return _pipes.size() >= 8 and _generated and _blue.is_valid() and _rd.texture_is_valid(_blue) and coverage > 0.001 and active
 
 
 ## Before the opaque pass: the parameters for this frame, the shadow map and the camera's sunlight.
@@ -436,7 +448,20 @@ func _shadow_callback(render_data: RenderData) -> void:
 		if centre != _sh_centre[c]:
 			_sh_centre[c] = centre
 			full[c] = true
+	# the far-cloud map: a finished copy takes over, then the next is begun around where the camera is now
+	if _far_row >= FAR_N:
+		_far_front = 1 - _far_front
+		_far_valid[_far_front] = true
+		_far_row = 0
+	if _far_row == 0:
+		var snap := 2.0 * FAR_HALF / FAR_N * 16.0
+		_far_centre[1 - _far_front] = ((cam_map + wind) / snap).round() * snap
 	_write_params(cam_xf, proj, size)
+	var fb := 1 - _far_front
+	var fc: Vector2 = _far_centre[fb]
+	_dispatch("far", _model_uniforms() + [_u_image(6, _far[fb])], Vector2i(FAR_N, FAR_ROWS),
+		PackedFloat32Array([fc.x, fc.y, FAR_HALF, float(_far_row), float(FAR_N), float(FAR_ROWS), 0.0, 0.0]))
+	_far_row += FAR_ROWS
 	var info := PackedFloat32Array([_sh_centre[0].x, _sh_centre[0].y, SH0_HALF, SH0_N,
 		_sh_centre[1].x, _sh_centre[1].y, SH1_HALF, SH1_N,
 		_slab_bottom(), 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
@@ -512,6 +537,8 @@ func _write_params(cam_xf: Transform3D, proj: Projection, size: Vector2i) -> voi
 	data.append_array([CIRRUS_HEIGHT, cirrus, pix, _slab_bottom()])
 	var lights := _lights(cam_xf.origin)
 	data.append_array([float(lights.size()), _slab_top(), 0.0, 0.0])
+	var ff: Vector2 = _far_centre[_far_front]
+	data.append_array([ff.x, ff.y, FAR_HALF, 1.0 if _far_valid[_far_front] else 0.0])
 	for k in 3:
 		for i in 4:
 			if i < lights.size():
@@ -591,10 +618,10 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 		var depth := buffers.get_depth_layer(view)
 		_dispatch("march", _model_uniforms() + [_u_tex(5, _point_sampler, _blue), _u_tex(6, _point_sampler, depth),
 			_u_tex(7, _clamp_sampler, _sh[0]), _u_tex(8, _clamp_sampler, _sh[1]),
-			_u_image(9, _raw_color), _u_image(10, _raw_depth)], _half_size)
+			_u_image(9, _raw_color), _u_image(10, _raw_depth), _u_tex(11, _clamp_sampler, _far[_far_front])], _half_size)
 		_dispatch("resolve", [_u_ubo(), _u_image(1, _hist_color[_cur]), _u_image(2, _hist_depth[_cur]),
 			_u_tex(3, _point_sampler, _raw_color), _u_tex(4, _point_sampler, _raw_depth),
-			_u_tex(5, _clamp_sampler, _hist_color[1 - _cur])], _half_size)
+			_u_tex(5, _clamp_sampler, _hist_color[1 - _cur]), _u_tex(6, _point_sampler, _hist_depth[1 - _cur])], _half_size)
 		_dispatch("composite", [_u_ubo(), _u_image(1, _overlay), _u_tex(2, _point_sampler, _hist_color[_cur]),
 			_u_tex(3, _point_sampler, _hist_depth[_cur]), _u_tex(4, _point_sampler, depth),
 			_u_image(5, _layer)], size)

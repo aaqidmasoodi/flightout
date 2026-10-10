@@ -4,7 +4,8 @@
 // (include/clouds_common.glslinc), in three ranges along each ray:
 //   near (to ~9 km)        full shapes with the detail erosion; sunlight by a short light march plus the shadow map
 //   mid (to the march end) the shapes alone, at the noise level the pixel's footprint calls for; shadow map light
-//   far (to the horizon)   the far-field density (weather only, smooth), a few fixed samples; shadow map light
+//   far (to the horizon)   the far-cloud map: the same cloud columns, integrated (clouds_far.glsl), met as three
+//                          layers through each column: sharp, steady, the same clouds as up close
 // then the cirrus, a thin sheet high above (a real plane in the sky, so it moves with true parallax).
 // out_color: rgb in-scattered light, a transmittance. out_depth: x where the cloud starts, y where it ends, z the
 // opacity-weighted distance of the cloud (what the temporal pass reprojects at), 1e9 when there is none. The
@@ -26,6 +27,7 @@ layout(set = 0, binding = 7) uniform sampler2D shadow0_tex;
 layout(set = 0, binding = 8) uniform sampler2D shadow1_tex;
 layout(rgba16f, set = 0, binding = 9) uniform restrict writeonly image2D out_color;
 layout(rgba32f, set = 0, binding = 10) uniform restrict writeonly image2D out_depth;
+layout(set = 0, binding = 11) uniform sampler2D far_tex;           // the far-cloud map (clouds_far.glsl)
 
 const float NO_CLOUD = 1e9;
 
@@ -186,7 +188,7 @@ void main() {
 			if (t > march_end || T < 0.01 || expensive >= max_dense) {
 				break;
 			}
-			float big = dt * (1.0 + t / 7000.0);
+			float big = dt * (1.0 + t / 12000.0);
 			float fine = clamp(big * 0.35, 30.0, 160.0) * (1.0 + t / 9000.0);
 			vec3 sp = ro + rd * t;
 			vec2 dc = sp.xz - ro.xz;
@@ -220,12 +222,8 @@ void main() {
 			float detail_amt = 1.0 - smoothstep(near_end * 0.55, near_end, t);
 			float hgt;
 			float dens = density(mp, lod, detail_amt, hgt);
-			// approaching the end of the march, hand over to the far field smoothly
-			float far_k = smoothstep(p.ranges.y * 0.7, p.ranges.y, t);
-			if (far_k > 0.0) {
-				float hf;
-				dens = mix(dens, density_far(mp, hf), far_k);
-			}
+			// approaching the end of the march, hand over to the far-cloud map (which fades in over the same band)
+			dens *= 1.0 - smoothstep(p.ranges.y * 0.75, p.ranges.y, t);
 			if (dens > 0.0) {
 				if (first >= NO_CLOUD) {
 					first = t;
@@ -268,47 +266,79 @@ void main() {
 			}
 			t += step_here;
 		}
-		// ---- far: the far-field density to the horizon, a few samples spaced geometrically ----
-		float fa = max(march_end, t0);
-		if (t1 > fa + 1.0 && T > 0.01) {
-			const int NF = 14;
-			float ratio = t1 / max(fa, 100.0);
-			float prev = fa;
-			for (int i = 0; i < NF; i++) {
-				float tn = max(fa, 100.0) * pow(ratio, (float(i) + 1.0) / float(NF));
-				float tm = mix(prev, tn, jitter);
-				float ds = tn - prev;
-				prev = tn;
-				vec3 sp = ro + rd * tm;
-				vec2 dc = sp.xz - ro.xz;
-				vec3 mp = vec3(sp.x + omap.x, sp.y + dot(dc, dc) * curve, sp.z + omap.y);
-				float hgt;
-				float dens = density_far(mp, hgt);
-				if (dens <= 0.0) {
+		// ---- far: the far-cloud map. Each column is met at three heights through its cloud (a third of its
+		// optical depth each, along the slant of the ray), from the camera's side first. No random samples: the far
+		// clouds are as steady as the terrain. Beyond the map, the weather's mean density. ----
+		float fa = max(march_end * 0.75, t0);
+		if (t1 > fa && T > 0.01) {
+			float slant = 1.0 / max(abs(rd.y), 0.12);
+			for (int k = 0; k < 3; k++) {
+				float frac = (float(k) + 0.5) / 3.0;
+				if (rd.y < 0.0) {
+					frac = 1.0 - frac;               // looking down, the top of the cloud is nearest
+				}
+				// where the ray meets this height of the local cloud (the height comes from the map: iterate)
+				float tk = max(fa, (mix(p.cirrus.w, p.lights_n.y, frac) - ro.y) / (abs(rd.y) > 1e-4 ? rd.y : 1e-4));
+				vec4 col = vec4(0.0);
+				bool hit = false;
+				vec3 sp = ro;
+				for (int it = 0; it < 3; it++) {
+					tk = clamp(tk, fa, t1);
+					sp = ro + rd * tk;
+					vec2 dc = sp.xz - ro.xz;
+					vec2 w = sp.xz + omap + p.wind.xy;
+					vec2 uv = (w - p.far_map.xy) / (2.0 * p.far_map.z) + 0.5;
+					if (p.far_map.w < 0.5 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+						// beyond the map: the weather's mean density, at this height of the column
+						vec3 mp = vec3(sp.x + omap.x, 0.0, sp.z + omap.y);
+						Column cc = column(mp.xz);
+						mp.y = mix(cc.base, cc.top, 0.3 + 0.4 * frac);
+						float hf;
+						float dfar = density_far(mp, hf);
+						col = vec4(dfar * EXT * (cc.top - cc.base), cc.base, cc.top, 0.0);
+					} else {
+						col = textureLod(far_tex, uv, 0.0);
+					}
+					float y_true = mix(col.y, col.z, frac);
+					float yr = y_true - dot(dc, dc) * curve;
+					if (abs(rd.y) < 1e-4) {
+						break;
+					}
+					float tn = (yr - ro.y) / rd.y;
+					hit = tn >= fa && tn <= t1;
+					tk = tn;
+				}
+				if (!hit || col.x <= 0.0) {
 					continue;
 				}
-				if (first >= NO_CLOUD) {
-					first = tm;
+				// fade in over the end of the march (the march fades out there)
+				float fin = smoothstep(march_end * 0.75, march_end, tk);
+				float od_k = col.x / 3.0 * min(slant, 4.0) * fin;
+				float tr = exp(-od_k);
+				if (tr > 0.999) {
+					continue;
 				}
-				last = tm;
+				vec3 mp = vec3(sp.x + omap.x, mix(col.y, col.z, frac), sp.z + omap.y);
+				float dens = col.x / max(EXT * (col.z - col.y), 1.0);
 				float od = shadow_od(mp, L);
 				float sl = sun_light(od, cos_t, dens);
+				float hgt = frac;
 				vec3 amb = mix(p.amb_bottom.rgb, p.amb_top.rgb, hgt) * p.sun_color.w;
 				amb += p.sun_color.rgb * p.sun_dir.w * 0.07 * (0.45 + 0.55 * hgt);
 				vec3 lum = p.sun_color.rgb * p.sun_dir.w * sl + amb;
 				lum *= 1.0 - p.shape.y * (1.0 - hgt * 0.6);
-				float f = 1.0 - exp(-p.fog.w * tm * haze_mean(ro.y, sp.y));
+				float f = 1.0 - exp(-p.fog.w * tk * haze_mean(ro.y, sp.y));
 				lum = mix(lum, fc, f);
-				float tr = exp(-dens * EXT * ds);
 				float a = T * (1.0 - tr);
+				if (first >= NO_CLOUD) {
+					first = tk;
+				}
+				last = max(last < NO_CLOUD ? last : tk, tk);
 				S += a * lum;
 				wsum += a;
-				wdist += a * tm;
+				wdist += a * tk;
 				T *= tr;
 				if (T < 0.01) {
-					break;
-				}
-				if (tn >= t1) {
 					break;
 				}
 			}

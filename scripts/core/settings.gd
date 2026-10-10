@@ -234,10 +234,10 @@ const PRESETS := [
 ## Cloud quality: ray steps and light samples, the most loop iterations and in-cloud (expensive) samples a ray may
 ## take, and the march resolution (div: 2 = half, 4 = quarter of the screen; the composite upsamples smoothly).
 # march: metres of full raymarch (beyond it the far field to the horizon); near: metres of edge detail
-const CLOUD_LEVELS := [{"steps": 36, "light": 1, "radiance": 64, "iters": 160, "dense": 40, "div": 4, "march": 20000.0, "near": 5000.0},
-	{"steps": 56, "light": 2, "radiance": 128, "iters": 240, "dense": 64, "div": 2, "march": 26000.0, "near": 7000.0},
-	{"steps": 72, "light": 3, "radiance": 128, "iters": 320, "dense": 96, "div": 2, "march": 32000.0, "near": 9000.0},
-	{"steps": 110, "light": 4, "radiance": 256, "iters": 320, "dense": 110, "div": 2, "march": 40000.0, "near": 12000.0}]
+const CLOUD_LEVELS := [{"steps": 28, "light": 1, "radiance": 64, "iters": 128, "dense": 32, "div": 2, "march": 12000.0, "near": 4000.0},
+	{"steps": 48, "light": 2, "radiance": 128, "iters": 200, "dense": 56, "div": 2, "march": 16000.0, "near": 6000.0},
+	{"steps": 64, "light": 3, "radiance": 128, "iters": 260, "dense": 80, "div": 2, "march": 20000.0, "near": 8000.0},
+	{"steps": 96, "light": 4, "radiance": 256, "iters": 320, "dense": 110, "div": 2, "march": 26000.0, "near": 10000.0}]
 const TREE_LEVELS := [{"near": 600.0, "px": 4.0}, {"near": 850.0, "px": 3.0}, {"near": 1100.0, "px": 2.0}, {"near": 1500.0, "px": 1.2}]
 const FOREST_DENSITY := [0.45, 0.7, 1.0, 1.0]
 const SHADOW_LEVELS := [{"dist": 120.0, "atlas": 2048, "soft": 1}, {"dist": 220.0, "atlas": 2048, "soft": 2},

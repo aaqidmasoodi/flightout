@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://bnp12do5kxyvv"
+path="res://.godot/imported/clouds_far.glsl-78a866803744460882cf3c09bb9e906b.res"
+
+[deps]
+
+source_file="res://shaders/clouds_far.glsl"
+dest_files=["res://.godot/imported/clouds_far.glsl-78a866803744460882cf3c09bb9e906b.res"]
+
+[params]
+

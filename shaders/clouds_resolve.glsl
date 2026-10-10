@@ -15,6 +15,7 @@ layout(rgba32f, set = 0, binding = 2) uniform restrict writeonly image2D out_dep
 layout(set = 0, binding = 3) uniform sampler2D cur_color;
 layout(set = 0, binding = 4) uniform sampler2D cur_depth;
 layout(set = 0, binding = 5) uniform sampler2D hist_color;
+layout(set = 0, binding = 6) uniform sampler2D hist_depth;
 
 // Clip towards the neighbourhood centre along a straight line (not per channel), so the result is always a
 // blend of colours that really exist here; per-channel clamping could pair dark light with opaque cover.
@@ -72,14 +73,23 @@ void main() {
 			vec2 puv = (clip.xy / clip.w) * 0.5 + 0.5;
 			if (all(greaterThanEqual(puv, vec2(0.0))) && all(lessThanEqual(puv, vec2(1.0)))) {
 				vec4 h = textureLod(hist_color, puv, 0.0);
-				// motion-adaptive clipping: barely moving, the history is trustworthy (clip loosely, converge);
-				// moving fast, clip tightly so nothing trails
-				float motion = length((puv - uv) * vec2(hsize));
-				float k = mix(6.0, 1.75, smoothstep(0.25, 4.0, motion));
+				// How far to trust the history: the reprojection is exact for a cloud at its weighted distance, so
+				// turning and flying do not spoil it (and in flight the view always moves: distrusting motion kept
+				// the clouds noisy). What spoils it is a different cloud arriving there (a disocclusion): the
+				// history's distance no longer matches this pixel's.
+				float hd = textureLod(hist_depth, puv, 0.0).z;
+				bool hhas = hd < 1e8;
+				float match = 1.0;
+				if (has && hhas) {
+					match = 1.0 - smoothstep(0.04, 0.2, abs(hd - d.z) / max(d.z, 1.0));
+				} else if (has != hhas) {
+					match = 0.35;             // cloud edge appearing or leaving: clip, but keep some history
+				}
+				float k = mix(1.25, 3.5, match);
 				h = clip_box(h, m1 - k * sigma, m1 + k * sigma);
-				float w = p.amb_top.w * mix(1.0, 0.85, smoothstep(2.0, 12.0, motion));
-				// the current frame sharp while the history is trusted; leaning on its neighbourhood only when moving
-				vec4 cf = mix(c, m1, mix(0.15, 0.7, smoothstep(0.5, 4.0, motion)));
+				float w = p.amb_top.w * mix(0.75, 1.0, match);
+				// the current frame lightly filtered (its noise is what the history averages away)
+				vec4 cf = mix(c, m1, mix(0.6, 0.25, match));
 				result = mix(cf, h, w);
 			}
 		}
