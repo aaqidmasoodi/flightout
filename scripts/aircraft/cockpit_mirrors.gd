@@ -20,6 +20,7 @@ extends Node
 ## Folded, nothing is rendered for them at all.
 
 const GLASS_SHADER := preload("res://shaders/cockpit/mirror_glass.gdshader")
+const TERRAIN := preload("res://scripts/world/terrain_streamer.gd")
 # the shared picture: from the middle of the arch, looking aft; wide enough for every mirror from any head position
 const CAPTURE_FOV := Vector2(130.0, 64.0)     # degrees across, up
 const CAPTURE_HEIGHT := [300, 360, 420]      # pixels (display resolution setting: low, medium, full)
@@ -247,6 +248,8 @@ func update(inside: bool, cam: Camera3D, delta: float) -> void:
 	var t := air * _space(_root) * _capture_local
 	_cam.global_transform = t
 	_cam.far = cam.far                          # as far as you can see out of the canopy (the terrain far below)
+	# the terrain draws only the tiles in view: tell it this view (behind the jet) needs them too
+	TERRAIN.add_view(_cam.get_frustum())
 	_sync_env()
 	# world direction -> the picture camera's own axes (its rows are the camera's axes)
 	_material.set_shader_parameter("capture_basis", t.basis.orthonormalized().transposed())

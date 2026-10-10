@@ -207,6 +207,18 @@ func _height_range(level: int, i: int, j: int) -> Vector2:
 	return Vector2(mm.decode_u16(o) * h_scale + h_offset, mm.decode_u16(o + 2) * h_scale + h_offset)
 
 
+## Another view that needs the terrain this frame (the cockpit mirrors' picture, looking aft): tiles in it are drawn
+## too, not only the ones in the main camera's view. Set by that view each frame it renders, before this runs.
+static var _extra_planes: Array[Plane] = []
+static var _extra_frame := -1
+var _planes2: Array[Plane] = []
+
+
+static func add_view(planes: Array[Plane]) -> void:
+	_extra_planes = planes
+	_extra_frame = Engine.get_process_frames()
+
+
 func _process(_delta: float) -> void:
 	if _shadow_bake:
 		_shadow_bake.update()
@@ -217,6 +229,7 @@ func _process(_delta: float) -> void:
 	_frame += 1
 	_cam_map = WorldData.to_world(cam.global_position)
 	_planes = cam.get_frustum()
+	_planes2 = _extra_planes if _extra_frame == Engine.get_process_frames() else ([] as Array[Plane])
 	_curve = WorldData.EARTH_CURVE if WorldData.is_large() else 0.0
 	if cam.far != _view_far:
 		_view_far = cam.far
@@ -260,7 +273,11 @@ func _visible(level: int, i: int, j: int) -> bool:
 	var drop := (far_x * far_x + far_z * far_z) * _curve
 	var mn := Vector3(x0 + i * s - WorldData.origin_x - m, hr.x - m - drop, z0 + j * s - WorldData.origin_z - m)
 	var mx := Vector3(mn.x + s + 2.0 * m, hr.y + m, mn.z + s + 2.0 * m)
-	for p: Plane in _planes:
+	return _box_in(_planes, mn, mx) or (not _planes2.is_empty() and _box_in(_planes2, mn, mx))
+
+
+static func _box_in(planes: Array, mn: Vector3, mx: Vector3) -> bool:
+	for p: Plane in planes:
 		# the corner furthest against the plane normal: if even that is outside, the whole box is
 		var c := Vector3(mn.x if p.normal.x > 0.0 else mx.x, mn.y if p.normal.y > 0.0 else mx.y, mn.z if p.normal.z > 0.0 else mx.z)
 		if p.distance_to(c) > 0.0:
