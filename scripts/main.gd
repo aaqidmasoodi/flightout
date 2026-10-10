@@ -75,11 +75,14 @@ func _ready() -> void:
 		aircraft.global_transform = preload("res://scripts/world/spawn_layout.gd").parking_slot(Game.client.my_slot)
 		WorldData.home_airfield = preload("res://scripts/world/spawn_layout.gd").group_of(Game.client.my_slot)[0]
 	else:
-		aircraft.global_transform = _start_transform()
+		aircraft.global_transform = _start_transform(false)
+	# where a restart puts you back (the runway, or your shelter online); the development start options below only
+	# change where this flight begins, never that
 	aircraft.spawn = aircraft.global_transform
-	aircraft.place(aircraft.spawn)
+	var start: Transform3D = aircraft.spawn if Game.online else _start_transform(true)
+	aircraft.place(start)
 	if "--air-start" in OS.get_cmdline_user_args():   # development: start flying (with --start-pos / --alt / --start-hdg)
-		aircraft.air_start.call_deferred(aircraft.spawn, 230.0)
+		aircraft.air_start.call_deferred(start, 230.0)
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--dev-throttle="):          # development: start with this throttle (1.0: full afterburner)
 			var thr := arg.trim_prefix("--dev-throttle=").to_float()
@@ -153,13 +156,16 @@ func _on_disconnected(reason: String) -> void:
 
 
 ## Lined up on the start airfield's runway by default. `--slot=N` (1..16) starts parked in multiplayer slot N.
-func _start_transform() -> Transform3D:
+## `dev`: with the development start options (--alt, --start-pos, --start-hdg) applied.
+func _start_transform(dev: bool) -> Transform3D:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--slot="):
 			var n := clampi(arg.trim_prefix("--slot=").to_int(), 1, 16)
 			WorldData.home_airfield = preload("res://scripts/world/spawn_layout.gd").group_of(n - 1)[0]
 			return preload("res://scripts/world/spawn_layout.gd").parking_slot(n - 1)
 	var t := WorldData.spawn_transform(0)
+	if not dev:
+		return t
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--alt="):   # development: start high (metres), to check the sky and cloud deck
 			t.origin.y = arg.trim_prefix("--alt=").to_float()
