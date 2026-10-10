@@ -7,7 +7,7 @@ extends RefCounted
 ##                     and the last input tick the server applied for it (for reconciliation).
 ## Channel 0 carries unreliable state (inputs, snapshots); channel 1 carries reliable events (join, leave, weather).
 
-const VERSION := 5                     # 2: avionics master mode in the input toggles and the state; 3: floating origin (jet frames); 4: Kashmir map, slots at three airfields; 5: each jet carries its owner's lead
+const VERSION := 6                     # 2: avionics master mode in the input toggles and the state; 3: floating origin (jet frames); 4: Kashmir map, slots at three airfields; 5: each jet carries its owner's lead; 6: packed own state, jet frames as cell numbers (a full server's snapshot fits one packet)
 const LEAD_SCALE := 16.0              # leads travel in sixteenths of a tick
 const DEFAULT_PORT := 27015
 const MAX_PLAYERS := 16
@@ -86,12 +86,53 @@ static func decode_input(b: StreamPeerBuffer) -> Array:
 
 
 # ------------------------------------------------------------------ full state (owner only)
-## FlightModel.get_state() as a tagged list. Floats travel as 32-bit, which is what Vector3/Basis hold anyway.
+## FlightModel.get_state() in a fixed layout: the order and kinds of its fields are the same on both ends (same
+## protocol version), so no field carries a type tag; the on/off fields travel as one bit each. Floats are 32-bit,
+## as before (what Vector3 and Basis hold anyway). Nested lists (the engines) carry their own small tags.
+## About 300 bytes instead of 354: a full server's snapshot (own state + 15 jets) fits one network packet.
+
+const ORIGIN_CELL := 2000.0            # jets' frames are whole multiples of this (scripts/world/world_data.gd)
+static var _kinds := PackedByteArray()  # the state's field kinds, in order (from a fresh flight model)
+
+
+static func _state_kinds() -> PackedByteArray:
+	if _kinds.is_empty():
+		for v in preload("res://scripts/sim/flight_model.gd").new().get_state():
+			_kinds.append(typeof(v))
+	return _kinds
+
 
 static func put_state(b: StreamPeerBuffer, s: Array) -> void:
+	var kinds := _state_kinds()
+	if s.size() != kinds.size():
+		push_error("protocol: state layout changed (%d fields, expected %d)" % [s.size(), kinds.size()])
+		b.put_u8(0)
+		return
 	b.put_u8(s.size())
-	for v in s:
-		_put_val(b, v)
+	var bits := 0
+	var nb := 0
+	for i in s.size():
+		if kinds[i] == TYPE_BOOL:
+			if s[i]:
+				bits |= 1 << nb
+			nb += 1
+	b.put_u32(bits)
+	for i in s.size():
+		var v = s[i]
+		match kinds[i]:
+			TYPE_BOOL:
+				pass
+			TYPE_FLOAT:
+				b.put_float(v)
+			TYPE_INT:
+				b.put_64(v)
+			TYPE_VECTOR3:
+				b.put_float(v.x); b.put_float(v.y); b.put_float(v.z)
+			TYPE_BASIS:
+				for c in [v.x, v.y, v.z]:
+					b.put_float(c.x); b.put_float(c.y); b.put_float(c.z)
+			_:
+				_put_val(b, v)
 
 
 static func _put_val(b: StreamPeerBuffer, v) -> void:
@@ -117,10 +158,32 @@ static func _put_val(b: StreamPeerBuffer, v) -> void:
 
 
 static func get_state(b: StreamPeerBuffer) -> Array:
+	var kinds := _state_kinds()
 	var n := b.get_u8()
+	if n != kinds.size():
+		return []
+	var bits := b.get_u32()
+	var nb := 0
 	var out := []
+	out.resize(n)
 	for i in n:
-		out.append(_get_val(b))
+		match kinds[i]:
+			TYPE_BOOL:
+				out[i] = (bits >> nb) & 1 == 1
+				nb += 1
+			TYPE_FLOAT:
+				out[i] = b.get_float()
+			TYPE_INT:
+				out[i] = b.get_64()
+			TYPE_VECTOR3:
+				out[i] = Vector3(b.get_float(), b.get_float(), b.get_float())
+			TYPE_BASIS:
+				var x := Vector3(b.get_float(), b.get_float(), b.get_float())
+				var y := Vector3(b.get_float(), b.get_float(), b.get_float())
+				var z := Vector3(b.get_float(), b.get_float(), b.get_float())
+				out[i] = Basis(x, y, z)
+			_:
+				out[i] = _get_val(b)
 	return out
 
 
@@ -164,7 +227,7 @@ static func put_jet(b: StreamPeerBuffer, id: int, sim_tick: int, fm, lead: float
 	b.put_u8(id)
 	b.put_u32(sim_tick)
 	b.put_u16(clampi(roundi(lead * LEAD_SCALE), 0, 65535))      # the owner's lead (ticks), see encode_input
-	b.put_32(roundi(fm.ox)); b.put_32(roundi(fm.oz))     # the jet's frame (whole ORIGIN_CELLs, exact as ints)
+	b.put_16(roundi(fm.ox / ORIGIN_CELL)); b.put_16(roundi(fm.oz / ORIGIN_CELL))   # the jet's frame, in whole cells
 	b.put_float(fm.pos.x); b.put_float(fm.pos.y); b.put_float(fm.pos.z)
 	b.put_float(fm.vel.x); b.put_float(fm.vel.y); b.put_float(fm.vel.z)
 	var q: Quaternion = fm.rot.get_rotation_quaternion()
@@ -204,8 +267,8 @@ static func get_jet(b: StreamPeerBuffer) -> Dictionary:
 	d.id = b.get_u8()
 	d.t = b.get_u32()
 	d.lead = b.get_u16() / LEAD_SCALE
-	d.ox = float(b.get_32())
-	d.oz = float(b.get_32())
+	d.ox = float(b.get_16()) * ORIGIN_CELL
+	d.oz = float(b.get_16()) * ORIGIN_CELL
 	d.pos = Vector3(b.get_float(), b.get_float(), b.get_float())     # in the jet's frame: world = pos + (ox, 0, oz)
 	d.vel = Vector3(b.get_float(), b.get_float(), b.get_float())
 	d.rot = Quaternion(b.get_16() / 32767.0, b.get_16() / 32767.0, b.get_16() / 32767.0, b.get_16() / 32767.0).normalized()

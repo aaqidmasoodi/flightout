@@ -760,17 +760,14 @@ func _setup_mirrors(cnp: Node3D) -> void:
 	if cnp == null:
 		return
 	var pads := cnp.find_child("CNP_Root_CP_Pad", false, false) as MeshInstance3D
-	if pads == null or pads.mesh == null:
-		return
 	_mirror_set = preload("res://scripts/aircraft/cockpit_mirrors.gd").new()
 	_mirror_set.name = "Mirrors"
 	add_child(_mirror_set)
 	var eye: Vector3 = ac.spec.cockpit_eye if ac.spec else Vector3(0.0, 1.18, -5.5)
 	for m in _mirror_set.build(ac, cnp, pads, eye, _material, COCKPIT_LAYER):
 		_ck_meshes.append(m)
-		if (m as MeshInstance3D).mesh is QuadMesh:
-			continue
-		_casters.append(m)
+		if not (m as MeshInstance3D).mesh is QuadMesh:
+			_casters.append(m)
 
 
 # ------------------------------------------------------------------ shadows

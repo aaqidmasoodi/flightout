@@ -1,99 +1,102 @@
 extends Node
-## Rear-view mirrors on the canopy's front arch, upper left and right (as on the Su-27), built at run time where the
-## cockpit model has its hand-hold pads (which they replace).
+## Rear-view mirrors on the canopy's front arch, as on the Su-27: a wide one under the top of the arch and a long
+## narrow one along each upper side, sitting snug against the arch's inner face, built at run time from the arch's
+## shape (they replace the hand-hold pads the cockpit model has there).
 ##
-## Each mirror is angled so that, from the design eye point, it shows the view behind the jet and a little outboard.
-## Its picture is a true planar reflection: a camera at your eye reflected in the mirror's plane, looking through
-## exactly the mirror's outline (an off-axis frustum whose near plane is the glass), so the image lines up with the
-## frame and shifts as your head moves, like a real mirror. Each mirror's picture is re-rendered 15 times a second,
-## the two taking turns, and only while you are in the cockpit, the mirrors are switched on and one is on screen.
+## Each mirror is angled so that, from the design eye point, it shows the view behind the jet (the top one straight
+## back and a little up, the side ones back and a little outboard). Its picture is a true planar reflection: a camera
+## at your eye reflected in the mirror's plane, looking through exactly the mirror's outline (an off-axis frustum
+## whose near plane is the glass), so the image lines up with the frame and shifts as your head moves, like a real
+## mirror. The mirrors' pictures are re-rendered in turn, 12 times a second each, and only while you are in the
+## cockpit, the mirrors are switched on and the mirror is on screen.
 
 const GLASS_SHADER := preload("res://shaders/cockpit/mirror_glass.gdshader")
-const SIZE := Vector2(0.15, 0.07)            # glass, metres (width x height)
-const PICTURE := Vector2i(256, 120)          # reflection picture, pixels (the glass's shape)
-const RATE_HZ := 15.0                        # per mirror
-const STANDOFF := 0.035                      # glass in front of the arch's inner face, metres
+const PIXELS_PER_M := 1100.0                 # reflection picture resolution (a 22 cm mirror: 242 pixels)
+const RATE_HZ := 12.0                        # per mirror
 const FAR := 5000.0
-# where each mirror looks (aircraft space: forward -Z, right +X, up +Y): behind and a little up and outboard, over
-# the canopy rail: the sky behind you, with that side's tail fin in the picture
-const LOOK_AFT := Vector3(0.0, 0.2, 1.0)
-const LOOK_OUT := 0.1
+# the arch's inner face (aircraft space): distance from its centre line (x = 0, y = ARCH_Y) by angle from the top
+const ARCH_Y := 0.9
+const ARCH_Z := -6.30
+const ARCH_R := [[0.0, 0.375], [12.0, 0.376], [24.0, 0.386], [36.0, 0.395], [48.0, 0.409], [60.0, 0.424],
+	[72.0, 0.445], [84.0, 0.47]]
+# mirrors: angle from the top of the arch (degrees, + to the right), glass width and height (m), where it looks
+# (aircraft space: forward -Z, right +X, up +Y)
+const MIRRORS := [
+	[0.0, 0.24, 0.055, Vector3(0.0, 0.12, 1.0)],
+	[-52.0, 0.22, 0.05, Vector3(-0.12, 0.08, 1.0)],
+	[52.0, 0.22, 0.05, Vector3(0.12, 0.08, 1.0)],
+]
 
 var ac: Node3D
-var _mirrors: Array = []                     # {glass, housing, stalk, viewport, camera, centre, x, y, n (canopy-root space)}
+var _mirrors: Array = []                     # {glass, viewport, camera, material, centre, x, y, n (canopy-root space), size}
 var _root: Node3D                            # the canopy's root: the mirrors move with the canopy
 var _acc := 0.0
 var _turn := 0
 var _on := true
-var _mat_off: ShaderMaterial
 var _dev_dir := ""                           # development: --dev-mirror-shot=<dir> saves each mirror's picture
 var _dev_t := 0.0
 
 
-## pads: the canopy's hand-hold pad mesh (two boxes, left and right). eye: design eye point in aircraft space.
+static func _arch_r(deg: float) -> float:
+	var a := absf(deg)
+	for i in ARCH_R.size() - 1:
+		if a <= float(ARCH_R[i + 1][0]):
+			var k := (a - float(ARCH_R[i][0])) / (float(ARCH_R[i + 1][0]) - float(ARCH_R[i][0]))
+			return lerpf(float(ARCH_R[i][1]), float(ARCH_R[i + 1][1]), k)
+	return float(ARCH_R[-1][1])
+
+
+## pads: the canopy's hand-hold pads (hidden: the mirrors take their place). eye: design eye point in aircraft space.
 ## material_of: name -> cockpit material. Returns the meshes made, for the cockpit to draw with its precise transform.
 func build(aircraft: Node3D, root: Node3D, pads: MeshInstance3D, eye: Vector3, material_of: Callable, layer: int) -> Array:
 	ac = aircraft
 	_root = root
 	var made: Array = []
-	var vs: PackedVector3Array = pads.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
-	var to_root := _space(_root).affine_inverse() * _space(pads)
-	var eye_root := _space(_root).affine_inverse() * eye
-	for side in [-1.0, 1.0]:
-		var pts := PackedVector3Array()
-		for v in vs:
-			var p := to_root * v
-			if signf(p.x) == side:
-				pts.append(p)
-		if pts.size() < 8:
-			continue
-		var fit := _box_axes(pts)
-		var centre: Vector3 = fit[0]
-		var inward: Vector3 = fit[3]                     # the pad's thin axis, turned to face the cockpit
-		if inward.dot(eye_root - centre) < 0.0:
-			inward = -inward
-		var mount := centre + inward * STANDOFF
-		# glass normal: halfway between "towards the eye" and "towards what it should show", so the eye sees that view
-		var look := (LOOK_AFT + Vector3(side * LOOK_OUT, 0.0, 0.0)).normalized()
-		var look_root := (_space(_root).basis.inverse() * look).normalized()
-		var n := ((eye_root - mount).normalized() + look_root).normalized()
-		var up_root := (_space(_root).basis.inverse() * Vector3.UP).normalized()
-		var x := up_root.cross(n).normalized()
+	var to_root := _space(_root).affine_inverse()
+	for spec in MIRRORS:
+		var deg: float = spec[0]
+		var size := Vector2(spec[1], spec[2])
+		var th := deg_to_rad(deg)
+		var radial := Vector3(sin(th), cos(th), 0.0)          # outwards from the arch's centre line
+		var tangent := Vector3(cos(th), -sin(th), 0.0)        # along the arch, left to right
+		var on_arch := Vector3(0.0, ARCH_Y, ARCH_Z) + radial * _arch_r(deg)
+		# a flat glass under a curved arch: its ends touch the arch, its middle sits the arch's sagitta below it
+		var half := size.x * 0.5 / _arch_r(deg)
+		var sag := _arch_r(deg) * (1.0 - cos(half))
+		var mount := on_arch - radial * (size.y * 0.5 + 0.007 + sag)
+		# glass normal: halfway between "towards the eye" and "towards what it should show"
+		var look := (spec[3] as Vector3).normalized()
+		var n := ((eye - mount).normalized() + look).normalized()
+		var x := (tangent - n * tangent.dot(n)).normalized()
 		var y := n.cross(x).normalized()
+		if y.dot(radial) < 0.0:
+			x = -x
+			y = -y
 		var basis := Basis(x, y, n)
-		var m := {"centre": mount, "x": x, "y": y, "n": n}
-		# housing: a shallow dark frame behind the glass, on a short stalk from the arch
-		var housing := MeshInstance3D.new()
-		var hb := BoxMesh.new()
-		hb.size = Vector3(SIZE.x + 0.014, SIZE.y + 0.014, 0.018)
-		housing.mesh = hb
-		housing.transform = Transform3D(basis, mount - n * 0.0095)
-		housing.material_override = null
-		housing.set_surface_override_material(0, material_of.call("CP_PaintDark"))
-		var stalk := MeshInstance3D.new()
-		var sb := CylinderMesh.new()
-		var stalk_len := maxf((mount - centre).length() - 0.01, 0.01)
-		sb.top_radius = 0.007
-		sb.bottom_radius = 0.009
-		sb.height = stalk_len
-		stalk.mesh = sb
-		var axis := (mount - centre).normalized()
-		var sx := axis.cross(x).normalized() if absf(axis.dot(x)) < 0.95 else axis.cross(y).normalized()
-		stalk.transform = Transform3D(Basis(sx, axis, sx.cross(axis)), centre + axis * (stalk_len * 0.5))
-		stalk.set_surface_override_material(0, material_of.call("CP_PaintDark"))
+		# in the canopy root's space, so the mirrors move with the canopy
+		var rb := to_root.basis * basis
+		var rc := to_root * mount
+		var m := {"centre": rc, "x": rb.x.normalized(), "y": rb.y.normalized(), "n": rb.z.normalized(), "size": size}
+		# frame: a thin dark bezel behind the glass
+		var frame := MeshInstance3D.new()
+		var fb := BoxMesh.new()
+		fb.size = Vector3(size.x + 0.012, size.y + 0.012, 0.012)
+		frame.mesh = fb
+		frame.transform = Transform3D(rb, rc - rb.z.normalized() * 0.0065)
+		frame.set_surface_override_material(0, material_of.call("CP_PaintDark"))
 		var glass := MeshInstance3D.new()
 		var q := QuadMesh.new()
-		q.size = SIZE
+		q.size = size
 		glass.mesh = q
-		glass.transform = Transform3D(basis, mount + n * 0.0005)
-		for mi in [housing, stalk, glass]:
+		glass.transform = Transform3D(rb, rc + rb.z.normalized() * 0.0005)
+		for mi in [frame, glass]:
 			(mi as MeshInstance3D).layers = layer
 			(mi as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			_root.add_child(mi)
 			made.append(mi)
 		# the reflection's own small view of the world
 		var vp := SubViewport.new()
-		vp.size = PICTURE
+		vp.size = Vector2i(maxi(roundi(size.x * PIXELS_PER_M), 16), maxi(roundi(size.y * PIXELS_PER_M), 16))
 		vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
 		vp.msaa_3d = Viewport.MSAA_DISABLED
 		vp.positional_shadow_atlas_size = 0
@@ -117,7 +120,7 @@ func build(aircraft: Node3D, root: Node3D, pads: MeshInstance3D, eye: Vector3, m
 		m.camera = cam
 		m.material = mat
 		_mirrors.append(m)
-	if not _mirrors.is_empty():
+	if pads:
 		pads.visible = false                         # the mirrors take the hand-holds' places
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--dev-mirror-shot="):
@@ -183,7 +186,7 @@ func _place(m: Dictionary, eye: Vector3) -> void:
 	var cam := m.camera as Camera3D
 	cam.global_transform = Transform3D(cb, virtual_eye)
 	var o := c - virtual_eye
-	cam.set_frustum(SIZE.y, Vector2(o.dot(-x), o.dot(y)), d, FAR)
+	cam.set_frustum((m.size as Vector2).y, Vector2(o.dot(-x), o.dot(y)), d, FAR)
 
 
 ## A node's transform relative to the aircraft root (small numbers only).
@@ -196,37 +199,3 @@ func _space(n: Node3D) -> Transform3D:
 			t = p3.transform * t
 		p = p.get_parent()
 	return t
-
-
-## Centre and axes of a box-shaped point set: [centre, longest axis, middle axis, shortest axis].
-static func _box_axes(pts: PackedVector3Array) -> Array:
-	var c := Vector3.ZERO
-	for p in pts:
-		c += p
-	c /= pts.size()
-	# covariance, then its axes by power iteration (the pads are clean boxes, this converges at once)
-	var xx := 0.0; var xy := 0.0; var xz := 0.0; var yy := 0.0; var yz := 0.0; var zz := 0.0
-	for p in pts:
-		var d := p - c
-		xx += d.x * d.x; xy += d.x * d.y; xz += d.x * d.z
-		yy += d.y * d.y; yz += d.y * d.z; zz += d.z * d.z
-	var cov := Basis(Vector3(xx, xy, xz), Vector3(xy, yy, yz), Vector3(xz, yz, zz))
-	var a1 := _dominant(cov, Vector3(1, 0.3, 0.2))
-	# the thinnest axis: the dominant one of (trace - cov), whose largest eigenvalue belongs to cov's smallest
-	var t := xx + yy + zz
-	var inv := Basis(Vector3(t - xx, -xy, -xz), Vector3(-xy, t - yy, -yz), Vector3(-xz, -yz, t - zz))
-	var a3 := _dominant(inv, Vector3(0.2, 0.3, 1.0))
-	a3 = (a3 - a1 * a3.dot(a1)).normalized()
-	var a2 := a3.cross(a1).normalized()
-	return [c, a1, a2, a3]
-
-
-static func _dominant(m: Basis, start: Vector3) -> Vector3:
-	var v := start.normalized()
-	for i in 400:
-		var w := m * v
-		if w.length() < 1e-12:
-			break
-		v = w.normalized()
-	return v
-

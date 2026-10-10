@@ -167,19 +167,29 @@ void fragment() {
 		}
 		float slope = 1.0 - clamp(n.y, 0.0, 1.0);
 		vec2 sp = wpos.xz;
+		// fine detail that only reads up close: the wandering cover boundaries fade out by FINE_FAR (beyond it a 32 m
+		// sample is a few pixels and the wander is invisible), the 8 m grain is gone by 900 m and the close-up relief
+		// by 700 m (their weights are zero beyond, so those lookups are skipped there)
+		const float FINE_NEAR = 5000.0;
+		const float FINE_FAR = 6500.0;
+		float fine = lite ? 0.0 : 1.0 - smoothstep(FINE_NEAR, FINE_FAR, dist);
 		float macro = texture(macro_tex, tc(sp, 16000.0)).r;
 		float macro2 = lite ? macro : texture(macro_tex, tc(sp, 4000.0) + 0.5).r;
 		float det = texture(detail_tex, tc(sp, 64.0)).r;
-		float det2 = lite ? det : texture(detail_tex, tc(sp, 8.0) + 0.3).r;
+		float det2 = (lite || dist > 900.0) ? det : texture(detail_tex, tc(sp, 8.0) + 0.3).r;
 		// fields: irregular cells about 125 m across (cell index from a 64 km periodic frame, so it survives origin moves)
 		vec2 fw = (sp + mod(world_origin, vec2(64000.0))) / 125.0;
 		vec2 warp = vec2(0.0);
 		if (!lite) {
+			// (the field outlines' wobble stays at every distance: a field's colour is picked per cell, so fading
+			// the wobble would make distant fields change colour as you fly)
 			fw += (vec2(texture(detail_tex, tc(sp, 400.0)).r, texture(detail_tex, tc(sp, 400.0) + 0.5).r) - 0.5) * 1.4;
+		}
+		if (fine > 0.0) {
 			// land cover, blended between the four nearest samples, read through a little noise so class boundaries
 			// wander naturally instead of following the 32 m grid
-			warp = (vec2(texture(detail_tex, tc(sp, 180.0)).r, texture(detail_tex, tc(sp, 180.0) + 0.37).r) - 0.5) * 2.2
-					+ (vec2(texture(detail_tex, tc(sp, 50.0) + 0.11).r, texture(detail_tex, tc(sp, 50.0) + 0.61).r) - 0.5) * 0.8;
+			warp = ((vec2(texture(detail_tex, tc(sp, 180.0)).r, texture(detail_tex, tc(sp, 180.0) + 0.37).r) - 0.5) * 2.2
+					+ (vec2(texture(detail_tex, tc(sp, 50.0) + 0.11).r, texture(detail_tex, tc(sp, 50.0) + 0.61).r) - 0.5) * 0.8) * fine;
 		}
 		float fields = fract(sin(dot(floor(fw), vec2(12.9898, 78.233))) * 43758.5453);
 		vec2 gw = clamp(v_grid + warp - 0.5, vec2(-1.0), vec2(tile_quads + 0.99));
@@ -209,14 +219,14 @@ void fragment() {
 		float snowc = (c_here > 65.0 && c_here < 75.0) ? 1.0 : 0.0;
 		float waterc = (c_here > 75.0 && c_here < 85.0) ? 1.0 : 0.0;
 		// steep faces are rock whatever the cover says (snow does not stay on cliffs)
-		float rock_det = lite ? det : texture(detail_tex, tc(sp, 40.0) + 0.7).r;
+		float rock_det = (lite || dist > FINE_FAR) ? det : mix(det, texture(detail_tex, tc(sp, 40.0) + 0.7).r, fine);
 		vec3 rock = mix(vec3(0.24, 0.22, 0.21), vec3(0.38, 0.35, 0.32), rock_det);
 		rock = mix(rock, rock * vec3(1.08, 0.96, 0.84), macro2 * 0.6);
 		float rock_amt = smoothstep(0.38, 0.6, slope + (rock_det - 0.5) * 0.12) * (1.0 - waterc);
 		c = mix(c, rock, rock_amt);
 		c *= mix(0.9 + 0.2 * det2, 1.0, smoothstep(150.0, 900.0, dist));
 		vec3 nw = n;
-		if (!lite) {
+		if (!lite && dist < 700.0) {
 			vec2 dn = texture(detail_nrm, tc(sp, 24.0)).xy * 2.0 - 1.0;
 			float relief = (1.0 - smoothstep(60.0, 700.0, dist)) * (0.35 + 0.65 * rock_amt) * (1.0 - waterc);
 			nw = normalize(n + vec3(dn.x, 0.0, dn.y) * relief * 0.6);

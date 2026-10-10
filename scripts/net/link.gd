@@ -36,7 +36,9 @@ var simulating: bool:
 func send(peer: ENetPacketPeer, channel: int, data: PackedByteArray, reliable: bool) -> void:
 	if peer == null:
 		return
-	var flags := ENetPacketPeer.FLAG_RELIABLE if reliable else ENetPacketPeer.FLAG_UNSEQUENCED
+	# unreliable packets bigger than one datagram are split unreliably too (never resent as reliable pieces, which
+	# would make snapshots queue up behind each other)
+	var flags := ENetPacketPeer.FLAG_RELIABLE if reliable else ENetPacketPeer.FLAG_UNSEQUENCED | ENetPacketPeer.FLAG_UNRELIABLE_FRAGMENT
 	bytes_out += data.size()
 	if not simulating:
 		peer.send(channel, data, flags)
