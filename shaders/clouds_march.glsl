@@ -267,7 +267,7 @@ void main() {
 				float self_occ = exp(-dens * 1.4);
 				vec3 amb = mix(p.amb_bottom.rgb, p.amb_top.rgb, hgt) * p.sun_color.w * mix(0.55, 1.0, self_occ);
 				// sunlight diffused through the whole cloud from its lit side (what keeps a cumulus base grey, not black)
-				amb += p.sun_color.rgb * p.sun_dir.w * 0.07 * (0.45 + 0.55 * hgt);
+				amb += p.sun_color.rgb * p.sun_dir.w * 0.045 * (0.35 + 0.65 * hgt);
 				vec3 lum = p.sun_color.rgb * p.sun_dir.w * sl + amb;
 				lum *= 1.0 - p.shape.y * (1.0 - hgt * 0.6);
 				if (t < 600.0) {
@@ -350,7 +350,7 @@ void main() {
 				float sl = sun_light(od, cos_t, dens);
 				float hgt = frac;
 				vec3 amb = mix(p.amb_bottom.rgb, p.amb_top.rgb, hgt) * p.sun_color.w;
-				amb += p.sun_color.rgb * p.sun_dir.w * 0.07 * (0.45 + 0.55 * hgt);
+				amb += p.sun_color.rgb * p.sun_dir.w * 0.045 * (0.35 + 0.65 * hgt);
 				vec3 lum = p.sun_color.rgb * p.sun_dir.w * sl + amb;
 				lum *= 1.0 - p.shape.y * (1.0 - hgt * 0.6);
 				float f = 1.0 - exp(-p.fog.w * tk * haze_mean(ro.y, sp.y));
