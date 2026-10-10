@@ -7,6 +7,7 @@ shader_type canvas_item;
 uniform float pad = 0.35;             // the extra on each side, as a share of the chart's own width / height
 uniform float aspect = 1.0;           // the chart's height / width
 uniform vec4 bg : source_color = vec4(0.07, 0.08, 0.09, 1.0);
+uniform sampler2D soft_tex : filter_linear, repeat_disable;   // the chart at 1/16 (scripts/ui/map_view.gd)
 
 float hash(vec2 p) {
 	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -30,17 +31,15 @@ void fragment() {
 	d += (n - 0.5) * 0.14;
 	// mirrored back into the chart
 	vec2 m = clamp(1.0 - abs(1.0 - abs(uv)), vec2(0.0), vec2(1.0));
-	// blurred from a ring of samples at a moderate level (the coarsest levels alone showed their texels as blocks),
-	// from a little inside the edge: the chart's outermost strip is partly outside the terrain data (flat, dark
-	// patches along whole degrees)
-	float lod = 4.5 * smoothstep(-0.1, 0.08, d);
-	vec2 r = exp2(lod) * 1.5 / vec2(textureSize(TEXTURE, 0));
-	vec3 c = textureLod(TEXTURE, m, lod).rgb * 0.2;
+	// blurred: a ring of samples from a small copy of the chart (its own coarse mip levels showed blocks), from a
+	// little inside the edge: the chart's outermost strip lies partly outside the terrain data
+	vec2 r = 1.6 / vec2(textureSize(soft_tex, 0));
+	vec3 c = texture(soft_tex, m).rgb * 0.2;
 	for (int k = 0; k < 8; k++) {
 		float a = float(k) * 0.785398 + 0.3;
-		c += textureLod(TEXTURE, clamp(m + vec2(cos(a), sin(a)) * r, vec2(0.0), vec2(1.0)), lod).rgb * 0.1;
+		c += texture(soft_tex, clamp(m + vec2(cos(a), sin(a)) * r, vec2(0.0), vec2(1.0))).rgb * 0.1;
 	}
-	c = mix(texture(TEXTURE, m).rgb, c, smoothstep(-0.1, -0.06, d));
+	c = mix(texture(TEXTURE, m).rgb, c, smoothstep(-0.11, -0.05, d));
 	// a long, soft fade into the background
 	float keep = 1.0 - smoothstep(-0.14, 0.2, d);
 	keep = keep * keep * (3.0 - 2.0 * keep);

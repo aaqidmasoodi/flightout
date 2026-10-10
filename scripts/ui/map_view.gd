@@ -94,6 +94,15 @@ func _ready() -> void:
 	var mat := ShaderMaterial.new()
 	mat.shader = preload("res://shaders/map_chart.gdshader")
 	mat.set_shader_parameter("bg", bg.color)
+	if _tex:
+		# a small, soft copy of the chart for its faded surround
+		var img := _tex.get_image()
+		if img:
+			if img.is_compressed():
+				img.decompress()
+			img.clear_mipmaps()
+			img.resize(maxi(img.get_width() / 16, 8), maxi(img.get_height() / 16, 8), Image.INTERPOLATE_LANCZOS)
+			mat.set_shader_parameter("soft_tex", ImageTexture.create_from_image(img))
 	_relief.material = mat
 	_relief.draw.connect(_draw_relief)
 	_chart.add_child(_relief)
