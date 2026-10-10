@@ -123,6 +123,7 @@ func _material(size: float, min_px: float, intensity: float, day_on: bool) -> Sh
 	m.set_shader_parameter("min_px", min_px)
 	m.set_shader_parameter("intensity", intensity)
 	m.set_shader_parameter("day_on", day_on)
+	preload("res://scripts/world/surface_materials.gd").add_haze_material(m)    # haze between you and the light
 	return m
 
 

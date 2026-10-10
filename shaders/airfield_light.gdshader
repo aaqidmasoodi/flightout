@@ -5,11 +5,29 @@ render_mode unshaded, blend_add, depth_draw_never, cull_disabled, world_vertex_c
 //   - it sinks with the Earth's curvature like the terrain and the runway (otherwise far lights float above them)
 //   - it never gets smaller than `min_px` pixels, so a lit runway reads from far away at night, as real ones do
 //   - lit at night (and dusk), off by day: except PAPIs (`day_on`), which are bright enough to use in daylight
+//   - fades with distance as a real light does: full brightness up close, then falling off with range (the light
+//     reaching you thins with the square of the distance; a display cannot show a sub-pixel point as bright as the
+//     eye sees it, so the fall-off is gentler than the square, as flight simulators do), and dimmed by the haze
+//     between you and it (the same thinning-with-height haze the terrain uses). From high above an airfield is a
+//     faint string of points, not a crisp bright line.
 
 uniform float size_m = 0.6;          // fixture glow size in metres (close up)
 uniform float min_px = 2.5;          // and at least this many pixels
 uniform float intensity = 6.0;       // HDR brightness at night (feeds the bloom)
 uniform bool day_on = false;
+uniform float full_range = 1500.0;   // m: full brightness up to here, then the fall-off
+uniform float falloff = 1.5;         // brightness ~ (full_range / distance) ^ falloff beyond it
+uniform float haze_density = 0.0;    // set with the terrain's (scripts/world/sky_system.gd): sea-level haze, per metre
+float haze_mean(float y0, float y1) {
+	// mean haze density between two heights (scale height 2.5 km), as the terrain and sky use
+	const float H = 2500.0;
+	y0 = max(y0, 0.0);
+	y1 = max(y1, 0.0);
+	float a = exp(-y0 / H);
+	float b = exp(-y1 / H);
+	float dy = y0 - y1;
+	return abs(dy) < 1.0 ? a : H * (b - a) / dy;
+}
 global uniform float earth_curve;
 global uniform vec3 sun_dir;
 
@@ -27,8 +45,8 @@ void vertex() {
 	vec3 right = INV_VIEW_MATRIX[0].xyz;
 	vec3 up = INV_VIEW_MATRIX[1].xyz;
 	VERTEX = c + (right * q.x + up * q.y) * s;
-	// brighter when the disc is small on screen (a distant light is a point with all its energy in a few pixels)
-	float far_boost = clamp(min_px * m_per_px / size_m, 1.0, 3.0);
+	float range_dim = pow(clamp(full_range / d, 0.0, 1.0), falloff);
+	float haze = exp(-haze_density * d * haze_mean(CAMERA_POSITION_WORLD.y, c.y));
 	float night = 1.0 - smoothstep(-0.03, 0.12, sun_dir.y);
 	float on = day_on ? max(night, 0.6) : night;
 	// directional fixtures (INSTANCE_CUSTOM.xy = flat direction they shine towards, z = 1): threshold green only
@@ -37,7 +55,7 @@ void vertex() {
 		vec2 to_cam = normalize(-dc + vec2(1e-4));
 		on *= smoothstep(-0.05, 0.35, dot(to_cam, INSTANCE_CUSTOM.xy));
 	}
-	v_col = vec4(COLOR.rgb * intensity * far_boost, on);
+	v_col = vec4(COLOR.rgb * intensity * range_dim * haze, on);
 }
 
 void fragment() {
