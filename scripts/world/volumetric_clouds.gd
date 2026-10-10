@@ -34,8 +34,9 @@ var active := true              # graphics/volumetric_clouds
 ## base and top are metres above the ground of the region (scripts/world/cloud_ground.gd): ground_mix 0 measures
 ## from its floor (valley floors and plains: fog, low cloud), 1 from its mean (decks the mountains rise through)
 var ground_mix := 0.5
-var _dbg := "--clouds-debug" in OS.get_cmdline_user_args()
+var _dbg := false
 var _dbg_n := 0
+var _dbg_mode := 0          # --clouds-debug=1 / 2: debug views in the march (see clouds_march.glsl)
 var height_variation := 450.0   # metres the layer base and the cloud tops wander across the map
 var hor_toward := Color(0.6, 0.7, 0.8)   # sky colour at the horizon towards the sun (aerial perspective)
 var hor_away := Color(0.6, 0.7, 0.8)
@@ -69,6 +70,10 @@ var _layer_published := false
 
 
 func _init() -> void:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--clouds-debug"):
+			_dbg = true
+			_dbg_mode = a.trim_prefix("--clouds-debug").trim_prefix("=").to_int()
 	# before the transparent pass: glass, the HUD, flames and particles then draw over the clouds instead of being
 	# painted over by them; far transparent things (the sea) hide behind clouds through the cloud layer texture
 	effect_callback_type = EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT
@@ -282,7 +287,7 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	data.append_array([1.0 if _has_history else 0.0, hw, height_variation, WorldData.origin_z])   # w: origin z
 	data.append_array([hor_toward.r, hor_toward.g, hor_toward.b, sun_xz.x])
 	data.append_array([hor_away.r, hor_away.g, hor_away.b, sun_xz.y])
-	data.append_array([float(max_iterations), float(max_dense), 0.0, 0.0])
+	data.append_array([float(max_iterations), float(max_dense), float(_dbg_mode), 0.0])
 	# the ground the layers stand on, and the Earth's curvature (the clouds sink with distance as the terrain does)
 	var curve := WorldData.EARTH_CURVE if WorldData.is_large() else 0.0
 	data.append_array([ground_mix, lerpf(CloudGround.lo, CloudGround.hi, 0.0), CloudGround.hi, curve])

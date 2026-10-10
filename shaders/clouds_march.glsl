@@ -173,6 +173,13 @@ void main() {
 	// moves or rolls the history it uncovers is real cloud, not a jet-shaped hole that smears into streaks.
 	float max_dist = (scene_dist < max(t0, 300.0)) ? reach : min(scene_dist, reach);
 	t1 = min(t1, max_dist);
+	if (p.limits.z > 0.5 && p.limits.z < 1.5) {
+		// debug 1: red where the ray crosses the cloud slab (brightness: how long), blue where it does not
+		float seg_dbg = max(t1 - t0, 0.0);
+		imageStore(out_color, px, seg_dbg > 0.0 ? vec4(clamp(seg_dbg / 20000.0, 0.05, 1.0), 0.0, 0.0, 0.0) : vec4(0.0, 0.0, 0.5, 0.0));
+		imageStore(out_depth, px, vec4(100.0, 200.0, 0.0, 0.0));
+		return;
+	}
 	if (t1 <= t0 || p.layer.z <= 0.001) {
 		imageStore(out_color, px, vec4(0.0, 0.0, 0.0, 1.0));
 		imageStore(out_depth, px, vec4(NO_CLOUD, NO_CLOUD, 0.0, 0.0));
@@ -280,6 +287,12 @@ void main() {
 		float toward = pow(clamp(dot(dh, vec2(p.hor_a.w, p.hor_b.w)) * 0.5 + 0.5, 0.0, 1.0), 3.0);
 		vec3 fc = mix(p.hor_b.rgb, p.hor_a.rgb, toward);
 		S = mix(S, fc * (1.0 - T), f);
+	}
+	if (p.limits.z > 1.5) {
+		// debug 2: green where the march found cloud (brightness: opacity), red where it marched and found none
+		imageStore(out_color, px, first < NO_CLOUD ? vec4(0.0, 1.0 - T, 0.0, 0.0) : vec4(0.3, 0.0, 0.0, 0.0));
+		imageStore(out_depth, px, vec4(100.0, 200.0, 0.0, 0.0));
+		return;
 	}
 	imageStore(out_color, px, vec4(S, T));
 	imageStore(out_depth, px, vec4(first, last + last_step, 0.0, 0.0));
