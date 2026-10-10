@@ -34,6 +34,8 @@ var active := true              # graphics/volumetric_clouds
 ## base and top are metres above the ground of the region (scripts/world/cloud_ground.gd): ground_mix 0 measures
 ## from its floor (valley floors and plains: fog, low cloud), 1 from its mean (decks the mountains rise through)
 var ground_mix := 0.5
+var _dbg := "--clouds-debug" in OS.get_cmdline_user_args()
+var _dbg_n := 0
 var height_variation := 450.0   # metres the layer base and the cloud tops wander across the map
 var hor_toward := Color(0.6, 0.7, 0.8)   # sky colour at the horizon towards the sun (aerial perspective)
 var hor_away := Color(0.6, 0.7, 0.8)
@@ -86,7 +88,10 @@ func _on_origin_shifted(delta: Vector3) -> void:
 
 func _setup() -> void:
 	for n in ["march", "resolve", "composite"]:
-		var sh := _rd.shader_create_from_spirv((load("res://shaders/clouds_%s.glsl" % n) as RDShaderFile).get_spirv())
+		var spirv := (load("res://shaders/clouds_%s.glsl" % n) as RDShaderFile).get_spirv()
+		if spirv.compile_error_compute != "":
+			push_error("Clouds: %s shader: %s" % [n, spirv.compile_error_compute])
+		var sh := _rd.shader_create_from_spirv(spirv)
 		_pipes[n] = [sh, _rd.compute_pipeline_create(sh)]
 	_repeat_sampler = _sampler(RenderingDevice.SAMPLER_REPEAT_MODE_REPEAT, RenderingDevice.SAMPLER_FILTER_LINEAR)
 	_clamp_sampler = _sampler(RenderingDevice.SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE, RenderingDevice.SAMPLER_FILTER_LINEAR)
@@ -225,6 +230,10 @@ func _dispatch(name: String, uniforms: Array, size: Vector2i) -> void:
 
 
 func _render_callback(_type: int, render_data: RenderData) -> void:
+	if _dbg:
+		_dbg_n += 1
+		if _dbg_n % 240 == 1:
+			print("CLOUDDBG pipes %d noise %d cov %.2f active %s base %.0f top %.0f gmix %.2f ground %.0f..%.0f size %s" % [_pipes.size(), _noise.size(), coverage, active, base, top, ground_mix, CloudGround.lo, CloudGround.hi, str(_half_size)])
 	if _pipes.size() < 3 or _noise.size() < 5 or coverage <= 0.001 or not active:
 		_has_history = false
 		if _layer.is_valid():
