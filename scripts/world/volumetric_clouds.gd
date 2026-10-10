@@ -108,6 +108,7 @@ var _far_row := [0, 0]            # next row of the copy being built
 var _cam_pending := false
 var _cam_frame := 0
 var _no_readback := false     # --clouds-no-readback (development)
+var _range_cap := 4.0          # --clouds-range=N (development): cap on range_scale
 var _raw_color := RID()
 var _raw_depth := RID()
 var _hist_color := [RID(), RID()]
@@ -152,6 +153,8 @@ func _init() -> void:
 		if a.begins_with("--clouds-debug"):
 			_dbg = true
 			_dbg_mode = a.trim_prefix("--clouds-debug").trim_prefix("=").to_int()
+		if a.begins_with("--clouds-range="):
+			_range_cap = clampf(a.trim_prefix("--clouds-range=").to_float(), 1.0, 4.0)
 	# before the transparent pass: glass, the HUD, flames and particles then draw over the clouds instead of being
 	# painted over by them; transparent things behind clouds hide behind them through the cloud layer texture
 	effect_callback_type = EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT
@@ -549,7 +552,7 @@ static func _on_cam_light(data: PackedByteArray) -> void:
 func range_scale(cam_y: float, cam_map: Vector2) -> float:
 	var g: Vector2 = CloudGround.at(cam_map.x, cam_map.y)
 	var top_here := lerpf(g.x, g.y, ground_mix) + top
-	return clampf(1.0 + (cam_y - top_here) / 2500.0, 1.0, 4.0)
+	return clampf(1.0 + (cam_y - top_here) / 2500.0, 1.0, _range_cap)
 
 
 ## The lowest any cloud can be (true height), and the highest.
