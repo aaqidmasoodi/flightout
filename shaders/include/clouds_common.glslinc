@@ -112,11 +112,14 @@ float density_in(vec3 mp, Column c, float lod, float detail_amt, out float h_out
 	if (detail_amt > 0.001) {
 		vec2 dx = mat2(vec2(0.5, -0.866), vec2(0.866, 0.5)) * vec2(mp.x + p.wind.x * 1.3, mp.z + p.wind.y * 1.3) / DETAIL_SCALE;
 		vec3 dq = vec3(dx.x, mp.y / DETAIL_SCALE, dx.y);
-		vec4 dt = textureLod(detail_tex, dq, max(lod - 1.0, 0.0));
+		// its own level: its texels are a quarter of the shape's (420 m / 64 against 3400 m / 128), so the same
+		// footprint is two levels further down (a sharper level than that aliased into grain at the cloud edges)
+		vec4 dt = textureLod(detail_tex, dq, lod + 2.0);
 		float df = dt.r * 0.625 + dt.g * 0.25 + dt.b * 0.125;
 		// wispy at the base, billowing towards the top
 		float m = mix(df, 1.0 - df, saturate(h * 6.0));
-		d = remap(d, m * 0.42 * detail_amt, 1.0, 0.0, 1.0);
+		float keep = 1.0 - smoothstep(2.5, 4.5, lod + 2.0);     // erosion only while the detail is resolved
+		d = remap(d, m * 0.42 * detail_amt * keep, 1.0, 0.0, 1.0);
 	}
 	return max(d, 0.0) * c.dens;
 }
