@@ -68,6 +68,7 @@ var rtt_ms := 0.0
 var loss_pct := 0.0
 var corrections := 0
 var rewind_ms := 0.0                 # total time spent re-simulating after corrections
+var rewind_max_ms := 0.0             # the longest single correction (one frame's worth of replay)
 var snap_log: PackedStringArray      # development (scripts/dev/formation.gd): every remote snapshot as it arrives
 var log_snaps := false
 var server_queue := 0
@@ -153,8 +154,8 @@ func disconnect_from_server(reason: String = "") -> void:
 	if state == IDLE and link == null:
 		return
 	if state == ONLINE:
-		print("Net: leaving after %d corrections, ping %d ms, loss %.1f%%%s" % [corrections, int(rtt_ms), loss_pct,
-			("  (" + reason + ")") if reason != "" else ""])
+		print("Net: leaving after %d corrections (longest %.1f ms), ping %d ms, loss %.1f%%%s" % [corrections, rewind_max_ms,
+			int(rtt_ms), loss_pct, ("  (" + reason + ")") if reason != "" else ""])
 	var was_online := state == ONLINE
 	if peer and link:
 		var b := StreamPeerBuffer.new()
@@ -178,6 +179,8 @@ func disconnect_from_server(reason: String = "") -> void:
 	trip_ticks = 0.0
 	lead_ticks = 0.0
 	_last_ack = 0
+	_own_ack = 0
+	_own_state = []
 	tick = 0
 	aircraft = null
 	WorldData.clear_server_weather()
@@ -191,6 +194,7 @@ func _physics_process(_delta: float) -> void:
 	if link == null:
 		return
 	_service()
+	_reconcile_newest()
 	if state == CONNECTING and Time.get_ticks_msec() / 1000.0 > _deadline:
 		disconnect_from_server("")
 		failed.emit("No answer from %s. Check the address, and that the server is running and reachable (UDP %d)." % [server_address, P.DEFAULT_PORT])
@@ -293,6 +297,8 @@ func _receive(data: PackedByteArray) -> void:
 			_have_clock = false
 			tick = 0
 			_last_ack = 0
+			_own_ack = 0
+			_own_state = []
 			state = ONLINE
 			joined.emit()
 			roster_changed.emit()
@@ -319,7 +325,7 @@ func _snapshot(b: StreamPeerBuffer) -> void:
 	var stick := b.get_u32()
 	var tod := b.get_float()
 	var ack := b.get_u32()
-	server_queue = b.get_u8()
+	var queue := b.get_u8()
 	var own := []
 	if b.get_u8() == 1:
 		own = P.get_state(b)
@@ -342,11 +348,12 @@ func _snapshot(b: StreamPeerBuffer) -> void:
 	else:
 		_offset = lerpf(_offset, sample, 0.01)
 	_jitter = lerpf(_jitter, absf(sample - _offset), 0.05)
-	# reconcile our own jet
-	if not own.is_empty() and ack > _last_ack:
-		_last_ack = ack
-		_measure(ack)
-		_reconcile(ack, own)
+	# our own jet: only the newest server state matters; it is reconciled once, after every packet that arrived this
+	# tick has been read (a burst of snapshots would otherwise replay the inputs once per snapshot)
+	if not own.is_empty() and ack > _last_ack and ack > _own_ack:
+		_own_ack = ack
+		_own_state = own
+		_own_queue = queue
 	# remote jets: each keeps its own timeline (its simulation tick), so stalls on the server never show
 	var now := _sim_now()
 	for d in jets:
@@ -394,6 +401,21 @@ func _snapshot(b: StreamPeerBuffer) -> void:
 ## tick - ack - queue, and our jet runs ahead of the server's by the queue plus the trip up (half the round trip).
 ## Every player's lead goes to the others with their jet, so each game can predict the other jets by the whole
 ## delay, sender's side included, and draw them where they are now (DCS, DIS dead reckoning to the present).
+var _own_ack := 0                    # newest own-jet server state received this tick, waiting to be reconciled
+var _own_state: Array = []
+var _own_queue := 0
+
+
+func _reconcile_newest() -> void:
+	if _own_ack <= _last_ack or _own_state.is_empty():
+		return
+	_last_ack = _own_ack
+	server_queue = _own_queue
+	_measure(_own_ack)
+	_reconcile(_own_ack, _own_state)
+	_own_state = []
+
+
 func _measure(ack: int) -> void:
 	var trip := maxf(float(tick - ack - server_queue), 0.0)
 	var lead := float(server_queue) + trip * 0.5
@@ -414,7 +436,9 @@ func _reconcile(ack: int, server_state: Array) -> void:
 		corrections += 1
 		var t0 := Time.get_ticks_usec()
 		aircraft.rewind(server_state, ack, _cmds, _states, tick)
-		rewind_ms += (Time.get_ticks_usec() - t0) / 1000.0
+		var ms := (Time.get_ticks_usec() - t0) / 1000.0
+		rewind_ms += ms
+		rewind_max_ms = maxf(rewind_max_ms, ms)
 	for t in _cmds.keys():
 		if t <= ack - 2:
 			_cmds.erase(t)

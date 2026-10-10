@@ -16,8 +16,8 @@ const STANDOFF := 0.035                      # glass in front of the arch's inne
 const FAR := 5000.0
 # where each mirror looks (aircraft space: forward -Z, right +X, up +Y): behind and a little up and outboard, over
 # the canopy rail: the sky behind you, with that side's tail fin in the picture
-const LOOK_AFT := Vector3(0.0, 0.1, 1.0)
-const LOOK_OUT := 0.15
+const LOOK_AFT := Vector3(0.0, 0.2, 1.0)
+const LOOK_OUT := 0.1
 
 var ac: Node3D
 var _mirrors: Array = []                     # {glass, housing, stalk, viewport, camera, centre, x, y, n (canopy-root space)}
