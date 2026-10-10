@@ -97,6 +97,8 @@ var _cur := 0
 var _prev_vp := Projection()
 var _has_history := false
 var _blue := RID()
+var _blue_tex: Texture2D
+var _blue_rid := RID()
 var _frame := 0
 var _prev_wind := Vector2.ZERO
 var _shift := Vector3.ZERO         # the floating origin moved by this since the last frame: history is in the old frame
@@ -238,10 +240,11 @@ func _sampler(rep: int, filt: int) -> RID:
 	return _rd.sampler_create(s)
 
 
-## The blue noise used to spread the march's samples (assets/clouds/blue_noise_64.png), from the main thread.
+## The blue noise used to spread the march's samples (assets/clouds/blue_noise_64.png), from the main thread. Its
+## GPU texture is looked up each frame (the engine may still be uploading it, or replace it).
 func set_blue_noise(tex: Texture2D) -> void:
-	var rid := tex.get_rid()
-	RenderingServer.call_on_render_thread(func(): _blue = RenderingServer.texture_get_rd_texture(rid))
+	_blue_tex = tex
+	_blue_rid = tex.get_rid()
 
 
 func _all_targets() -> Array:
@@ -393,7 +396,9 @@ func _model_uniforms() -> Array:
 
 
 func _usable() -> bool:
-	return _pipes.size() >= 7 and _generated and _blue.is_valid() and coverage > 0.001 and active
+	if _blue_rid.is_valid():
+		_blue = RenderingServer.texture_get_rd_texture(_blue_rid)
+	return _pipes.size() >= 7 and _generated and _blue.is_valid() and _rd.texture_is_valid(_blue) and coverage > 0.001 and active
 
 
 ## Before the opaque pass: the parameters for this frame, the shadow map and the camera's sunlight.
