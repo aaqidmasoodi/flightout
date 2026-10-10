@@ -15,13 +15,15 @@ const DECLINATION := 10.0     # spring sun
 #   overcast: a grey deck about 1 km over the valleys, ridges and peaks rising into and through it
 #   fog: low stratus filling the valleys and plains, the slopes and mountains standing out of it
 #   rain: a thick, dark deck from about 500 m over the ground up to 4 km and more
+# var: how much the weather map varies the layer across the land (cover, type, height): fair-weather cumulus come
+# in fields and gaps, an overcast is a sheet with few breaks
 const CONDITIONS := [
-	{"cov": 0.04, "over": 0.0, "haze": 0.0, "fog": 0.000022, "dim": 1.0, "rain": 0.0, "base": 1100.0, "top": 2500.0, "gmix": 0.2, "ccov": 0.0, "cdens": 1.0, "strat": 0.0, "cdark": 0.0},
-	{"cov": 0.34, "over": 0.0, "haze": 0.0, "fog": 0.000026, "dim": 0.96, "rain": 0.0, "base": 1100.0, "top": 2500.0, "gmix": 0.2, "ccov": 0.42, "cdens": 1.0, "strat": 0.0, "cdark": 0.0},
-	{"cov": 0.62, "over": 0.25, "haze": 0.05, "fog": 0.00003, "dim": 0.72, "rain": 0.0, "base": 1000.0, "top": 2900.0, "gmix": 0.3, "ccov": 0.62, "cdens": 1.1, "strat": 0.15, "cdark": 0.1},
-	{"cov": 0.93, "over": 0.82, "haze": 0.2, "fog": 0.00005, "dim": 0.32, "rain": 0.0, "base": 700.0, "top": 2100.0, "gmix": 0.5, "ccov": 0.82, "cdens": 1.0, "strat": 0.55, "cdark": 0.25},
-	{"cov": 0.7, "over": 0.55, "haze": 0.85, "fog": 0.00042, "dim": 0.45, "rain": 0.0, "base": -60.0, "top": 520.0, "gmix": 0.0, "ccov": 0.85, "cdens": 0.55, "strat": 1.0, "cdark": 0.1},
-	{"cov": 1.0, "over": 0.95, "haze": 0.45, "fog": 0.00016, "dim": 0.22, "rain": 1.0, "base": 450.0, "top": 4200.0, "gmix": 0.4, "ccov": 1.0, "cdens": 1.35, "strat": 0.6, "cdark": 0.55},
+	{"cov": 0.04, "over": 0.0, "haze": 0.0, "fog": 0.000022, "dim": 1.0, "rain": 0.0, "base": 1100.0, "top": 2500.0, "gmix": 0.2, "ccov": 0.0, "cdens": 1.0, "strat": 0.0, "cdark": 0.0, "var": 0.8},
+	{"cov": 0.34, "over": 0.0, "haze": 0.0, "fog": 0.000026, "dim": 0.96, "rain": 0.0, "base": 1100.0, "top": 2500.0, "gmix": 0.2, "ccov": 0.42, "cdens": 1.0, "strat": 0.0, "cdark": 0.0, "var": 0.85},
+	{"cov": 0.62, "over": 0.25, "haze": 0.05, "fog": 0.00003, "dim": 0.72, "rain": 0.0, "base": 1000.0, "top": 2900.0, "gmix": 0.3, "ccov": 0.62, "cdens": 1.1, "strat": 0.15, "cdark": 0.1, "var": 0.7},
+	{"cov": 0.93, "over": 0.82, "haze": 0.2, "fog": 0.00005, "dim": 0.32, "rain": 0.0, "base": 700.0, "top": 2100.0, "gmix": 0.5, "ccov": 0.82, "cdens": 1.0, "strat": 0.55, "cdark": 0.25, "var": 0.35},
+	{"cov": 0.7, "over": 0.55, "haze": 0.85, "fog": 0.00042, "dim": 0.45, "rain": 0.0, "base": -60.0, "top": 520.0, "gmix": 0.0, "ccov": 0.85, "cdens": 0.55, "strat": 1.0, "cdark": 0.1, "var": 0.3},
+	{"cov": 1.0, "over": 0.95, "haze": 0.45, "fog": 0.00016, "dim": 0.22, "rain": 1.0, "base": 450.0, "top": 4200.0, "gmix": 0.4, "ccov": 1.0, "cdens": 1.35, "strat": 0.6, "cdark": 0.55, "var": 0.3},
 ]
 
 var env: Environment
@@ -36,10 +38,12 @@ var _rain_snd: AudioStreamPlayer
 var _drift := Vector2.ZERO
 var clouds                      # VolumetricClouds compositor effect
 const CloudGround = preload("res://scripts/world/cloud_ground.gd")
+const CloudWeather = preload("res://scripts/world/cloud_weather.gd")
+const VolumetricClouds = preload("res://scripts/world/volumetric_clouds.gd")
 const CLOUD_OVERLAY_LAYER := 1 << 18      # visual layer 19: the main view's cloud overlay (scripts/aircraft/cockpit_mirrors.gd leaves it out)
 var _cloud_drift := Vector2.ZERO
-var _volumes := {}
-var _volumes_ready := false
+var _cloud_t := 1.0              # sunlight reaching the camera through the clouds (smoothed)
+var _cloud_direct := 1.0         # ... of which the direct beam (the rest scattered: no crisp shadows)
 var _sky_timer := 1.0
 var _glow_on := true
 var _sky_sent := Vector4(INF, 0, 0, 0)
@@ -69,13 +73,17 @@ func _ready() -> void:
 	we.environment = env
 	clouds = preload("res://scripts/world/volumetric_clouds.gd").new()
 	var comp := Compositor.new()
-	comp.compositor_effects = [clouds]
+	comp.compositor_effects = [clouds.shadow_pass, clouds]
 	we.compositor = comp
 	# the clouds reach the screen through this full-screen surface (shaders/cloud_overlay.gdshader): drawn first in
 	# the transparent pass, in the main view only (its own render layer, which the cockpit mirrors' view leaves out)
 	var clear := Image.create(1, 1, false, Image.FORMAT_RGBAH)
 	clear.set_pixel(0, 0, Color(0.0, 0.0, 0.0, 1.0))           # nothing until the first cloud frame
 	RenderingServer.global_shader_parameter_set("cloud_overlay", ImageTexture.create_from_image(clear))
+	# and no cloud shadows until the clouds' shadow map exists (shaders/include/cloud_shadow.gdshaderinc reads its flag)
+	var no_shadow := Image.create(4, 1, false, Image.FORMAT_RGBAF)
+	no_shadow.fill(Color(0.0, 0.0, 0.0, 0.0))
+	RenderingServer.global_shader_parameter_set("cloud_shadow_info", ImageTexture.create_from_image(no_shadow))
 	var ov := MeshInstance3D.new()
 	ov.name = "CloudOverlay"
 	var qm := QuadMesh.new()
@@ -90,7 +98,7 @@ func _ready() -> void:
 	ov.layers = CLOUD_OVERLAY_LAYER
 	add_child(ov)
 	add_child(we)
-	_volumes = preload("res://scripts/world/surface_materials.gd").cloud_volumes()
+	clouds.set_blue_noise(load("res://assets/clouds/blue_noise_64.png"))
 	_apply_quality()
 	Settings.changed.connect(func(key, _v):
 		if key in ["graphics/clouds", "graphics/volumetric_clouds", "graphics/shadow_quality", "graphics/ssao", "graphics/glow"]:
@@ -214,12 +222,20 @@ func _process(delta: float) -> void:
 	if cam_now:
 		cam_y = cam_now.global_position.y
 	# the layer's ground under the camera (cloud heights are above the ground of the region, not sea level)
+	# the weather column over the camera: the same the clouds are drawn from (scripts/world/cloud_weather.gd)
 	var gref := 0.0
+	var deck_base := float(_w.base)
+	var deck_top := float(_w.top)
 	if cam_now:
 		var cw := WorldData.to_world(cam_now.global_position)
 		var g2: Vector2 = CloudGround.at(cw.x, cw.z)
 		gref = lerpf(g2.x, g2.y, float(_w.gmix))
-	var deck_top := gref + float(_w.top)
+		deck_base += gref
+		deck_top += gref
+		if CloudWeather.ready:
+			var col := CloudWeather.column(cw.x, cw.z, clouds)
+			deck_base = col.base
+			deck_top = col.top
 	var below := 1.0 - smoothstep(deck_top - 50.0, deck_top + 300.0, cam_y) * clampf((float(_w.over) - 0.5) * 2.0, 0.0, 1.0)
 	var over: float = float(_w.over) * below
 	var dim: float = lerpf(1.0, float(_w.dim), below)
@@ -231,20 +247,36 @@ func _process(delta: float) -> void:
 	var warm := _gradient(e, [[-4.0, Color(1.0, 0.32, 0.12)], [2.0, Color(1.0, 0.5, 0.26)], [8.0, Color(1.0, 0.7, 0.46)],
 			[20.0, Color(1.0, 0.88, 0.74)], [45.0, Color(1.0, 0.96, 0.91)], [90.0, Color(1.0, 0.98, 0.95)]])
 	sun.light_color = warm.lerp(Color(0.85, 0.88, 0.92), over * 0.7)
-	sun.light_energy = (0.4 + 0.78 * smoothstep(0.0, 35.0, e)) * smoothstep(-4.0, 6.0, e) * dim
-	sun.shadow_opacity = clampf(1.0 - over * 0.85, 0.1, 1.0)
+	var sun_e := (0.4 + 0.78 * smoothstep(0.0, 35.0, e)) * smoothstep(-4.0, 6.0, e)
+	# The clouds' shadow: the terrain, trees and trails take theirs per point (shaders/include/cloud_shadow.
+	# gdshaderinc); everything in the engine's own lighting (the jets) takes the sunlight at the camera, through the
+	# clouds between it and the sun (marched on the GPU, read back). A thin cloud's shadow is soft (light scattered
+	# through it), a thick one leaves only the sky's light. Without the volumetric clouds, the weather's mean dimming.
+	var clouds_on: bool = clouds.active and float(_w.ccov) > 0.001
+	var od: float = clouds.cam_od if clouds_on else 0.0
+	var t_now := cloud_transmit(od)
+	_cloud_t = lerpf(_cloud_t, t_now, clampf(delta * 5.0, 0.0, 1.0))
+	_cloud_direct = lerpf(_cloud_direct, exp(-od) * 0.8 / maxf(t_now, 1e-4), clampf(delta * 5.0, 0.0, 1.0))
+	sun.light_energy = sun_e * (_cloud_t if clouds_on else dim)
+	sun.shadow_opacity = clampf(lerpf(0.15, 1.0, _cloud_direct), 0.1, 1.0) if clouds_on else clampf(1.0 - over * 0.85, 0.1, 1.0)
+	RenderingServer.global_shader_parameter_set("cloud_sun_cam", _cloud_t if clouds_on else 1.0)
 
 	# ---- moon ----
 	var mup := Vector3.UP if absf(md.y) < 0.99 else Vector3.FORWARD
 	moon.look_at_from_position(Vector3.ZERO, -md, mup)
 	moon.visible = night > 0.02 and md.y > -0.05
 	moon.light_energy = 0.26 * night * (1.0 - 0.75 * over) * smoothstep(-0.05, 0.25, md.y)
+	if clouds_on and e <= -4.0:
+		moon.light_energy *= _cloud_t        # the clouds' shadows are cast from the moon at night
 
 	# ---- ambient, exposure, glow ----
 	var storm := float(_w.rain)
 	env.ambient_light_color = Color(0.06, 0.08, 0.14).lerp(Color(0.5, 0.55, 0.62), day).lerp(Color(0.32, 0.35, 0.4), storm * day)
 	env.ambient_light_sky_contribution = lerpf(0.3, 0.85, day)
 	env.ambient_light_energy = lerpf(0.9, 0.5, day) * (1.0 - 0.25 * storm)
+	# under cloud the light comes from all of the bright cloud above, not the sun: the sky's share grows
+	if clouds_on:
+		env.ambient_light_energy *= lerpf(1.0, 1.45, (1.0 - _cloud_t) * day)
 	env.tonemap_exposure = lerpf(2.0, 0.85, day) * lerpf(1.0, 1.12, golden) * (1.0 - 0.1 * over)
 	env.glow_intensity = lerpf(0.9, 0.55, day)
 	env.glow_bloom = lerpf(0.12, 0.03, day)
@@ -262,16 +294,6 @@ func _process(delta: float) -> void:
 	env.fog_height_density = 0.004 * float(_w.haze) * (1.0 if WorldData.conditions == 4 else 0.3)
 
 	# ---- volumetric clouds ----
-	if not _volumes_ready:
-		_volumes_ready = true
-		for vk in _volumes:
-			var tx = _volumes[vk]
-			if tx is NoiseTexture3D and (tx as NoiseTexture3D).get_data().is_empty():
-				_volumes_ready = false
-			elif tx is NoiseTexture2D and (tx as NoiseTexture2D).get_image() == null:
-				_volumes_ready = false
-		if _volumes_ready:
-			clouds.set_noise_textures(_volumes)
 	var wind_hi: Vector3 = WorldData.atmosphere.wind_at(Vector3(0.0, 2500.0, 0.0), 0.0, 0.0)
 	var flow := Vector2(wind_hi.x, wind_hi.z)
 	if flow.length() < 3.0:
@@ -281,7 +303,8 @@ func _process(delta: float) -> void:
 	clouds.sun_dir = sd if use_sun else md
 	RenderingServer.global_shader_parameter_set("sun_dir", sd if use_sun else md)   # terrain cast shadows
 	preload("res://scripts/world/terrain_shadow_bake.gd").request(sd if use_sun else md)
-	clouds.light_intensity = (sun.light_energy if use_sun else moon.light_energy * 1.6) * 2.9
+	var raw_e := sun_e if use_sun else moon.light_energy / maxf(_cloud_t if (clouds_on and e <= -4.0) else 1.0, 0.02)
+	clouds.light_intensity = (raw_e if use_sun else raw_e * 1.6) * 2.9
 	clouds.sun_color = sun.light_color if use_sun else moon.light_color
 	clouds.ambient = 0.62
 	var sky_top := Color(0.012, 0.016, 0.03).lerp(Color(0.42, 0.52, 0.68), day).lerp(Color(0.4, 0.38, 0.48), golden * 0.5)
@@ -302,7 +325,18 @@ func _process(delta: float) -> void:
 	clouds.density = float(_w.cdens)
 	clouds.stratus = float(_w.strat)
 	clouds.darkness = float(_w.cdark)
+	clouds.variability = float(_w["var"])
+	clouds.cirrus = clampf(float(_w.cov) * 0.3 + float(_w.over) * 0.2, 0.0, 1.0)
 	clouds.wind = _cloud_drift
+	if cam_now:
+		VolumetricClouds.gather_lamps(cam_now.global_position)
+	# the light of the sun, sky and ground for what lights itself (trails: shaders/trail.gdshader)
+	var sl: Color = clouds.sun_color * raw_e
+	RenderingServer.global_shader_parameter_set("sun_light", Vector3(sl.r, sl.g, sl.b))
+	var sk: Color = clouds.amb_top * 0.9
+	RenderingServer.global_shader_parameter_set("sky_light", Vector3(sk.r, sk.g, sk.b))
+	var gl: Color = clouds.amb_bottom * 0.9
+	RenderingServer.global_shader_parameter_set("ground_light", Vector3(gl.r, gl.g, gl.b))
 
 	# ---- water haze ----
 	for om in preload("res://scripts/world/surface_materials.gd").haze_materials():
@@ -317,7 +351,7 @@ func _process(delta: float) -> void:
 	# only when something actually changed (Godot's recommended practice for dynamic skies).
 	# cirrus drift runs in the sky shader from TIME (smooth every frame); only real changes re-send uniforms
 	_sky_timer += delta
-	var sky_state := Vector4(e, over, float(_w.haze) * below, float(_w.cov))
+	var sky_state := Vector4(e, over, float(_w.haze) * below, -1.0 if clouds_on else float(_w.cov))
 	if _sky_timer >= 0.25 and sky_state.distance_to(_sky_sent) > 0.002:
 		_sky_timer = 0.0
 		_sky_sent = sky_state
@@ -325,7 +359,8 @@ func _process(delta: float) -> void:
 		sky_mat.set_shader_parameter("sun_dir", sd)
 		sky_mat.set_shader_parameter("moon_dir", md)
 		sky_mat.set_shader_parameter("sun_elev", e)
-		sky_mat.set_shader_parameter("cloud_coverage", clampf(float(_w.cov) * 0.3 + over * 0.2, 0.0, 1.0))   # high cirrus only
+		# high cirrus on the sky dome, only without the volumetric clouds (which draw the cirrus as a real layer)
+		sky_mat.set_shader_parameter("cloud_coverage", 0.0 if clouds_on else clampf(float(_w.cov) * 0.3 + over * 0.2, 0.0, 1.0))
 		sky_mat.set_shader_parameter("overcast", over)
 		sky_mat.set_shader_parameter("haze", float(_w.haze) * below)
 		sky_mat.set_shader_parameter("cloud_drift", _drift)
@@ -335,7 +370,7 @@ func _process(delta: float) -> void:
 	var cam: Camera3D = cam_now
 	if cam:
 		_rain.global_position = cam.global_position + Vector3(0.0, 30.0, 0.0)
-	rain *= 1.0 - smoothstep(gref + float(_w.base), gref + float(_w.base) + 300.0, cam_y)     # no rain above the cloud base
+	rain *= 1.0 - smoothstep(deck_base, deck_base + 300.0, cam_y)     # no rain above the cloud base
 	_rain.emitting = rain > 0.05
 	_rain.amount_ratio = clampf(rain, 0.0, 1.0)
 	var wv: Vector3 = WorldData.atmosphere.wind_at(_rain.global_position, 0.0, 0.0) if WorldData.atmosphere else Vector3.ZERO
@@ -359,6 +394,8 @@ func _apply_quality() -> void:
 	clouds.max_iterations = int(cq.iters)
 	clouds.max_dense = int(cq.dense)
 	clouds.resolution_div = int(cq.div)
+	clouds.march_end = float(cq.march)
+	clouds.near_end = float(cq.near)
 	clouds.active = bool(Settings.get_value("graphics/volumetric_clouds"))
 	var rs := {64: Sky.RADIANCE_SIZE_64, 128: Sky.RADIANCE_SIZE_128, 256: Sky.RADIANCE_SIZE_256}
 	if env and env.sky and env.sky.radiance_size != rs[int(cq.radiance)]:
@@ -376,3 +413,8 @@ func _apply_quality() -> void:
 		# two cascades on the lower settings (their shadow distance is short): every caster is drawn twice, not four times
 		var two := int(Settings.get_value("graphics/shadow_quality")) <= 1
 		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS if two else DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+
+
+## The sunlight getting through cloud of this optical depth (the same in shaders/include/cloud_shadow.gdshaderinc).
+static func cloud_transmit(od: float) -> float:
+	return exp(-od) * 0.8 + exp(-od * 0.03) * 0.2

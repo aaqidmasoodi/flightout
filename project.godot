@@ -57,6 +57,34 @@ cloud_overlay={
 "type": "sampler2D",
 "value": ""
 }
+cloud_shadow0={
+"type": "sampler2D",
+"value": ""
+}
+cloud_shadow1={
+"type": "sampler2D",
+"value": ""
+}
+cloud_shadow_info={
+"type": "sampler2D",
+"value": ""
+}
+cloud_sun_cam={
+"type": "float",
+"value": 1.0
+}
+sun_light={
+"type": "vec3",
+"value": Vector3(0, 0, 0)
+}
+sky_light={
+"type": "vec3",
+"value": Vector3(0, 0, 0)
+}
+ground_light={
+"type": "vec3",
+"value": Vector3(0, 0, 0)
+}
 world_origin={
 "type": "vec2",
 "value": Vector2(0, 0)

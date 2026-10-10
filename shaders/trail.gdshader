@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode world_vertex_coords, blend_mix, depth_draw_never, cull_disabled, diffuse_lambert_wrap, specular_disabled, shadows_disabled;
+render_mode unshaded, world_vertex_coords, blend_mix, depth_draw_never, cull_disabled, shadows_disabled;
 // A trail ribbon (scripts/fx/trail.gd): wingtip vortices, vapour, contrails, missile smoke.
 //
 // The script keeps a ring of points the emitter passed through (scene position, birth time, intensity) in a small
@@ -24,17 +24,30 @@ uniform float fade_in = 0.0;          // seconds before a point shows (contrails
 uniform vec4 color : source_color = vec4(1.0);
 uniform float opacity = 0.6;
 uniform float wisp = 0.5;             // how broken up (noise) the ribbon looks
-uniform float self_lit = 0.0;         // extra brightness in daylight: smoke and vapour scatter sunlight from every side
+uniform float self_lit = 0.0;         // light scattered more than once inside dense smoke (its shadowed side is not dark)
 uniform float flame = 0.0;            // afterburner light on the trail right behind the nozzle (engine trails only)
 uniform float flame_reach = 22.0;     // metres it reaches along the trail, fading
 uniform vec3 flame_color : source_color = vec3(1.0, 0.5, 0.18);
 global uniform vec3 sun_dir;
+// Lit as what it is, a thin cloud of droplets or smoke particles: sunlight scattered towards the eye, strongly
+// forward (a contrail glows bright looking towards the sun and is dimmer with the sun behind you), dimmed by any
+// cloud between it and the sun, plus the light of the sky above and the ground below. Hidden by clouds in front of
+// it. (The engine's own lighting needs a surface normal; a ribbon facing the camera has none that means anything.)
+global uniform vec3 sun_light;        // the sun's (or moon's) light above the clouds, colour times energy
+global uniform vec3 sky_light;        // the sky's light from above
+global uniform vec3 ground_light;     // and from below
+global uniform vec2 world_origin;
+#include "res://shaders/include/cloud_shadow.gdshaderinc"
+#include "res://shaders/include/cloud_cover.gdshaderinc"
 
 varying float v_alpha;
 varying float v_side;
 varying float v_birth;
 varying float v_age;
 varying float v_flame;
+varying float v_sun;                 // sunlight getting through the clouds to this part of the trail
+varying float v_cos;                 // cosine between the view direction and the sun
+varying float v_main;
 
 vec4 pt(int j) {
 	if (j <= 0) {
@@ -88,6 +101,9 @@ void vertex() {
 	v_side = UV.y;
 	v_flame = flame > 0.0 ? flame * exp(-length(pos - live.xyz) / flame_reach) : 0.0;
 	v_birth = birth;
+	v_main = all(equal(INV_VIEW_MATRIX[3].xyz, MAIN_CAM_INV_VIEW_MATRIX[3].xyz)) ? 1.0 : 0.0;
+	v_sun = cloud_transmit(cloud_od(vec3(pos.x + world_origin.x, pos.y, pos.z + world_origin.y)));
+	v_cos = dot(-to_cam, normalize(sun_dir));
 	v_age = age;
 }
 
@@ -100,9 +116,11 @@ void fragment() {
 	float n = texture(noise_tex, vec2(v_birth * 0.9, v_side * 0.35 + v_age * 0.05)).r;
 	float n2 = texture(noise_tex, vec2(v_birth * 3.1 + 0.37, v_side * 0.8)).r;
 	float body = mix(1.0, smoothstep(0.25, 0.75, n * 0.65 + n2 * 0.35), wisp);
-	ALPHA = clamp(v_alpha * opacity * across * across * body, 0.0, 1.0);
-	ALBEDO = color.rgb;
-	EMISSION = color.rgb * self_lit * smoothstep(-0.05, 0.25, sun_dir.y) + flame_color * v_flame;
-	ROUGHNESS = 1.0;
-	BACKLIGHT = color.rgb * 0.6;       // sunlight through the vapour
+	ALPHA = clamp(v_alpha * opacity * across * across * body, 0.0, 1.0) * cloud_visibility(SCREEN_UV, length(VERTEX), v_main);
+	// single scattering (Henyey-Greenstein, mostly forward) and a share of isotropic multiple scattering
+	float g = 0.6;
+	float hg = (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * v_cos, 1e-4), 1.5);
+	float phase = mix(1.0, hg, 0.5) + self_lit;
+	vec3 light = sun_light * v_sun * phase + mix(ground_light, sky_light, 0.7);
+	ALBEDO = color.rgb * light + flame_color * v_flame;
 }

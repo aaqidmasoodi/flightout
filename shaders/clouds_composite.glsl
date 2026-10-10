@@ -1,37 +1,26 @@
 #[compute]
 #version 450
-// Pass 3: depth-aware upsample at full resolution. Each pixel reads its exact scene depth; each of the nearest
-// cloud samples is trimmed to the part of the cloud in front of that depth (none if the cloud starts behind the
-// object), then they are blended. Clouds behind the jet never land on it; clouds in front still do.
-// The result goes to the cloud overlay (rgb in-scattered light, a transmittance), which a full-screen surface blends
-// over the scene at the start of the transparent pass (shaders/cloud_overlay.gdshader). Writing into the scene colour
-// here instead does not work with MSAA: that is the resolve target, overwritten when the multisampled image resolves.
+// Pass 3: upsample to full resolution. Each pixel reads its exact scene depth; each nearby cloud sample is trimmed to
+// the part of the cloud in front of that depth (none if the cloud starts behind the object), then they are blended
+// (Catmull-Rom: sharp, the clouds keep their edges; clamped to the nearest four samples so it never rings). Clouds
+// behind the jet never land on it; clouds in front still do.
+//
+// Two results:
+//   overlay  rgb in-scattered light, a transmittance: blended over the scene at the start of the transparent pass
+//            (shaders/cloud_overlay.gdshader); with MSAA the scene colour cannot be written here directly
+//   layer    the occlusion every later surface uses (shaders/include/cloud_cover.gdshaderinc): r transmittance to
+//            this pixel's depth, g the distance where the cloud starts, b where it ends (km). The lights, the trails,
+//            the flames and the sea are drawn after the clouds, so this is how they hide behind them.
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-layout(rgba16f, set = 0, binding = 0) uniform restrict writeonly image2D overlay_img;
-layout(set = 0, binding = 1) uniform sampler2D cloud_color;
-layout(set = 0, binding = 2) uniform sampler2D cloud_depth;
-layout(set = 0, binding = 3) uniform sampler2D depth_tex;
-// per-pixel cloud cover for transparent surfaces drawn after this pass: r = transmittance, g = front distance (km)
-layout(rgba16f, set = 0, binding = 5) uniform restrict writeonly image2D layer_img;
-layout(set = 0, binding = 4, std140) uniform Params {
-	mat4 inv_proj;
-	mat4 cam_xform;        // camera to world
-	vec4 cam_pos;          // xyz, w = time
-	vec4 sun_dir;          // xyz towards the light, w = light intensity
-	vec4 sun_color;        // rgb, w = ambient strength
-	vec4 amb_top;          // rgb sky light from above
-	vec4 amb_bottom;       // rgb light from below (ground bounce)
-	vec4 fog;              // rgb fog colour, w = fog density
-	vec4 layer;            // x base, y top, z coverage, w density
-	vec4 shape;            // x stratus (0 cumulus .. 1 stratus), y darkness, z wind x offset, w wind z offset
-	vec4 sizes;            // x half width, y half height, z full width, w full height
-	vec4 misc;             // x max distance, y frame, z primary steps, w light steps
-	mat4 prev_vp;          // last frame's view-projection, for reprojection
-	vec4 misc2;            // x history valid, y history weight, z height variation (m)
-} p;
+#include "include/clouds_params.glslinc"
 
+layout(rgba16f, set = 0, binding = 1) uniform restrict writeonly image2D overlay_img;
+layout(set = 0, binding = 2) uniform sampler2D cloud_color;
+layout(set = 0, binding = 3) uniform sampler2D cloud_depth;
+layout(set = 0, binding = 4) uniform sampler2D depth_tex;
+layout(rgba16f, set = 0, binding = 5) uniform restrict writeonly image2D layer_img;
 
 vec4 trimmed(ivec2 hp, float dist) {
 	ivec2 hsize = ivec2(p.sizes.xy);
@@ -59,32 +48,47 @@ void main() {
 		vec4 v = p.inv_proj * vec4(fuv * 2.0 - 1.0, dz, 1.0);
 		dist = length(v.xyz / v.w);
 	}
-	// cubic B-spline reconstruction over 4x4 low-resolution samples (smooth, no stair-steps or speckle),
-	// each sample trimmed against this pixel's depth first
 	vec2 hp = (vec2(px) + 0.5) * (p.sizes.xy / p.sizes.zw) - 0.5;
 	ivec2 b = ivec2(floor(hp));
 	vec2 f = hp - vec2(b);
-	vec2 f2 = f * f;
-	vec2 f3 = f2 * f;
-	vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
-	vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
-	vec2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
-	vec2 w3 = f3 / 6.0;
+	// Catmull-Rom weights
+	vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+	vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+	vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+	vec2 w3 = f * f * (-0.5 + 0.5 * f);
 	float wx[4] = float[4](w0.x, w1.x, w2.x, w3.x);
 	float wy[4] = float[4](w0.y, w1.y, w2.y, w3.y);
 	vec4 cl = vec4(0.0);
+	vec4 lo = vec4(1e9);
+	vec4 hi = vec4(-1e9);
 	for (int j = 0; j < 4; j++) {
 		for (int i = 0; i < 4; i++) {
-			cl += trimmed(b + ivec2(i - 1, j - 1), dist) * (wx[i] * wy[j]);
+			vec4 s = trimmed(b + ivec2(i - 1, j - 1), dist);
+			cl += s * (wx[i] * wy[j]);
+			if (i >= 1 && i <= 2 && j >= 1 && j <= 2) {
+				lo = min(lo, s);
+				hi = max(hi, s);
+			}
 		}
 	}
-	imageStore(overlay_img, px, vec4(cl.rgb, cl.a));
+	cl = clamp(cl, lo, hi);
+	imageStore(overlay_img, px, cl);
 	float front = 1e9;
+	float back = 0.0;
 	for (int j = 0; j < 2; j++) {
 		for (int i = 0; i < 2; i++) {
 			ivec2 q = clamp(b + ivec2(i, j), ivec2(0), ivec2(p.sizes.xy) - 1);
-			front = min(front, texelFetch(cloud_depth, q, 0).x);
+			vec2 d = texelFetch(cloud_depth, q, 0).xy;
+			if (d.x < 1e8) {
+				front = min(front, d.x);
+				back = max(back, d.y);
+			}
 		}
 	}
-	imageStore(layer_img, px, vec4(cl.a, min(front * 0.001, 60000.0), 0.0, 1.0));
+	if (front >= 1e8) {
+		front = 6e7;
+		back = 6e7;
+	}
+	back = min(back, dist);
+	imageStore(layer_img, px, vec4(cl.a, min(front * 0.001, 60000.0), min(max(back, front) * 0.001, 60000.0), 1.0));
 }

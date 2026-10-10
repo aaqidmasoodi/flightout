@@ -1,0 +1,133 @@
+// The cloud model, shared by every cloud pass (clouds_march.glsl, clouds_shadow.glsl). One definition of where the
+// clouds are and how dense, so what you see, the shadows they cast and what the simulation reads all agree.
+//
+// Frames: "scene" is the rendered frame (floating origin; far away everything sinks with the Earth's curvature, as the
+// terrain does). "true" is the map frame: map x / z (scene + origin) and the true height above sea level. The model
+// lives in the true frame; the march converts each sample (true_y = scene_y + curvature drop from the camera).
+//
+// The weather map (clouds_weather.glsl) covers the whole map without repeating: regional coverage, the cloud type,
+// the height and density field, and the cumulus clustering. The weather preset (scripts/world/sky_system.gd) sets the
+// mean coverage, type, heights and density; the map varies them across the land, by `variability`. Inside that,
+// the shape noise (128^3 Perlin-Worley and Worley octaves) makes the individual clouds and the detail noise (64^3
+// Worley) erodes their edges. Both noise volumes are mipmapped, and every sample picks its level from the size of
+// the pixel at its distance, so far clouds are filtered rather than aliased into speckle.
+
+// (the parameters: clouds_params.glslinc, included before this file)
+
+const float SHAPE_SCALE = 4800.0;      // metres per tile of the shape noise
+const float DETAIL_SCALE = 420.0;      // metres per tile of the detail noise
+const float WEATHER_SIZE = 409600.0;   // metres per tile of the weather map (1024 texels of 400 m)
+const float EXT = 0.075;               // extinction per metre per unit of density
+const float PI = 3.14159265;
+
+float remap(float v, float a, float b, float c, float d) {
+	return c + (clamp(v, a, b) - a) / max(b - a, 1e-5) * (d - c);
+}
+
+float saturate(float v) {
+	return clamp(v, 0.0, 1.0);
+}
+
+// The ground the layer stands on (scripts/world/cloud_ground.gd), true height.
+float layer_ground(vec2 map_xz) {
+	vec2 g = textureLod(ground_ref, (map_xz - p.ground_rect.xy) * p.ground_rect.zw, 0.0).rg;
+	return mix(g.r, g.g, p.ground.x);
+}
+
+// One column of the weather: where the layer is here, how much of it is cloud, and what kind.
+struct Column {
+	float base;            // true heights
+	float top;
+	float cov;             // 0..1 share of the sky that is cloud here
+	float type;            // 0 cumulus .. 0.5 stratocumulus .. 1 stratus
+	float dens;
+};
+
+Column column(vec2 map_xz) {
+	vec4 w = textureLod(weather_tex, (map_xz + p.wind.xy) / WEATHER_SIZE, 0.0);
+	float var = p.shape.z;
+	Column c;
+	c.type = saturate(p.shape.x + (w.g - 0.5) * 0.9 * var);
+	// regional coverage, then the clustering of the cumulus inside it (none for a stratus sheet)
+	float cov = p.layer.z + (w.r - 0.5) * 0.85 * var;
+	cov += (w.a - 0.5) * 0.55 * var * (1.0 - c.type);
+	c.cov = saturate(cov);
+	float g = layer_ground(map_xz);
+	float hv = (w.b - 0.5) * p.amb_bottom.w;
+	c.base = g + p.layer.x + hv;
+	// cumulus towers where they cluster, flatter cloud between; sheets keep their depth
+	float depth = max(p.layer.y - p.layer.x, 60.0);
+	float tower = mix(mix(0.55, 1.3, w.a), 1.0, c.type);
+	c.top = c.base + depth * tower + hv * 0.4 * (1.0 - c.type);
+	c.dens = p.layer.w * mix(0.85, 1.15, w.b);
+	return c;
+}
+
+// How the cloud fills the layer from base (0) to top (1), by type: cumulus with flat bases and rounded tops,
+// stratocumulus lower and lumpy, stratus a flat sheet.
+float profile(float h, float type) {
+	float cu = smoothstep(0.0, 0.06, h) * (1.0 - smoothstep(0.3, 1.0, h));
+	float sc = smoothstep(0.0, 0.1, h) * (1.0 - smoothstep(0.45, 0.95, h));
+	float st = smoothstep(0.0, 0.14, h) * (1.0 - smoothstep(0.5, 0.9, h));
+	return type < 0.5 ? mix(cu, sc, type * 2.0) : mix(sc, st, type * 2.0 - 1.0);
+}
+
+// Density at a point (true frame). lod: the shape noise level for this sample's footprint (0 sharpest); detail_amt:
+// how much the detail noise erodes the edges (0 far away). h_out: the height in the layer (0..1), for lighting.
+float density(vec3 mp, float lod, float detail_amt, out float h_out) {
+	Column c = column(mp.xz);
+	float h = (mp.y - c.base) / max(c.top - c.base, 60.0);
+	h_out = saturate(h);
+	if (h <= 0.0 || h >= 1.0 || c.cov <= 0.002) {
+		return 0.0;
+	}
+	vec3 q = vec3(mp.x + p.wind.x, mp.y, mp.z + p.wind.y) / SHAPE_SCALE;
+	vec4 s = textureLod(shape_tex, q, lod);
+	float wf = s.g * 0.625 + s.b * 0.25 + s.a * 0.125;
+	float base_shape = remap(s.r, wf - 1.0, 1.0, 0.0, 1.0);
+	float d = base_shape * profile(h, c.type);
+	// coverage (Nubis): the more cover, the more of the shape becomes cloud
+	d = remap(d, 1.0 - c.cov, 1.0, 0.0, 1.0) * c.cov;
+	if (d <= 0.0) {
+		return 0.0;
+	}
+	if (detail_amt > 0.001) {
+		vec3 dq = vec3(mp.x + p.wind.x * 1.3, mp.y, mp.z + p.wind.y * 1.3) / DETAIL_SCALE;
+		vec4 dt = textureLod(detail_tex, dq, max(lod - 1.0, 0.0));
+		float df = dt.r * 0.625 + dt.g * 0.25 + dt.b * 0.125;
+		// wispy at the base, billowing towards the top
+		float m = mix(df, 1.0 - df, saturate(h * 6.0));
+		d = remap(d, m * 0.42 * detail_amt, 1.0, 0.0, 1.0);
+	}
+	return max(d, 0.0) * c.dens;
+}
+
+// The same cloud field seen from far away (tens to hundreds of km): the expected density of the shaped clouds
+// from the weather alone, smooth (no noise to alias), so a deck reaches the horizon without speckle.
+float density_far(vec3 mp, out float h_out) {
+	Column c = column(mp.xz);
+	float h = (mp.y - c.base) / max(c.top - c.base, 60.0);
+	h_out = saturate(h);
+	if (h <= 0.0 || h >= 1.0) {
+		return 0.0;
+	}
+	float d = smoothstep(0.08, 0.95, c.cov) * c.cov * profile(h, c.type) * 0.62;
+	return d * c.dens;
+}
+
+// Phase function (Henyey-Greenstein)
+float hg(float c, float g) {
+	float g2 = g * g;
+	return (1.0 - g2) / (4.0 * PI * pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5));
+}
+
+// Mean haze density between two heights, relative to sea level (the same haze the terrain and sky use).
+float haze_mean(float y0, float y1) {
+	const float H = 2500.0;
+	y0 = max(y0, 0.0);
+	y1 = max(y1, 0.0);
+	float a = exp(-y0 / H);
+	float b = exp(-y1 / H);
+	float dy = y0 - y1;
+	return abs(dy) < 1.0 ? a : H * (b - a) / dy;
+}

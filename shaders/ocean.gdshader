@@ -32,12 +32,14 @@ float haze_mean(float y0, float y1) {
 global uniform vec2 world_origin;     // floating origin (scripts/world/world_data.gd)
 
 varying vec3 wpos;
+varying float v_main;
 
 vec2 nm(sampler2D tex, vec2 uv) {
 	return texture(tex, uv).xy * 2.0 - 1.0;
 }
 
 void vertex() {
+	v_main = all(equal(INV_VIEW_MATRIX[3].xyz, MAIN_CAM_INV_VIEW_MATRIX[3].xyz)) ? 1.0 : 0.0;
 	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }
 
@@ -78,5 +80,5 @@ void fragment() {
 		// the farthest water fades out, so the sea meets the sky's own horizon with no seam (seen from high up)
 		ALPHA *= 1.0 - smoothstep(0.6, 0.985, haze);
 	}
-	ALPHA *= cloud_visibility(SCREEN_UV, dist);
+	ALPHA *= cloud_visibility(SCREEN_UV, dist, v_main);
 }

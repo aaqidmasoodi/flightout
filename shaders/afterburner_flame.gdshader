@@ -8,8 +8,10 @@ uniform float length_m = 3.8;
 #include "res://shaders/include/cloud_cover.gdshaderinc"
 
 varying float t;
+varying float v_main;
 
 void vertex() {
+	v_main = all(equal(INV_VIEW_MATRIX[3].xyz, MAIN_CAM_INV_VIEW_MATRIX[3].xyz)) ? 1.0 : 0.0;
 	t = clamp(-VERTEX.z / length_m, 0.0, 1.0);
 }
 
@@ -22,5 +24,5 @@ void fragment() {
 	fade *= fade;
 	float facing = abs(dot(NORMAL, VIEW));
 	ALBEDO = col * fade * facing * intensity * flick * 1.8;
-	ALBEDO *= cloud_visibility(SCREEN_UV, length(VERTEX));
+	ALBEDO *= cloud_visibility(SCREEN_UV, length(VERTEX), v_main);
 }

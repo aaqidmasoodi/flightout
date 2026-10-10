@@ -50,6 +50,7 @@ global uniform vec2 world_origin;     // floating origin (scripts/world/world_da
 // atmospheric refraction (k = 0.13, R' = R / (1 - k)); 0 on the island.
 global uniform float earth_curve;
 #include "res://shaders/include/terrain_shadow.gdshaderinc"
+#include "res://shaders/include/cloud_shadow.gdshaderinc"
 
 varying vec3 wpos;
 varying vec3 wnorm;
@@ -61,6 +62,7 @@ varying float v_step;
 varying float v_h;                   // true terrain height (before the curvature drop): shading, snow line, haze
 varying flat vec2 v_morph;           // this tile's morph range (m0, m1)
 varying float v_shadow;              // 1 lit by the sun, 0 in a mountain's shadow (macro_shadow)
+varying float v_cloud;               // the clouds' shadow here, relative to the sun's own (cloud_sun_ratio)
 varying float v_wet;                 // water: sun glint (light())
 varying float v_rough;
 
@@ -161,6 +163,7 @@ vec3 cover_col(float c, float macro, float macro2, float det, float fields, floa
 void fragment() {
 	bool lt = v_lite > 0.5;
 	float h = v_h;
+	v_cloud = cloud_sun_ratio(vec3(wpos.x + world_origin.x, v_h, wpos.z + world_origin.y));
 	{
 		float hx = hfetch(v_grid + vec2(1.0, 0.0), v_layer) - hfetch(v_grid - vec2(1.0, 0.0), v_layer);
 		float hz = hfetch(v_grid + vec2(0.0, 1.0), v_layer) - hfetch(v_grid - vec2(0.0, 1.0), v_layer);
@@ -269,10 +272,11 @@ void fragment() {
 }
 
 
-// Sun and moon light with the mountains' cast shadows (v_shadow) on top of the shadow maps (ATTENUATION).
+// Sun and moon light with the mountains' cast shadows (v_shadow) and the clouds' (v_cloud) on top of the shadow
+// maps (ATTENUATION).
 // Lambert diffuse and a Blinn-Phong highlight from the roughness (glints on lakes and rivers, a sheen on snow).
 void light() {
-	float sh = LIGHT_IS_DIRECTIONAL ? v_shadow : 1.0;
+	float sh = LIGHT_IS_DIRECTIONAL ? v_shadow * v_cloud : 1.0;
 	float ndl = clamp(dot(NORMAL, LIGHT), 0.0, 1.0);
 	DIFFUSE_LIGHT += ndl * ATTENUATION * LIGHT_COLOR / PI * sh;
 	vec3 hv = normalize(LIGHT + VIEW);

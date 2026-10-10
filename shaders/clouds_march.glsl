@@ -1,121 +1,54 @@
 #[compute]
 #version 450
-// Pass 1: volumetric clouds raymarched at half resolution.
-// out_color: rgb = in-scattered light, a = transmittance.  out_depth: x = cloud start distance, y = cloud end distance
-// (1e9 when the ray meets no cloud). The composite pass uses these distances against each full-resolution pixel's
-// exact depth, so clouds behind an object can never be drawn over it.
+// Pass 1: the clouds raymarched at half (or quarter) resolution, from the shared cloud model
+// (include/clouds_common.glslinc), in three ranges along each ray:
+//   near (to ~9 km)        full shapes with the detail erosion; sunlight by a short light march plus the shadow map
+//   mid (to the march end) the shapes alone, at the noise level the pixel's footprint calls for; shadow map light
+//   far (to the horizon)   the far-field density (weather only, smooth), a few fixed samples; shadow map light
+// then the cirrus, a thin sheet high above (a real plane in the sky, so it moves with true parallax).
+// out_color: rgb in-scattered light, a transmittance. out_depth: x where the cloud starts, y where it ends, z the
+// opacity-weighted distance of the cloud (what the temporal pass reprojects at), 1e9 when there is none. The
+// composite pass trims all of it to each full-resolution pixel's own depth, so clouds behind an object never land on it.
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-layout(rgba16f, set = 0, binding = 0) uniform restrict writeonly image2D out_color;
-layout(set = 0, binding = 1) uniform sampler2D depth_tex;
-layout(set = 0, binding = 2) uniform sampler3D perlin_tex;
-layout(set = 0, binding = 3) uniform sampler3D worley_tex;
+layout(set = 0, binding = 1) uniform sampler2D ground_ref;
+layout(set = 0, binding = 2) uniform sampler2D weather_tex;
+layout(set = 0, binding = 3) uniform sampler3D shape_tex;
 layout(set = 0, binding = 4) uniform sampler3D detail_tex;
-layout(set = 0, binding = 5) uniform sampler2D weather_tex;
-layout(set = 0, binding = 6, std140) uniform Params {
-	mat4 inv_proj;
-	mat4 cam_xform;        // camera to world
-	vec4 cam_pos;          // xyz, w = time
-	vec4 sun_dir;          // xyz towards the light, w = light intensity
-	vec4 sun_color;        // rgb, w = ambient strength
-	vec4 amb_top;          // rgb sky light from above
-	vec4 amb_bottom;       // rgb light from below (ground bounce)
-	vec4 fog;              // rgb fog colour, w = fog density
-	vec4 layer;            // x base, y top, z coverage, w density
-	vec4 shape;            // x stratus (0 cumulus .. 1 stratus), y darkness, z wind x offset, w wind z offset
-	vec4 sizes;            // x half width, y half height, z full width, w full height
-	vec4 misc;             // x max distance, y frame, z primary steps, w light steps
-	mat4 prev_vp;          // last frame's view-projection, for reprojection
-	vec4 misc2;            // x history valid, y history weight, z height variation (m)
-	vec4 hor_a;            // rgb sky at the horizon towards the sun, w = sun direction x (horizontal, unit)
-	vec4 hor_b;            // rgb sky at the horizon away from the sun, w = sun direction z
-	vec4 limits;           // x most loop iterations per ray, y most in-cloud samples per ray (quality setting)
-	vec4 ground;           // x mix floor (0) .. mean (1), y lowest reference, z highest reference, w Earth curvature
-	vec4 ground_rect;      // the reference grid: x0, z0 (map metres of its corner), 1 / width, 1 / depth
-} p;
 
-layout(rg32f, set = 0, binding = 7) uniform restrict writeonly image2D out_depth;
-layout(set = 0, binding = 8) uniform sampler2D blue_noise;     // 64x64 void-and-cluster blue noise
-// the ground the layers are measured from (scripts/world/cloud_ground.gd): r floor, g mean, metres above sea level
-layout(set = 0, binding = 9) uniform sampler2D ground_ref;
+#include "include/clouds_params.glslinc"
+#include "include/clouds_common.glslinc"
+
+layout(set = 0, binding = 5) uniform sampler2D blue_noise;     // 64x64 void-and-cluster blue noise
+layout(set = 0, binding = 6) uniform sampler2D depth_tex;
+layout(set = 0, binding = 7) uniform sampler2D shadow0_tex;
+layout(set = 0, binding = 8) uniform sampler2D shadow1_tex;
+layout(rgba16f, set = 0, binding = 9) uniform restrict writeonly image2D out_color;
+layout(rgba32f, set = 0, binding = 10) uniform restrict writeonly image2D out_depth;
 
 const float NO_CLOUD = 1e9;
 
-float remap(float v, float a, float b, float c, float d) {
-	return c + (clamp(v, a, b) - a) / max(b - a, 1e-5) * (d - c);
-}
-
-float height_profile(float h) {
-	float cu = smoothstep(0.0, 0.08, h) * (1.0 - smoothstep(0.35, 1.0, h));
-	float st = smoothstep(0.0, 0.05, h) * (1.0 - smoothstep(0.55, 0.9, h));
-	return mix(cu, st, p.shape.x);
-}
-
-// Where the layer stands at a map position: the regional ground (floor .. mean), lowered by the Earth's curvature
-// seen from the camera (the terrain sinks the same way, so far decks stay on the far mountains).
-float layer_ground(vec2 map_xz) {
-	vec2 g = textureLod(ground_ref, (map_xz - p.ground_rect.xy) * p.ground_rect.zw, 0.0).rg;
-	vec2 dc = map_xz - (p.cam_pos.xz + vec2(p.amb_bottom.w, p.misc2.w));
-	return mix(g.r, g.g, p.ground.x) - dot(dc, dc) * p.ground.w;
-}
-
-float cloud_density(vec3 pos, bool cheap, float detail_amt) {
-	pos.xz += vec2(p.amb_bottom.w, p.misc2.w);    // floating origin: sample the clouds at their map position
-	vec2 wind = p.shape.zw;
-	float hv = texture(weather_tex, (pos.xz + wind) / 9000.0 + vec2(0.37, 0.11)).r - 0.5;
-	float tv = texture(weather_tex, (pos.xz + wind) / 4200.0 + vec2(0.71, 0.53)).r - 0.5;
-	float g0 = layer_ground(pos.xz);
-	float base = g0 + p.layer.x + hv * p.misc2.z;
-	float top = g0 + p.layer.y + hv * p.misc2.z * 0.7 + tv * p.misc2.z * 1.6 * (1.0 - p.shape.x * 0.7);
-	float h = (pos.y - base) / max(top - base, 50.0);
-	if (h <= 0.0 || h >= 1.0) {
-		return 0.0;
+// Optical depth of the cloud above a point (true frame), towards the sun, from the shadow map.
+float shadow_od(vec3 mp, vec3 L) {
+	float ly = max(L.y, 0.06);
+	vec2 q = mp.xz + L.xz * (p.cirrus.w - mp.y) / ly;
+	vec2 uv0 = (q - p.shadow0.xy) / (2.0 * p.shadow0.z) + 0.5;
+	vec2 uv1 = (q - p.shadow1.xy) / (2.0 * p.shadow1.z) + 0.5;
+	float od1 = 0.0;
+	if (all(greaterThan(uv1, vec2(0.0))) && all(lessThan(uv1, vec2(1.0)))) {
+		vec4 v = textureLod(shadow1_tex, uv1, 0.0);
+		od1 = v.x * (1.0 - saturate((mp.y - v.y) / max(v.z - v.y, 1.0)));
 	}
-	float weather = texture(weather_tex, (pos.xz + wind) / 26000.0).r;
-	weather = mix(weather, 1.0, p.shape.x * 0.6);
-	float cov = clamp(p.layer.z * 1.18, 0.0, 1.0);
-	vec3 q = (pos + vec3(wind.x, 0.0, wind.y)) / 5200.0;
-	float pn = texture(perlin_tex, q).r;
-	float wn = texture(worley_tex, q * 1.7).r;
-	float base_shape = remap(pn * 0.55 + wn * 0.6, 0.18, 1.0, 0.0, 1.0);
-	float d = base_shape * height_profile(h);
-	d = remap(d, 1.0 - cov * mix(0.6, 1.05, weather), 1.0, 0.0, 1.0);
-	d *= mix(0.25, 1.0, weather);
-	if (d <= 0.0) {
-		return 0.0;
+	// cascade 0, fading into cascade 1 over its outer tenth
+	vec2 e = abs(uv0 - 0.5) * 2.0;
+	float w0 = 1.0 - smoothstep(0.85, 0.98, max(e.x, e.y));
+	if (w0 <= 0.0) {
+		return od1;
 	}
-	if (!cheap && detail_amt > 0.0) {
-		float det = texture(detail_tex, (pos + vec3(wind.x * 1.4, 0.0, wind.y * 1.4)) / 620.0).r;
-		float erode = mix(det, 1.0 - det, clamp(h * 4.0, 0.0, 1.0));
-		d = remap(d, erode * 0.45 * detail_amt, 1.0, 0.0, 1.0);
-	}
-	return max(d, 0.0) * p.layer.w;
-}
-
-// Mean haze density between two heights, relative to sea level: haze lives in the lowest few km, so from high up
-// the cloud deck stays crisp to the horizon instead of dissolving into fog.
-float haze_mean(float y0, float y1) {
-	const float H = 2500.0;
-	y0 = max(y0, 0.0);
-	y1 = max(y1, 0.0);
-	float a = exp(-y0 / H);
-	float b = exp(-y1 / H);
-	float dy = y0 - y1;
-	return abs(dy) < 1.0 ? a : H * (b - a) / dy;
-}
-
-float hg(float c, float g) {
-	float g2 = g * g;
-	return (1.0 - g2) / (4.0 * 3.14159265 * pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5));
-}
-
-float white(uvec2 px) {
-	uint v = px.x * 1973u + px.y * 9277u + 26699u;
-	v = v * 747796405u + 2891336453u;
-	uint w = ((v >> ((v >> 28u) + 4u)) ^ v) * 277803737u;
-	w = (w >> 22u) ^ w;
-	return float(w) / 4294967295.0;
+	vec4 v = textureLod(shadow0_tex, uv0, 0.0);
+	float od0 = v.x * (1.0 - saturate((mp.y - v.y) / max(v.z - v.y, 1.0)));
+	return mix(od1, od0, w0);
 }
 
 // distance to the scene for a full-resolution texel (reverse-Z: 0 = sky)
@@ -129,6 +62,49 @@ float scene_distance(ivec2 fpx) {
 	return length(v.xyz / v.w);
 }
 
+// sunlight reaching a sample, through the cloud towards the sun (optical depth od), with the multiple scattering
+// that lights a cloud from inside (Wrenninge's octaves: each scatters wider and reaches deeper)
+float sun_light(float od, float cos_t, float dens) {
+	float s = 0.0;
+	float a = 1.0;
+	float b = 1.0;
+	float c = 1.0;
+	for (int o = 0; o < 3; o++) {
+		float ph = mix(hg(cos_t, 0.6 * c), hg(cos_t, -0.25 * c), 0.3) * 4.0 * PI;
+		s += a * mix(1.0, ph, 0.85) * exp(-od * b);
+		a *= 0.5;
+		b *= 0.45;
+		c *= 0.5;
+	}
+	float powder = 1.0 - exp(-dens * EXT * 140.0);
+	return s * mix(0.45, 1.0, powder);
+}
+
+// light from the jets' own lamps (afterburners, landing lights) scattered by cloud near them
+vec3 local_light(vec3 sp) {
+	vec3 sum = vec3(0.0);
+	int n = int(p.lights_n.x);
+	for (int i = 0; i < 4; i++) {
+		if (i >= n) {
+			break;
+		}
+		vec3 d = sp - p.light_pos[i].xyz;
+		float r2 = dot(d, d);
+		float R = p.light_pos[i].w;
+		if (r2 > R * R) {
+			continue;
+		}
+		float win = 1.0 - r2 / (R * R);
+		float k = win * win / (1.0 + r2 * 0.02);
+		if (p.light_col[i].w > -1.5) {
+			float c = dot(normalize(d), p.light_dir[i].xyz);
+			k *= smoothstep(p.light_col[i].w, mix(p.light_col[i].w, 1.0, 0.35), c);
+		}
+		sum += p.light_col[i].rgb * k;
+	}
+	return sum * (1.0 / (4.0 * PI));
+}
+
 void main() {
 	ivec2 px = ivec2(gl_GlobalInvocationID.xy);
 	ivec2 hsize = ivec2(p.sizes.xy);
@@ -136,8 +112,8 @@ void main() {
 		return;
 	}
 	vec2 uv = (vec2(px) + 0.5) / vec2(hsize);
-	// march as far as the farthest of the full-resolution pixels this texel covers (2x2, or the corners of 4x4); the
-	// composite trims it back per pixel, so the background beside an object still gets its clouds
+	// march as far as the farthest of the full-resolution pixels this texel covers; the composite trims it back per
+	// pixel, so the background beside an object still gets its clouds
 	int r = int(p.sizes.z / p.sizes.x + 0.5);
 	ivec2 f0 = px * r;
 	ivec2 fmax = ivec2(p.sizes.zw) - 1;
@@ -146,154 +122,236 @@ void main() {
 	vec4 vfar = p.inv_proj * vec4(uv * 2.0 - 1.0, 0.5, 1.0);
 	vec3 ro = p.cam_pos.xyz;
 	vec3 rd = normalize(mat3(p.cam_xform) * normalize(vfar.xyz / vfar.w));
-	// above the layer (here, over the ground below the camera) the deck stretches to the horizon, hundreds of km
-	// away: march it that far (steps grow with distance, and aerial perspective fades it into the haze), so it never
-	// ends in a circle around the camera
-	float g_cam = layer_ground(p.cam_pos.xz + vec2(p.amb_bottom.w, p.misc2.w));
-	float reach = p.misc.x;
-	if (ro.y > g_cam + p.layer.y + p.misc2.z * 1.2) {
-		reach = max(reach, min(p.misc.x + (ro.y - (g_cam + p.layer.y)) * 40.0, 450000.0));
-	}
-	// the slab any layer sample can lie in: from the lowest ground reference (less the curvature drop at the far end
-	// of the ray) to the highest
-	float base = p.ground.y + p.layer.x - p.misc2.z * 0.5 - reach * reach * p.ground.w;
-	float top = p.ground.z + p.layer.y + p.misc2.z * 1.2;
+	vec2 omap = p.origin.xy;
+	float curve = p.ground.w;
+	float reach = p.ranges.z;
+	// the slab any cloud can lie in (scene frame): from the lowest base (less the curvature drop at the far end of the
+	// ray) to the highest top
+	float sb = p.cirrus.w - reach * reach * curve;
+	float st = p.lights_n.y;
 	float t0, t1;
 	if (abs(rd.y) < 1e-4) {
-		t0 = (ro.y < base || ro.y > top) ? 1.0 : 0.0;
-		t1 = (ro.y < base || ro.y > top) ? 0.0 : reach;
+		t0 = (ro.y < sb || ro.y > st) ? 1.0 : 0.0;
+		t1 = (ro.y < sb || ro.y > st) ? 0.0 : reach;
 	} else {
-		float ta = (base - ro.y) / rd.y;
-		float tb = (top - ro.y) / rd.y;
+		float ta = (sb - ro.y) / rd.y;
+		float tb = (st - ro.y) / rd.y;
 		t0 = max(min(ta, tb), 0.0);
-		t1 = max(ta, tb);
+		t1 = min(max(ta, tb), reach);
 	}
 	// Objects nearer than the clouds (the jet, nearby scenery) do not stop the march: the composite trims each
-	// pixel to its own depth anyway, and marching through them keeps the cloud image continuous, so when the jet
-	// moves or rolls the history it uncovers is real cloud, not a jet-shaped hole that smears into streaks.
+	// pixel to its own depth anyway, and marching through them keeps the cloud image continuous
 	float max_dist = (scene_dist < max(t0, 300.0)) ? reach : min(scene_dist, reach);
 	t1 = min(t1, max_dist);
-	if (p.limits.z > 0.5 && p.limits.z < 1.5) {
+	if (p.ranges.w > 0.5 && p.ranges.w < 1.5) {
 		// debug 1: red where the ray crosses the cloud slab (brightness: how long), blue where it does not
 		float seg_dbg = max(t1 - t0, 0.0);
 		imageStore(out_color, px, seg_dbg > 0.0 ? vec4(clamp(seg_dbg / 20000.0, 0.05, 1.0), 0.0, 0.0, 0.0) : vec4(0.0, 0.0, 0.5, 0.0));
-		imageStore(out_depth, px, vec4(100.0, 200.0, 0.0, 0.0));
-		return;
-	}
-	if (t1 <= t0 || p.layer.z <= 0.001) {
-		imageStore(out_color, px, vec4(0.0, 0.0, 0.0, 1.0));
-		imageStore(out_depth, px, vec4(NO_CLOUD, NO_CLOUD, 0.0, 0.0));
+		imageStore(out_depth, px, vec4(100.0, 200.0, 150.0, 0.0));
 		return;
 	}
 
-	int steps = int(p.misc.z);
-	float seg = t1 - t0;
-	float dt = clamp(seg / float(steps), 25.0, 380.0);
-	// blue-noise offset per pixel (evenly spread, no visible pattern), advanced each frame by the golden ratio
-	float jitter = fract(texelFetch(blue_noise, px % 64, 0).r + p.misc.y * 0.61803398875);
-	float t = t0 + dt * jitter;
 	vec3 L = normalize(p.sun_dir.xyz);
 	float cos_t = dot(rd, L);
 	vec3 S = vec3(0.0);
 	float T = 1.0;
 	float first = NO_CLOUD;
 	float last = NO_CLOUD;
-	float ext_k = 0.075;
-	int light_steps = int(p.misc.w);
-	// adaptive stepping (Nubis): large cheap steps through empty air; on touching cloud, step back and march it in
-	// small steps, so thin clouds can never fall between two samples (the source of hit-or-miss noise)
-	int fine_left = 0;
-	int expensive = 0;
-	float last_step = dt;
-	int max_iter = int(p.limits.x);
-	int max_dense = int(p.limits.y);
-	for (int i = 0; i < max_iter; i++) {
-		if (t > t1 || T < 0.01 || expensive >= max_dense) {
-			break;
-		}
-		float big = dt * (1.0 + t / 7000.0);
-		// fine steps near the camera; far away the clouds are small on screen and the resolve hides the rest
-		float fine = clamp(big * 0.35, 30.0, 160.0) * (1.0 + t / 9000.0);
-		vec3 pos = ro + rd * t;
-		float cheap = cloud_density(pos, true, 0.0);
-		if (fine_left == 0) {
-			if (cheap > 0.0 && t - big > t0 - 1.0) {
-				t = max(t - big, t0);       // step back to the last empty sample, then walk in finely
-				fine_left = 6;
+	float wsum = 0.0;
+	float wdist = 0.0;
+	float jitter = fract(texelFetch(blue_noise, px % 64, 0).r + p.origin.z * 0.61803398875);
+	// the horizon colour in this direction (aerial perspective: far clouds melt into it like the sky behind them)
+	vec2 dh = normalize(rd.xz + vec2(1e-5));
+	float toward = pow(clamp(dot(dh, vec2(p.hor_a.w, p.hor_b.w)) * 0.5 + 0.5, 0.0, 1.0), 3.0);
+	vec3 fc = mix(p.hor_b.rgb, p.hor_a.rgb, toward);
+	float pix = p.cirrus.z;                 // radians per march pixel
+	float shape_texel = SHAPE_SCALE / 128.0;
+	float near_end = p.ranges.x;
+	float march_end = min(p.ranges.y, t1);
+
+	if (t1 > t0 && p.layer.z > 0.001) {
+		// ---- near and mid: adaptive march (Nubis): large cheap steps through clear air; on touching cloud, step
+		// back and walk it in small steps, so thin clouds never fall between two samples ----
+		int steps = int(p.steps.x);
+		float seg = max(march_end - t0, 0.0);
+		float dt = clamp(seg / float(steps), 25.0, 380.0);
+		float t = t0 + dt * jitter;
+		int fine_left = 0;
+		int expensive = 0;
+		float last_step = dt;
+		int max_iter = int(p.steps.z);
+		int max_dense = int(p.steps.w);
+		int light_steps = int(p.steps.y);
+		for (int i = 0; i < max_iter; i++) {
+			if (t > march_end || T < 0.01 || expensive >= max_dense) {
+				break;
+			}
+			float big = dt * (1.0 + t / 7000.0);
+			float fine = clamp(big * 0.35, 30.0, 160.0) * (1.0 + t / 9000.0);
+			vec3 sp = ro + rd * t;
+			vec2 dc = sp.xz - ro.xz;
+			vec3 mp = vec3(sp.x + omap.x, sp.y + dot(dc, dc) * curve, sp.z + omap.y);
+			// the noise level for this sample's footprint (a pixel's width at this distance)
+			float lod = max(log2(max(t * pix, 1.0) / shape_texel) + 0.5, 0.0);
+			float hh;
+			float cheap = density(mp, lod + 1.0, 0.0, hh);
+			if (fine_left == 0) {
+				if (cheap > 0.0 && t - big > t0 - 1.0) {
+					t = max(t - big, t0);       // step back to the last empty sample, then walk in finely
+					fine_left = 6;
+					continue;
+				}
+				if (cheap > 0.0) {
+					fine_left = 6;
+				} else {
+					t += big;
+					continue;
+				}
+			}
+			float step_here = fine;
+			last_step = step_here;
+			if (cheap <= 0.0) {
+				fine_left--;
+				t += step_here;
 				continue;
 			}
-			if (cheap > 0.0) {
-				fine_left = 6;
-			} else {
-				t += big;
-				continue;
+			fine_left = 6;
+			expensive++;
+			float detail_amt = 1.0 - smoothstep(near_end * 0.55, near_end, t);
+			float hgt;
+			float dens = density(mp, lod, detail_amt, hgt);
+			// approaching the end of the march, hand over to the far field smoothly
+			float far_k = smoothstep(p.ranges.y * 0.7, p.ranges.y, t);
+			if (far_k > 0.0) {
+				float hf;
+				dens = mix(dens, density_far(mp, hf), far_k);
 			}
-		}
-		float step_here = fine;
-		last_step = step_here;
-		if (cheap <= 0.0) {
-			fine_left--;
+			if (dens > 0.0) {
+				if (first >= NO_CLOUD) {
+					first = t;
+				}
+				last = t;
+				// sunlight: a short march towards the sun near the camera (sharp self-shadowing in the detail), then
+				// the shadow map for the rest of the way up
+				float od = 0.0;
+				float reach_l = 0.0;
+				if (t < near_end) {
+					float ls = 60.0;
+					for (int j = 0; j < light_steps; j++) {
+						float hl;
+						od += density(mp + L * (reach_l + ls * 0.5), lod + 1.0, 0.0, hl) * EXT * ls;
+						reach_l += ls;
+						ls *= 2.0;
+					}
+				}
+				od += shadow_od(mp + L * reach_l, L);
+				float sl = sun_light(od, cos_t, dens);
+				float self_occ = exp(-dens * 1.4);
+				vec3 amb = mix(p.amb_bottom.rgb, p.amb_top.rgb, hgt) * p.sun_color.w * mix(0.55, 1.0, self_occ);
+				vec3 lum = p.sun_color.rgb * p.sun_dir.w * sl + amb;
+				lum *= 1.0 - p.shape.y * (1.0 - hgt * 0.6);
+				if (t < 600.0) {
+					lum += local_light(sp);
+				}
+				// aerial perspective for this sample
+				float f = 1.0 - exp(-p.fog.w * t * haze_mean(ro.y, sp.y));
+				lum = mix(lum, fc, f);
+				float sigma = max(dens * EXT, 1e-6);
+				float tr = exp(-sigma * step_here);
+				float a = T * (1.0 - tr);
+				S += a * lum;
+				wsum += a;
+				wdist += a * t;
+				T *= tr;
+			}
 			t += step_here;
-			continue;
 		}
-		fine_left = 6;
-		expensive++;
-		float detail_amt = 1.0 - smoothstep(4000.0, 12000.0, t);
-		float dens = cloud_density(pos, false, detail_amt);
-		if (dens > 0.0) {
-			if (first >= NO_CLOUD) {
-				first = t;
+		// ---- far: the far-field density to the horizon, a few samples spaced geometrically ----
+		float fa = max(march_end, t0);
+		if (t1 > fa + 1.0 && T > 0.01) {
+			const int NF = 14;
+			float ratio = t1 / max(fa, 100.0);
+			float prev = fa;
+			for (int i = 0; i < NF; i++) {
+				float tn = max(fa, 100.0) * pow(ratio, (float(i) + 1.0) / float(NF));
+				float tm = mix(prev, tn, jitter);
+				float ds = tn - prev;
+				prev = tn;
+				vec3 sp = ro + rd * tm;
+				vec2 dc = sp.xz - ro.xz;
+				vec3 mp = vec3(sp.x + omap.x, sp.y + dot(dc, dc) * curve, sp.z + omap.y);
+				float hgt;
+				float dens = density_far(mp, hgt);
+				if (dens <= 0.0) {
+					continue;
+				}
+				if (first >= NO_CLOUD) {
+					first = tm;
+				}
+				last = tm;
+				float od = shadow_od(mp, L);
+				float sl = sun_light(od, cos_t, dens);
+				vec3 amb = mix(p.amb_bottom.rgb, p.amb_top.rgb, hgt) * p.sun_color.w;
+				vec3 lum = p.sun_color.rgb * p.sun_dir.w * sl + amb;
+				lum *= 1.0 - p.shape.y * (1.0 - hgt * 0.6);
+				float f = 1.0 - exp(-p.fog.w * tm * haze_mean(ro.y, sp.y));
+				lum = mix(lum, fc, f);
+				float tr = exp(-dens * EXT * ds);
+				float a = T * (1.0 - tr);
+				S += a * lum;
+				wsum += a;
+				wdist += a * tm;
+				T *= tr;
+				if (T < 0.01) {
+					break;
+				}
+				if (tn >= t1) {
+					break;
+				}
 			}
-			last = t;
-			float od = 0.0;
-			float ls = 70.0;
-			for (int j = 0; j < light_steps; j++) {
-				vec3 lp = pos + L * (ls * (float(j) + 0.5));
-				od += cloud_density(lp, j > 0, detail_amt) * ls;
-				ls *= 2.1;
-			}
-			float gl = layer_ground(pos.xz + vec2(p.amb_bottom.w, p.misc2.w));
-			float hgt = clamp((pos.y - gl - p.layer.x) / (p.layer.y - p.layer.x), 0.0, 1.0);
-			float powder = 1.0 - exp(-dens * ext_k * 140.0);
-			float sun_light = 0.0;
-			float oa = 1.0;
-			float ob = 1.0;
-			float oc = 1.0;
-			for (int o = 0; o < 3; o++) {
-				float ph = mix(hg(cos_t, 0.6 * oc), hg(cos_t, -0.25 * oc), 0.3) * 4.0 * 3.14159265;
-				sun_light += oa * mix(1.0, ph, 0.85) * exp(-od * ext_k * ob);
-				oa *= 0.5;
-				ob *= 0.45;
-				oc *= 0.5;
-			}
-			sun_light *= mix(0.45, 1.0, powder);
-			float self_occ = exp(-dens * 1.4);
-			vec3 amb = mix(p.amb_bottom.rgb, p.amb_top.rgb, hgt) * p.sun_color.w * mix(0.55, 1.0, self_occ);
-			vec3 lum = p.sun_color.rgb * p.sun_dir.w * sun_light + amb;
-			lum *= 1.0 - p.shape.y * (1.0 - hgt * 0.6);
-			float sigma = max(dens * ext_k, 1e-6);
-			float tr = exp(-sigma * step_here);
-			S += T * lum * (1.0 - tr);
-			T *= tr;
 		}
-		t += step_here;
 	}
-	if (first < NO_CLOUD) {
-		// aerial perspective: fade towards the sky's own horizon colour in this direction, so far clouds melt into
-		// the horizon exactly like the sky behind them
-		float y_cloud = ro.y + rd.y * first;
-		float f = 1.0 - exp(-p.fog.w * first * haze_mean(ro.y, y_cloud));
-		vec2 dh = normalize(rd.xz + vec2(1e-5));
-		float toward = pow(clamp(dot(dh, vec2(p.hor_a.w, p.hor_b.w)) * 0.5 + 0.5, 0.0, 1.0), 3.0);
-		vec3 fc = mix(p.hor_b.rgb, p.hor_a.rgb, toward);
-		S = mix(S, fc * (1.0 - T), f);
+
+	// ---- cirrus: a thin sheet high above, a real plane (true parallax), behind everything else ----
+	if (p.cirrus.y > 0.002 && T > 0.01 && abs(rd.y) > 1e-4) {
+		float yc = p.cirrus.x;
+		float tc = (yc - ro.y) / rd.y;
+		if (tc > 0.0 && tc < 300000.0) {
+			float yc2 = yc - tc * tc * curve * (1.0 - rd.y * rd.y);    // the sheet sinks with distance too
+			tc = (yc2 - ro.y) / rd.y;
+		}
+		if (tc > 0.0 && tc < 300000.0 && tc < scene_dist) {
+			vec3 sp = ro + rd * tc;
+			vec2 m = sp.xz + omap + p.wind.xy * 2.2;
+			float lod = max(log2(max(tc * pix, 1.0) / (60000.0 / 128.0)), 0.0);
+			// streaks stretched along one direction, broken by the shape noise; where the weather allows
+			float reg = textureLod(weather_tex, m / 180000.0 + 0.31, 0.0).g;
+			vec4 nz = textureLod(shape_tex, vec3(m.x / 60000.0, 0.37, m.y / 18000.0), lod);
+			float c = smoothstep(1.0 - p.cirrus.y, 1.0 - p.cirrus.y + 0.45, nz.r * 0.7 + reg * 0.5 - nz.b * 0.25);
+			float a = c * 0.55 * smoothstep(0.0, 0.04, abs(rd.y));
+			if (a > 0.001) {
+				vec3 lum = p.sun_color.rgb * p.sun_dir.w * mix(1.0, hg(cos_t, 0.7) * 4.0 * PI, 0.6) * 0.8 + p.amb_top.rgb * p.sun_color.w;
+				float f = 1.0 - exp(-p.fog.w * tc * haze_mean(ro.y, sp.y));
+				lum = mix(lum, fc, f);
+				S += T * a * lum;
+				wsum += T * a;
+				wdist += T * a * tc;
+				if (first >= NO_CLOUD) {
+					first = tc;
+				}
+				last = max(last < NO_CLOUD ? last : tc, tc);
+				T *= 1.0 - a;
+			}
+		}
 	}
-	if (p.limits.z > 1.5) {
+
+	if (p.ranges.w > 1.5) {
 		// debug 2: green where the march found cloud (brightness: opacity), red where it marched and found none
 		imageStore(out_color, px, first < NO_CLOUD ? vec4(0.0, 1.0 - T, 0.0, 0.0) : vec4(0.3, 0.0, 0.0, 0.0));
-		imageStore(out_depth, px, vec4(100.0, 200.0, 0.0, 0.0));
+		imageStore(out_depth, px, vec4(100.0, 200.0, 150.0, 0.0));
 		return;
 	}
+	float wd = wsum > 1e-4 ? wdist / wsum : NO_CLOUD;
 	imageStore(out_color, px, vec4(S, T));
-	imageStore(out_depth, px, vec4(first, last + last_step, 0.0, 0.0));
+	imageStore(out_depth, px, vec4(first, last < NO_CLOUD ? last + 60.0 : NO_CLOUD, wd, 0.0));
 }

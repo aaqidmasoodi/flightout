@@ -1,0 +1,31 @@
+// The parameters every cloud pass shares (scripts/world/volumetric_clouds.gd fills them once a frame).
+
+layout(set = 0, binding = 0, std140) uniform Params {
+	mat4 inv_proj;
+	mat4 cam_xform;        // camera to scene
+	mat4 prev_vp;          // last frame's view-projection, for reprojection
+	vec4 cam_pos;          // xyz scene, w time
+	vec4 origin;           // xy floating origin (map = scene + origin, on x / z), z frame, w history valid
+	vec4 sun_dir;          // xyz towards the light, w light intensity
+	vec4 sun_color;        // rgb, w ambient strength
+	vec4 amb_top;          // rgb sky light from above, w history weight
+	vec4 amb_bottom;       // rgb light from below (the ground), w height variation (m)
+	vec4 fog;              // rgb haze colour, w sea-level haze density
+	vec4 layer;            // x base, y top (m above the region's ground), z coverage, w density
+	vec4 shape;            // x type (0 cumulus .. 1 stratus), y darkness, z variability across the map, w cirrus cover
+	vec4 wind;             // xy map offset of the drifting clouds (m), zw how far they moved since last frame
+	vec4 sizes;            // x, y march resolution, z, w full resolution
+	vec4 steps;            // x primary steps, y light steps, z most loop iterations, w most in-cloud samples
+	vec4 hor_a;            // rgb sky at the horizon towards the sun, w sun direction x (horizontal, unit)
+	vec4 hor_b;            // rgb sky at the horizon away from the sun, w sun direction z
+	vec4 ground;           // x mix floor (0) .. mean (1), y lowest reference, z highest reference, w Earth curvature
+	vec4 ground_rect;      // the ground reference grid: x0, z0 (map metres of its corner), 1 / width, 1 / depth
+	vec4 shadow0;          // shadow cascade 0: xy centre (map), z half extent (m), w resolution
+	vec4 shadow1;          // shadow cascade 1
+	vec4 ranges;           // x end of the detail (m), y end of the full march, z far reach, w debug view
+	vec4 cirrus;           // x height (m above sea level), y cover, z pixel angle (rad, for the noise level), w slab bottom
+	vec4 lights_n;         // x number of local lights (the jets' afterburners and landing lights), y slab top (true)
+	vec4 light_pos[4];     // xyz scene, w range
+	vec4 light_col[4];     // rgb colour times energy, w cos of the spot's half angle (-2 for an omni light)
+	vec4 light_dir[4];     // xyz the spot's direction
+} p;

@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://cnwjunhnupah0"
+path="res://.godot/imported/clouds_mip.glsl-9c0924d778d3eb3503a136b32aa8f5be.res"
+
+[deps]
+
+source_file="res://shaders/clouds_mip.glsl"
+dest_files=["res://.godot/imported/clouds_mip.glsl-9c0924d778d3eb3503a136b32aa8f5be.res"]
+
+[params]
+

@@ -29,11 +29,14 @@ float haze_mean(float y0, float y1) {
 	return abs(dy) < 1.0 ? a : H * (b - a) / dy;
 }
 global uniform float earth_curve;
+#include "res://shaders/include/cloud_cover.gdshaderinc"
 global uniform vec3 sun_dir;
 
 varying vec4 v_col;
+varying float v_main;
 
 void vertex() {
+	v_main = all(equal(INV_VIEW_MATRIX[3].xyz, MAIN_CAM_INV_VIEW_MATRIX[3].xyz)) ? 1.0 : 0.0;
 	vec3 c = MODEL_MATRIX[3].xyz;                         // the fixture (scene coordinates)
 	vec2 dc = c.xz - CAMERA_POSITION_WORLD.xz;
 	c.y -= dot(dc, dc) * earth_curve;
@@ -65,6 +68,7 @@ void fragment() {
 	if (a < 0.002) {
 		discard;
 	}
-	ALBEDO = v_col.rgb * a;
+	// hidden by the cloud in front of it (and dimmed inside a cloud)
+	ALBEDO = v_col.rgb * a * cloud_visibility(SCREEN_UV, length(VERTEX), v_main);
 	ALPHA = a;
 }

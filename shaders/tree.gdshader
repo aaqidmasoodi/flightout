@@ -16,8 +16,9 @@ float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.545
 global uniform vec2 world_origin;     // floating origin (scripts/world/world_data.gd)
 global uniform float earth_curve;     // drawn curvature of the Earth (see terrain_cdlod.gdshader)
 #include "res://shaders/include/terrain_shadow.gdshaderinc"
+#include "res://shaders/include/cloud_shadow.gdshaderinc"
 
-varying float v_sun;                  // 0 in a mountain's shadow
+varying float v_sun;                  // the sun here: 0 in a mountain's shadow, dimmed under a cloud's
 
 void vertex() {
 	vec3 origin = MODEL_MATRIX[3].xyz;
@@ -44,13 +45,21 @@ void vertex() {
 		// sink with the ground under it (the curvature drop, in the tree's own scale)
 		vec2 dc = origin.xz - CAMERA_POSITION_WORLD.xz;
 		VERTEX.y -= dot(dc, dc) * earth_curve / max(length(MODEL_MATRIX[1].xyz), 0.01);
-		v_sun = macro_shadow_lite(vec3(mo.x, origin.y, mo.y));
+		v_sun = macro_shadow_lite(vec3(mo.x, origin.y, mo.y)) * cloud_sun_ratio(vec3(mo.x, origin.y, mo.y));
 	}
 }
 
 void fragment() {
-	// in a mountain's shadow only the sky lights the tree (an approximation: the trees keep the engine's own lighting)
-	ALBEDO = COLOR.rgb * mix(0.5, 1.0, v_sun);
+	ALBEDO = COLOR.rgb;
 	ROUGHNESS = 1.0;
-	BACKLIGHT = vec3(0.08, 0.12, 0.04);
+}
+
+// Sunlight on the foliage (wrapped: leaves are lit a little past their edge) and through it, with the mountains'
+// and the clouds' shadows (v_sun); in shadow only the sky lights the tree.
+void light() {
+	float sh = LIGHT_IS_DIRECTIONAL ? v_sun : 1.0;
+	float ndl = dot(NORMAL, LIGHT);
+	float wrap = clamp((ndl + 0.3) / 1.3, 0.0, 1.0);
+	float through = clamp(-ndl, 0.0, 1.0) * 0.3;
+	DIFFUSE_LIGHT += (wrap + through * vec3(0.55, 0.85, 0.35)) * ATTENUATION * LIGHT_COLOR / PI * sh;
 }

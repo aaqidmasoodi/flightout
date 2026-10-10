@@ -11,7 +11,7 @@ extends MeshInstance3D
 ##
 ## Make one with Trail.attach(anchor, local_offset, preset, intensity_fn); presets are dictionaries:
 ##   lifetime (s), sample (s between stored points), width (m), growth (m/s), fade_in (s), color, opacity, wisp
-##   (0 smooth .. 1 broken up), self_lit (extra daylight brightness, so white smoke reads white against the sky)
+##   (0 smooth .. 1 broken up), self_lit (light scattered more than once inside: dense smoke's far side is not dark)
 
 const SHADER := preload("res://shaders/trail.gdshader")
 const SUB := 2                                  # spline steps per stored point

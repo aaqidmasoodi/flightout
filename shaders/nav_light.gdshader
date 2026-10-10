@@ -26,9 +26,13 @@ float haze_mean(float y0, float y1) {
 	return abs(dy) < 1.0 ? a : H * (b - a) / dy;
 }
 
+#include "res://shaders/include/cloud_cover.gdshaderinc"
+
 varying float v_k;
+varying float v_main;
 
 void vertex() {
+	v_main = all(equal(INV_VIEW_MATRIX[3].xyz, MAIN_CAM_INV_VIEW_MATRIX[3].xyz)) ? 1.0 : 0.0;
 	vec3 c = (MODEL_MATRIX * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
 	float d = max(length(CAMERA_POSITION_WORLD - c), 0.05);
 	float m_per_px = 2.0 * d / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
@@ -47,6 +51,6 @@ void vertex() {
 
 void fragment() {
 	float a = texture(glow, UV).a;
-	ALBEDO = color * v_k * a;
+	ALBEDO = color * v_k * a * cloud_visibility(SCREEN_UV, length(VERTEX), v_main);
 	ALPHA = a;
 }

@@ -6,6 +6,7 @@ extends Node
 const AB_THRESHOLD := 0.85
 const COCKPIT_LAYER := 1 << 19          # the cockpit interior's visual layer (scripts/aircraft/cockpit.gd)
 const FLAME_SHADER := preload("res://shaders/afterburner_flame.gdshader")
+const VolumetricClouds = preload("res://scripts/world/volumetric_clouds.gd")
 
 var aircraft: Node3D
 var model: Node3D
@@ -85,6 +86,7 @@ func setup(ac: Node3D, mdl: Node3D) -> void:
 			spot.distance_fade_length = 300.0
 			lamp.add_child(spot)
 			_landing.append(spot)
+			VolumetricClouds.register_lamp(spot)     # the beam lights the cloud it shines into
 
 	for n in ["Afterburner_L", "Afterburner_R"]:
 		var g := model.find_child(n, true, false) as MeshInstance3D
@@ -128,6 +130,7 @@ func setup(ac: Node3D, mdl: Node3D) -> void:
 		_ab_light.position = c + Vector3(0.0, 0.0, 2.5)        # a little behind the nozzles, in the flame
 		_ab_light.visible = false
 		ac.add_child(_ab_light)
+		VolumetricClouds.register_lamp(_ab_light)    # the glow lights the cloud around the jet
 	_flame_mat = ShaderMaterial.new()
 	_flame_mat.shader = FLAME_SHADER
 	for n in ["AfterburnerFlame_L", "AfterburnerFlame_R"]:
