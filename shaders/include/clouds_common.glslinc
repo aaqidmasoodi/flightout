@@ -98,9 +98,10 @@ float density_in(vec3 mp, Column c, float lod, float detail_amt, out float h_out
 	vec2 qx = vec2(mp.x + p.wind.x, mp.z + p.wind.y) / SHAPE_SCALE;
 	qx = mat2(vec2(0.866, 0.5), vec2(-0.5, 0.866)) * qx + c.warp;
 	// bent by a slow warp of its own (a few km): the noise's cells sit on a grid, and unbent, rows of cumulus lined up
-	vec2 wq = qx * 0.31 + 0.13;
-	vec2 wv = textureLod(shape_tex, vec3(wq.x, 0.41, wq.y), 2.5).gb;
-	qx += (wv - 0.47) * 0.55;
+	// (slow and small: a shift of about 0.8 km over a few km; a strong, fast warp sheared every cloud into streaks)
+	vec2 wq = qx * 0.15 + 0.13;
+	vec2 wv = textureLod(shape_tex, vec3(wq.x, 0.41, wq.y), 3.0).gb;
+	qx += (wv - 0.47) * 0.25;
 	// the noise stretched upright: convection builds towers taller than they are wide, not round blobs
 	vec3 q = vec3(qx.x, mp.y / (SHAPE_SCALE * 1.5), qx.y);
 	vec4 s = textureLod(shape_tex, q, lod);
