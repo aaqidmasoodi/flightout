@@ -38,11 +38,19 @@ void main() {
 	vec4 d = texelFetch(cur_depth, px, 0);
 	vec4 m1 = vec4(0.0);
 	vec4 m2 = vec4(0.0);
+	float dmin = 1e9;                  // the range of cloud distances around this pixel (with cloud)
+	float dmax = 0.0;
 	for (int y = -1; y <= 1; y++) {
 		for (int x = -1; x <= 1; x++) {
-			vec4 s = texelFetch(cur_color, clamp(px + ivec2(x, y), ivec2(0), hsize - 1), 0);
+			ivec2 q = clamp(px + ivec2(x, y), ivec2(0), hsize - 1);
+			vec4 s = texelFetch(cur_color, q, 0);
 			m1 += s;
 			m2 += s * s;
+			vec4 dq = texelFetch(cur_depth, q, 0);
+			if (dq.z < 1e8) {
+				dmin = min(dmin, dq.x);
+				dmax = max(dmax, dq.y);
+			}
 		}
 	}
 	m1 /= 9.0;
@@ -77,15 +85,20 @@ void main() {
 				// turning and flying do not spoil it (and in flight the view always moves: distrusting motion kept
 				// the clouds noisy). What spoils it is a different cloud arriving there (a disocclusion): the
 				// history's distance no longer matches this pixel's.
+				// The history's cloud should lie within the span of the clouds around this pixel now (their start
+				// to end): a thin cloud's edge is hit nearer or farther from frame to frame (the noise being
+				// averaged), which is not a different cloud.
 				float hd = textureLod(hist_depth, puv, 0.0).z;
 				bool hhas = hd < 1e8;
 				float match = 1.0;
-				if (has && hhas) {
-					match = 1.0 - smoothstep(0.04, 0.2, abs(hd - d.z) / max(d.z, 1.0));
-				} else if (has != hhas) {
-					// at a cloud's edge the march hits or misses from frame to frame (that is the noise being
-					// averaged): keep the history; the colour clip still removes a cloud that really left
-					match = 0.8;
+				if (hhas && dmax > 0.0) {
+					float tol = 0.05 * hd + 150.0;
+					float out_by = max(dmin - tol - hd, hd - dmax - tol);
+					match = 1.0 - smoothstep(0.0, 0.15 * hd + 300.0, out_by);
+				} else if (hhas != (dmax > 0.0)) {
+					// a cloud's edge, hit or missed from frame to frame: keep the history; the colour clip still
+					// removes a cloud that really left
+					match = 0.85;
 				}
 				float k = mix(1.25, 3.5, match);
 				h = clip_box(h, m1 - k * sigma, m1 + k * sigma);

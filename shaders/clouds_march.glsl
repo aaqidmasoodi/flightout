@@ -253,9 +253,11 @@ void main() {
 				float reach_l = 0.0;
 				if (t < near_end) {
 					float ls = 60.0;
+					// each sample's own offset along the way (fixed offsets showed as bands at fixed heights)
+					float lj = fract(jitter * 7.13 + float(expensive) * 0.618);
 					for (int j = 0; j < light_steps; j++) {
 						float hl;
-						od += density(mp + L * (reach_l + ls * 0.5), lod + 1.0, 0.0, hl) * EXT * ls;
+						od += density(mp + L * (reach_l + ls * mix(0.15, 0.85, lj)), lod + 1.0, 0.0, hl) * EXT * ls;
 						reach_l += ls;
 						ls *= 2.0;
 					}
