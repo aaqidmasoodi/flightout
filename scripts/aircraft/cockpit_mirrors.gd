@@ -41,7 +41,7 @@ const CONVEX_R := 1.6                        # m: radius of the glass's curvatur
 # makes this true (half-way between the eye and that direction), as a pilot sets his mirrors before flight.
 # From the eye (0, 1.18, -5.5) the fin tips are about 13 degrees out and 16 up, the wingtips 49 out and 8 down.
 const MIRRORS := [
-	[0.0, 0.26, 0.075, Vector3(0.0, 0.10, 1.0)],      # both fins and the spine, the sky above and behind
+	[0.0, 0.26, 0.075, Vector3(0.0, 0.03, 1.0)],      # the spine and both fins, the horizon behind
 	[-62.0, 0.22, 0.07, Vector3(-0.50, -0.06, 1.0)],  # left: from the left fin out to the left wingtip
 	[62.0, 0.22, 0.07, Vector3(0.50, -0.06, 1.0)],    # right: from the right fin out to the right wingtip
 ]
@@ -259,9 +259,8 @@ func update(inside: bool, cam: Camera3D, delta: float) -> void:
 		if _dev_t > 2.8:
 			var img := _vp.get_texture().get_image()
 			if img:
-				img.convert(Image.FORMAT_RGBAF)
-				img.linear_to_srgb()
 				img.convert(Image.FORMAT_RGBA8)
+				img.linear_to_srgb()
 				img.save_png(_dev_dir.path_join("mirror_capture.png"))
 			_dev_dir = ""
 
