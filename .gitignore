@@ -31,6 +31,9 @@ id_ed25519*
 *_oci.pub
 .env
 .env.*
+# local deploy settings (server login, key path)
+server/deploy.local.json
+*.local.json
 __pycache__/
 # large-map terrain data: built by tools/build_kashmir.py, shipped separately (not in git)
 assets/kashmir/

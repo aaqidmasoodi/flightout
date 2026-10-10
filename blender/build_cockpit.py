@@ -5,7 +5,7 @@
 import bpy, mathutils, mathutils.noise, mathutils.bvhtree, bmesh, math, json, os, sys, zlib
 from mathutils import Vector, Matrix
 
-ROOT = r"<project folder>"
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # the project folder
 TEX = os.path.join(ROOT, "assets", "aircraft", "su27_cockpit")
 CELLS = json.load(open(os.path.join(TEX, "cells.json")))
 ARGS = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []

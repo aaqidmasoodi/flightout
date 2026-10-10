@@ -5,7 +5,8 @@ It is authoritative for up to 16 pilots and needs **UDP 27015** open (cloud fire
 
 ## Official server
 
-- Host: Oracle Cloud, London (`play.flightout.app`), Ubuntu 22.04
+- Host: a cloud VM in London (`play.flightout.app`), Ubuntu 22.04. Its login is kept out of the repository:
+  `server/deploy.local.json` (git-ignored) holds it for `deploy.ps1`.
 - Installed in `/opt/flightout`, runs as the unprivileged `flightout` user via systemd (`flightout.service`):
   starts at boot, restarts within 3 s if it stops.
 - Settings and logs of the game live in `/var/lib/flightout`.

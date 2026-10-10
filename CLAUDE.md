@@ -9,4 +9,8 @@
   instruments and the FPS counter.
 - Test performance and netcode by flying real manoeuvres (turns, rolls, formation, different camera views), not
   just straight and level.
-- Never commit keys or credentials (the project is open source).
+- **The GitHub repository is public** (and shared in communities). Nothing that could help an attacker goes in it,
+  in any file or commit message: no keys, tokens or passwords, no server IP addresses, SSH logins or key file names,
+  no personal file paths or machine details. The official server is `play.flightout.app`; its login lives in the
+  git-ignored `server/deploy.local.json`. Check every change before committing and pushing.
+- FlightOut is source-available under its own licence (LICENSE): readable and open to contributions, not reusable.

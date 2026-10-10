@@ -141,3 +141,8 @@ Settings → Graphics → Preset: Low, Medium, High, Ultra, or Custom. A preset 
 - The runway markings are procedural (`shaders/runway.gdshader`): ICAO-style edge lines, centreline, threshold stripes, designators "36" and "18", aiming points and touchdown zones, analytically anti-aliased so they stay sharp at any distance.
 - Trees smaller than a few pixels on screen are thinned out and the terrain draws a forest canopy texture instead, so forests read correctly from altitude without speckle.
 - The sky's lighting cubemap is only re-rendered when the sky actually changes.
+
+## Licence
+FlightOut is **source-available, not open source**. You can read the code, follow development and contribute (issues and
+pull requests are welcome), and play the official releases. You may not copy, reuse, redistribute or build on any part
+of it elsewhere, or use it to train AI models. See [LICENSE](LICENSE). Third-party parts keep their own licences.

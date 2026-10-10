@@ -1,12 +1,21 @@
 # Builds the Linux dedicated server and deploys it to the official server.
 # Usage (PowerShell, from the project folder):  .\server\deploy.ps1
 # Needs: Godot at $Godot, the server's SSH key at $Key.
+# The server's login and key are not in the repository (it is public): put them in server/deploy.local.json, which
+# git ignores, e.g.  { "server": "user@host", "key": "C:\\path\\to\\key" }
 param(
     [string]$Godot = "$env:USERPROFILE\Desktop\Godot.exe",
-    [string]$Key = "$env:USERPROFILE\.ssh\flightout_server_key",
-    [string]$Server = "ubuntu@play.flightout.app"
+    [string]$Key = "",
+    [string]$Server = ""
 )
 $ErrorActionPreference = "Stop"
+$localCfg = Join-Path $PSScriptRoot "deploy.local.json"
+if (Test-Path $localCfg) {
+    $cfg = Get-Content $localCfg -Raw | ConvertFrom-Json
+    if (-not $Server -and $cfg.server) { $Server = $cfg.server }
+    if (-not $Key -and $cfg.key) { $Key = $cfg.key }
+}
+if (-not $Server -or -not $Key) { throw "Set the server and key in server/deploy.local.json (or pass -Server and -Key)" }
 $root = Split-Path -Parent $PSScriptRoot
 $out = Join-Path $root "build\linux"
 New-Item -ItemType Directory -Force $out | Out-Null
