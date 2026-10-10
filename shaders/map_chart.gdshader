@@ -21,29 +21,28 @@ float vnoise(vec2 p) {
 
 void fragment() {
 	vec2 uv = UV * (1.0 + 2.0 * pad) - pad;
-	// how far beyond the chart's edge, in widths of the chart (0 inside)
+	// signed distance to the chart's edge, in widths of the chart (negative inside), along an irregular line (the
+	// distance to a rectangle's edge alone left a rounded square)
 	vec2 o = max(max(-uv, uv - 1.0), vec2(0.0));
-	float out_d = length(vec2(o.x, o.y * aspect));
+	vec2 inn = min(uv, 1.0 - uv);
+	float d = length(vec2(o.x, o.y * aspect)) > 0.0 ? length(vec2(o.x, o.y * aspect)) : -min(inn.x, inn.y * aspect);
+	float n = vnoise(uv * vec2(3.0, 3.0 * aspect) + 7.3) * 0.65 + vnoise(uv * vec2(7.0, 7.0 * aspect) + 1.7) * 0.35;
+	d += (n - 0.5) * 0.14;
 	// mirrored back into the chart
-	vec2 m = 1.0 - abs(1.0 - abs(uv));
-	m = clamp(m, vec2(0.0), vec2(1.0));
-	// blurred from a ring of samples at a moderate level (the coarsest levels alone showed their texels as blocks)
-	float lod = 4.5 * smoothstep(0.0, 0.12, out_d);
+	vec2 m = clamp(1.0 - abs(1.0 - abs(uv)), vec2(0.0), vec2(1.0));
+	// blurred from a ring of samples at a moderate level (the coarsest levels alone showed their texels as blocks),
+	// from a little inside the edge: the chart's outermost strip is partly outside the terrain data (flat, dark
+	// patches along whole degrees)
+	float lod = 4.5 * smoothstep(-0.1, 0.08, d);
 	vec2 r = exp2(lod) * 1.5 / vec2(textureSize(TEXTURE, 0));
 	vec3 c = textureLod(TEXTURE, m, lod).rgb * 0.2;
 	for (int k = 0; k < 8; k++) {
 		float a = float(k) * 0.785398 + 0.3;
 		c += textureLod(TEXTURE, clamp(m + vec2(cos(a), sin(a)) * r, vec2(0.0), vec2(1.0)), lod).rgb * 0.1;
 	}
-	vec3 sharp = texture(TEXTURE, m).rgb;
-	c = mix(sharp, c, smoothstep(0.0, 0.02, out_d));
-	// a long, soft fade into the background, starting a little inside the chart, along an irregular line (the
-	// distance to a rectangle's edge alone left a rounded square)
-	vec2 inn = min(uv, 1.0 - uv);
-	float d = out_d > 0.0 ? out_d : -min(inn.x, inn.y * aspect);
-	float n = vnoise(uv * vec2(3.0, 3.0 * aspect) + 7.3) * 0.65 + vnoise(uv * vec2(7.0, 7.0 * aspect) + 1.7) * 0.35;
-	d += (n - 0.5) * 0.14;
-	float keep = 1.0 - smoothstep(-0.05, 0.26, d);
+	c = mix(texture(TEXTURE, m).rgb, c, smoothstep(-0.1, -0.06, d));
+	// a long, soft fade into the background
+	float keep = 1.0 - smoothstep(-0.14, 0.2, d);
 	keep = keep * keep * (3.0 - 2.0 * keep);
 	COLOR = vec4(mix(bg.rgb, c, keep), 1.0);
 }
