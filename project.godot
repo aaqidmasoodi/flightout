@@ -53,6 +53,10 @@ cloud_layer={
 "type": "sampler2D",
 "value": ""
 }
+cloud_overlay={
+"type": "sampler2D",
+"value": ""
+}
 world_origin={
 "type": "vec2",
 "value": Vector2(0, 0)

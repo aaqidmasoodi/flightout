@@ -1,12 +1,15 @@
 #[compute]
 #version 450
-// Pass 3: depth-aware upsample and composite at full resolution. Each pixel reads its exact scene depth; each of the
-// four nearest cloud samples is trimmed to the part of the cloud in front of that depth (none if the cloud starts
-// behind the object), then the four are blended. Clouds behind the jet never land on it; clouds in front still do.
+// Pass 3: depth-aware upsample at full resolution. Each pixel reads its exact scene depth; each of the nearest
+// cloud samples is trimmed to the part of the cloud in front of that depth (none if the cloud starts behind the
+// object), then they are blended. Clouds behind the jet never land on it; clouds in front still do.
+// The result goes to the cloud overlay (rgb in-scattered light, a transmittance), which a full-screen surface blends
+// over the scene at the start of the transparent pass (shaders/cloud_overlay.gdshader). Writing into the scene colour
+// here instead does not work with MSAA: that is the resolve target, overwritten when the multisampled image resolves.
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-layout(rgba16f, set = 0, binding = 0) uniform restrict image2D color_img;
+layout(rgba16f, set = 0, binding = 0) uniform restrict writeonly image2D overlay_img;
 layout(set = 0, binding = 1) uniform sampler2D cloud_color;
 layout(set = 0, binding = 2) uniform sampler2D cloud_depth;
 layout(set = 0, binding = 3) uniform sampler2D depth_tex;
@@ -75,8 +78,7 @@ void main() {
 			cl += trimmed(b + ivec2(i - 1, j - 1), dist) * (wx[i] * wy[j]);
 		}
 	}
-	vec4 scene = imageLoad(color_img, px);
-	imageStore(color_img, px, vec4(scene.rgb * cl.a + cl.rgb, scene.a));
+	imageStore(overlay_img, px, vec4(cl.rgb, cl.a));
 	float front = 1e9;
 	for (int j = 0; j < 2; j++) {
 		for (int i = 0; i < 2; i++) {

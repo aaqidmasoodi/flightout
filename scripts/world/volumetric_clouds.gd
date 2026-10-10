@@ -66,6 +66,8 @@ var _prev_shape := Vector4.ZERO   # coverage, density, base, top last frame: wea
 var _layer := RID()             # full resolution: r = transmittance, g = cloud front distance (km)
 var _layer_size := Vector2i.ZERO
 var layer_texture := Texture2DRD.new()
+var _overlay := RID()           # full resolution: rgb in-scattered light, a transmittance (shaders/cloud_overlay.gdshader)
+var overlay_texture := Texture2DRD.new()
 var _layer_published := false
 
 
@@ -77,6 +79,8 @@ func _init() -> void:
 	# before the transparent pass: glass, the HUD, flames and particles then draw over the clouds instead of being
 	# painted over by them; far transparent things (the sea) hide behind clouds through the cloud layer texture
 	effect_callback_type = EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT
+	# with MSAA the depth the clouds are trimmed against must be resolved first (no-op without MSAA)
+	access_resolved_depth = true
 	WorldData.origin_shifted.connect(_on_origin_shifted)
 	_rd = RenderingServer.get_rendering_device()
 	if _rd == null:
@@ -130,7 +134,7 @@ func _all_targets() -> Array:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE and _rd:
 		var rids: Array = [_raw_color, _raw_depth, _hist_color[0], _hist_color[1], _hist_depth[0], _hist_depth[1],
-			_repeat_sampler, _clamp_sampler, _point_sampler, _ubo, _layer]
+			_repeat_sampler, _clamp_sampler, _point_sampler, _ubo, _layer, _overlay]
 		for k in _pipes:
 			rids.append(_pipes[k][1])
 			rids.append(_pipes[k][0])
@@ -163,10 +167,18 @@ func _ensure_layer(size: Vector2i) -> void:
 	layer_texture.texture_rd_rid = _layer
 	if old.is_valid():
 		_rd.free_rid(old)
+	var old_o := _overlay
+	_overlay = _rd.texture_create(f, RDTextureView.new())
+	_rd.texture_clear(_overlay, Color(0.0, 0.0, 0.0, 1.0), 0, 1, 0, 1)
+	overlay_texture.texture_rd_rid = _overlay
+	if old_o.is_valid():
+		_rd.free_rid(old_o)
 	_layer_size = size
 	if not _layer_published:
 		_layer_published = true
-		(func(): RenderingServer.global_shader_parameter_set("cloud_layer", layer_texture)).call_deferred()
+		(func():
+			RenderingServer.global_shader_parameter_set("cloud_layer", layer_texture)
+			RenderingServer.global_shader_parameter_set("cloud_overlay", overlay_texture)).call_deferred()
 
 
 func _ensure_targets(size: Vector2i) -> void:
@@ -243,6 +255,8 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 		_has_history = false
 		if _layer.is_valid():
 			_rd.texture_clear(_layer, Color(1.0, 60000.0, 0.0, 1.0), 0, 1, 0, 1)   # clear sky: nothing hides
+		if _overlay.is_valid():
+			_rd.texture_clear(_overlay, Color(0.0, 0.0, 0.0, 1.0), 0, 1, 0, 1)    # and nothing is drawn
 		return
 	var buffers := render_data.get_render_scene_buffers() as RenderSceneBuffersRD
 	if buffers == null:
@@ -296,7 +310,6 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	var bytes := data.to_byte_array()
 	_rd.buffer_update(_ubo, 0, bytes.size(), bytes)
 	for view in buffers.get_view_count():
-		var color := buffers.get_color_layer(view)
 		var depth := buffers.get_depth_layer(view)
 		_dispatch("march", [_u_image(0, _raw_color), _u_tex(1, _point_sampler, depth),
 			_u_tex(2, _repeat_sampler, _noise.perlin), _u_tex(3, _repeat_sampler, _noise.worley),
@@ -306,7 +319,7 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 		_dispatch("resolve", [_u_image(0, _hist_color[_cur]), _u_image(1, _hist_depth[_cur]),
 			_u_tex(2, _point_sampler, _raw_color), _u_tex(3, _point_sampler, _raw_depth),
 			_u_tex(4, _clamp_sampler, _hist_color[1 - _cur]), _u_ubo(6)], _half_size)
-		_dispatch("composite", [_u_image(0, color), _u_tex(1, _point_sampler, _hist_color[_cur]),
+		_dispatch("composite", [_u_image(0, _overlay), _u_tex(1, _point_sampler, _hist_color[_cur]),
 			_u_tex(2, _point_sampler, _hist_depth[_cur]), _u_tex(3, _point_sampler, depth), _u_ubo(4),
 			_u_image(5, _layer)], size)
 	_prev_vp = vp

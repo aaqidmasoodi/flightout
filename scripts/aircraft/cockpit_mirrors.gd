@@ -168,7 +168,7 @@ func build(aircraft: Node3D, root: Node3D, pads: MeshInstance3D, eye: Vector3, m
 	_cam.fov = CAPTURE_FOV.y
 	_cam.near = CAPTURE_NEAR
 	_cam.far = 20000.0                          # follows the main view's (see update)
-	_cam.cull_mask = 0xFFFFF & ~layer           # the cockpit interior is drawn for the main view only
+	_cam.cull_mask = 0xFFFFF & ~layer & ~(1 << 18)   # the cockpit interior and the cloud overlay: main view only
 	_cam.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	_cam.compositor = Compositor.new()          # no volumetric clouds in the mirrors: they would cost a full pass
 	_vp.add_child(_cam)

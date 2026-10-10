@@ -36,6 +36,7 @@ var _rain_snd: AudioStreamPlayer
 var _drift := Vector2.ZERO
 var clouds                      # VolumetricClouds compositor effect
 const CloudGround = preload("res://scripts/world/cloud_ground.gd")
+const CLOUD_OVERLAY_LAYER := 1 << 18      # visual layer 19: the main view's cloud overlay (scripts/aircraft/cockpit_mirrors.gd leaves it out)
 var _cloud_drift := Vector2.ZERO
 var _volumes := {}
 var _volumes_ready := false
@@ -70,6 +71,24 @@ func _ready() -> void:
 	var comp := Compositor.new()
 	comp.compositor_effects = [clouds]
 	we.compositor = comp
+	# the clouds reach the screen through this full-screen surface (shaders/cloud_overlay.gdshader): drawn first in
+	# the transparent pass, in the main view only (its own render layer, which the cockpit mirrors' view leaves out)
+	var clear := Image.create(1, 1, false, Image.FORMAT_RGBAH)
+	clear.set_pixel(0, 0, Color(0.0, 0.0, 0.0, 1.0))           # nothing until the first cloud frame
+	RenderingServer.global_shader_parameter_set("cloud_overlay", ImageTexture.create_from_image(clear))
+	var ov := MeshInstance3D.new()
+	ov.name = "CloudOverlay"
+	var qm := QuadMesh.new()
+	qm.size = Vector2(2.0, 2.0)
+	ov.mesh = qm
+	var om := ShaderMaterial.new()
+	om.shader = preload("res://shaders/cloud_overlay.gdshader")
+	om.render_priority = -128
+	ov.material_override = om
+	ov.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	ov.custom_aabb = AABB(Vector3(-1e7, -1e7, -1e7), Vector3(2e7, 2e7, 2e7))
+	ov.layers = CLOUD_OVERLAY_LAYER
+	add_child(ov)
 	add_child(we)
 	_volumes = preload("res://scripts/world/surface_materials.gd").cloud_volumes()
 	_apply_quality()
