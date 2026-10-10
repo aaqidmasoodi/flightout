@@ -58,5 +58,8 @@ void main() {
 		lo = c.base;
 		hi = c.top;
 	}
-	imageStore(out_far, id, vec4(od, lo, hi, 1.0));
+	// opacities, not optical depth: averaged into the mip levels they keep the share of the sky the clouds cover
+	// (averaged depth turned half-covered texels nearly opaque: a white blanket far away). x straight down, w along a
+	// slant four times as long (seen at a shallow angle)
+	imageStore(out_far, id, vec4(1.0 - exp(-od), lo, hi, 1.0 - exp(-4.0 * od)));
 }

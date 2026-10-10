@@ -316,11 +316,12 @@ void main() {
 						mp.y = mix(cc.base, cc.top, 0.3 + 0.4 * frac);
 						float hf;
 						float dfar = density_far(mp, hf);
-						col = vec4(dfar * EXT * (cc.top - cc.base), cc.base, cc.top, 0.0);
+						float odf = dfar * EXT * (cc.top - cc.base);
+						col = vec4(1.0 - exp(-odf), cc.base, cc.top, 1.0 - exp(-4.0 * odf));
 					} else {
 						// the map's mip level for this pixel's footprint on it, stretched along the ray at a grazing
 						// view (the larger of the two: blur rather than alias into streaks)
-						float fp = tk * pix * min(slant, 8.0);
+						float fp = tk * pix * sqrt(min(slant, 8.0));
 						col = textureLod(far_tex, uv, max(log2(fp / FAR_TEXEL), 0.0));
 					}
 					float y_true = mix(col.y, col.z, frac);
@@ -337,13 +338,14 @@ void main() {
 				}
 				// fade in over the end of the march (the march fades out there)
 				float fin = smoothstep(march_end * 0.75, march_end, tk);
-				float od_k = col.x * min(slant, 4.0) * fin;
-				float tr = exp(-od_k);
+				// opacity along this ray: between the straight-down and the four-times slant values
+				float a_k = mix(col.x, col.w, saturate((min(slant, 4.0) - 1.0) / 3.0)) * fin;
+				float tr = 1.0 - a_k;
 				if (tr > 0.999) {
 					continue;
 				}
 				vec3 mp = vec3(sp.x + omap.x, mix(col.y, col.z, frac), sp.z + omap.y);
-				float dens = col.x / max(EXT * (col.z - col.y), 1.0);
+				float dens = -log(max(1.0 - col.x, 1e-4)) / max(EXT * (col.z - col.y), 1.0);
 				float od = shadow_od(mp, L);
 				float sl = sun_light(od, cos_t, dens);
 				float hgt = frac;
