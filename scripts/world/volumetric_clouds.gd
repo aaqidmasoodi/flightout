@@ -100,6 +100,7 @@ var _far_valid := [false, false]
 var _far_row := 0                 # next row of the copy being built
 var _cam_pending := false
 var _cam_frame := 0
+var _no_readback := false     # --clouds-no-readback (development)
 var _raw_color := RID()
 var _raw_depth := RID()
 var _hist_color := [RID(), RID()]
@@ -139,6 +140,8 @@ class ShadowPass extends CompositorEffect:
 
 func _init() -> void:
 	for a in OS.get_cmdline_user_args():
+		if a == "--clouds-no-readback":
+			_no_readback = true
 		if a.begins_with("--clouds-debug"):
 			_dbg = true
 			_dbg_mode = a.trim_prefix("--clouds-debug").trim_prefix("=").to_int()
@@ -281,7 +284,7 @@ func _notification(what: int) -> void:
 		for lv in _far_levels[0] + _far_levels[1]:
 			if (lv as RID).is_valid() and _rd.texture_is_valid(lv):
 				_rd.free_rid(lv)
-		var rids: Array = _all_targets() + [_repeat_sampler, _clamp_sampler, _point_sampler, _ubo, _layer, _overlay,
+		var rids: Array = [_raw_color, _raw_depth, _hist_color[0], _hist_color[1], _hist_depth[0], _hist_depth[1], _repeat_sampler, _clamp_sampler, _point_sampler, _ubo, _layer, _overlay,
 			_shape, _detail, _weather, _sh[0], _sh[1], _sh_info, _far[0], _far[1]]
 		if not _cam_pending:
 			rids.append(_cam_buf)      # (a readback may still be reading it: then it goes with the device)
@@ -500,7 +503,7 @@ func _shadow_callback(render_data: RenderData) -> void:
 			cam_od_valid = true
 	elif _cam_pending and _frame - _cam_frame > 30:
 		_cam_pending = false               # (a readback that never came back: ask again)
-	var read_cam := not _cam_pending
+	var read_cam := not _cam_pending and not _no_readback
 	for c in 2:
 		var n := SH0_N if c == 0 else SH1_N
 		var rows := 1 if full[c] else SH_ROWS
