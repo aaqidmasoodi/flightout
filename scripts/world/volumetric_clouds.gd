@@ -193,7 +193,7 @@ func _setup() -> void:
 		ff.height = FAR_N
 		ff.mipmaps = int(log(float(FAR_N)) / log(2.0)) + 1
 		ff.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT \
-			| RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT
+			| RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT
 		_far[i] = _rd.texture_create(ff, RDTextureView.new())
 		_rd.texture_clear(_far[i], Color(0.0, 0.0, 0.0, 1.0), 0, ff.mipmaps, 0, 1)
 		for lv in ff.mipmaps:
