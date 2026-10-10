@@ -333,7 +333,9 @@ void main() {
 				// changed their shading as they crossed that range.)
 				float od = 0.0;
 				float reach_l = 0.0;
-				if (!dbg_no_lm) {     // (debug 7, 12: without the light march)
+				// (not once 95 % of the light behind is hidden: the samples after that add under 5 % to the pixel, and
+				// deep inside a cloud the march went on paying for them, enough to make flying through cloud stutter)
+				if (!dbg_no_lm && T > 0.05) {     // (debug 7, 12: without the light march)
 					float ls = 60.0;
 					// each sample's own offset along the way (fixed offsets showed as bands at fixed heights)
 					float lj = fract(jitter * 7.13 + float(expensive) * 0.618);

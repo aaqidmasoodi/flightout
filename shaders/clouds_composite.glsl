@@ -21,6 +21,7 @@ layout(set = 0, binding = 2) uniform sampler2D cloud_color;
 layout(set = 0, binding = 3) uniform sampler2D cloud_depth;
 layout(set = 0, binding = 4) uniform sampler2D depth_tex;
 layout(rgba16f, set = 0, binding = 5) uniform restrict writeonly image2D layer_img;
+layout(rgba16f, set = 0, binding = 6) uniform restrict writeonly image2D overlay_b_img;
 
 vec4 trimmed(ivec2 hp, float dist) {
 	ivec2 hsize = ivec2(p.sizes.xy);
@@ -43,19 +44,8 @@ vec4 trimmed(ivec2 hp, float dist) {
 	return vec4(c.rgb * k, mix(1.0, c.a, k));
 }
 
-void main() {
-	ivec2 px = ivec2(gl_GlobalInvocationID.xy);
-	ivec2 fsize = ivec2(p.sizes.zw);
-	if (px.x >= fsize.x || px.y >= fsize.y) {
-		return;
-	}
-	float dz = texelFetch(depth_tex, px, 0).r;
-	float dist = 1e9;
-	if (dz > 0.0) {
-		vec2 fuv = (vec2(px) + 0.5) / vec2(fsize);
-		vec4 v = p.inv_proj * vec4(fuv * 2.0 - 1.0, dz, 1.0);
-		dist = length(v.xyz / v.w);
-	}
+// The clouds in front of a surface at `dist`, upsampled to full resolution at pixel px.
+vec4 cloud_for(ivec2 px, float dist) {
 	vec2 hp = (vec2(px) + 0.5) * (p.sizes.xy / p.sizes.zw) - 0.5;
 	ivec2 b = ivec2(floor(hp));
 	vec2 f = hp - vec2(b);
@@ -118,6 +108,64 @@ void main() {
 		}
 		cl = acc / wsum_b;
 	}
+	return cl;
+}
+
+float pixel_dist(ivec2 q) {
+	ivec2 fsize = ivec2(p.sizes.zw);
+	q = clamp(q, ivec2(0), fsize - 1);
+	float dz = texelFetch(depth_tex, q, 0).r;
+	if (dz <= 0.0) {
+		return 1e9;
+	}
+	vec2 fuv = (vec2(q) + 0.5) / vec2(fsize);
+	vec4 v = p.inv_proj * vec4(fuv * 2.0 - 1.0, dz, 1.0);
+	return length(v.xyz / v.w);
+}
+
+void main() {
+	ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+	ivec2 fsize = ivec2(p.sizes.zw);
+	if (px.x >= fsize.x || px.y >= fsize.y) {
+		return;
+	}
+	float dist = pixel_dist(px);
+	// The nearest and farthest surfaces around this pixel. With MSAA a pixel on the jet's outline holds samples of
+	// the jet and of what lies behind it, but has one depth here. The cloud is split at the nearest surface: what is
+	// in front of it goes to every sample (overlay), what is behind it only to the samples beyond it (overlay_b,
+	// depth-tested there). One cloud for the whole pixel gave the jet's edge samples the cloud behind the jet: a
+	// white rim round it whenever it was in or over cloud.
+	float dn = dist;
+	float df = dist;
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			if (i != 0 || j != 0) {
+				float q = pixel_dist(px + ivec2(i, j));
+				dn = min(dn, q);
+				df = max(df, q);
+			}
+		}
+	}
+	vec4 cl;
+	vec4 behind = vec4(0.0, 0.0, 0.0, 1.0);
+	float t_here;
+	if (df > dn * 1.05 + 2.0) {
+		vec4 fa = cloud_for(px, dn);
+		// behind: up to this pixel's own surface when that is the far one (the ridge behind a nearer ridge takes no
+		// cloud from beyond it); when its own is the near one (the jet's depth), up to the farthest around
+		bool own_far = dist > dn * 1.05 + 2.0;
+		vec4 ff = cloud_for(px, own_far ? dist : df);
+		cl = fa;
+		if (fa.a > 0.002) {
+			behind = vec4(max(ff.rgb - fa.rgb, vec3(0.0)) / fa.a, clamp(ff.a / fa.a, 0.0, 1.0));
+		}
+		t_here = own_far ? ff.a : fa.a;
+	} else {
+		cl = cloud_for(px, dist);
+		t_here = cl.a;
+	}
+	vec2 hp = (vec2(px) + 0.5) * (p.sizes.xy / p.sizes.zw) - 0.5;
+	ivec2 b = ivec2(floor(hp));
 	if ((p.ranges.w > 3.5 && p.ranges.w < 5.5) || p.ranges.w > 9.5) {
 		// debug 4 / 5: the march-resolution picture itself, nearest texel, opacity as white on black (5: without
 		// the temporal pass)
@@ -128,6 +176,7 @@ void main() {
 		cl = vec4(min(dist / 10000.0, 1.0), dist < 3000.0 ? 1.0 : 0.0, 0.0, 0.0);
 	}
 	imageStore(overlay_img, px, cl);
+	imageStore(overlay_b_img, px, behind);
 	float front = 1e9;
 	float back = 0.0;
 	for (int j = 0; j < 2; j++) {
@@ -145,5 +194,6 @@ void main() {
 		back = 6e7;
 	}
 	back = min(back, dist);
-	imageStore(layer_img, px, vec4(cl.a, min(front * 0.001, 60000.0), min(max(back, front) * 0.001, 60000.0), 1.0));
+	// (w: the nearest surface around the pixel, km: where overlay_b's depth test cuts)
+	imageStore(layer_img, px, vec4(t_here, min(front * 0.001, 60000.0), min(max(back, front) * 0.001, 60000.0), min(dn * 0.001, 60000.0)));
 }

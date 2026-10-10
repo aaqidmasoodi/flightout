@@ -21,10 +21,10 @@ void fragment() {
 	soft += textureLod(TEXTURE, UV + vec2(0.0, r.y), lod).rgb * 0.15;
 	soft += textureLod(TEXTURE, UV - vec2(0.0, r.y), lod).rgb * 0.15;
 	float grey = dot(soft, vec3(0.299, 0.587, 0.114));
-	vec3 outside = mix(vec3(grey), soft, 0.35) * vec3(0.5, 0.53, 0.57);
+	vec3 outside = mix(bg.rgb, mix(vec3(grey), soft, 0.35) * vec3(0.8, 0.84, 0.9), 0.5);
 	vec3 c = mix(outside, sharp, inside);
-	// the chart's edges: faded into the background over the outer 4 %
+	// the chart's edges: faded into the background over the outer 8 %
 	vec2 e = min(UV, 1.0 - UV);
-	float edge = smoothstep(0.0, 0.04, min(e.x, e.y * tx.y / tx.x));     // (the same width in x and y)
+	float edge = smoothstep(0.0, 0.08, min(e.x, e.y * tx.y / tx.x));     // (the same width in x and y)
 	COLOR = vec4(mix(bg.rgb, c, edge), 1.0);
 }

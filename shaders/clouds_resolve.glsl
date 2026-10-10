@@ -28,6 +28,29 @@ vec4 clip_box(vec4 h, vec4 lo, vec4 hi) {
 	return m > 1.0 ? c + v / m : h;
 }
 
+// History read with a Catmull-Rom filter (5 bilinear taps, Jimenez): a plain bilinear read blurs the history a
+// little every frame it is moved, and in fast flight that piled up into streaks along the motion (brush strokes).
+vec4 history_at(vec2 uv, vec2 size) {
+	vec2 pos = uv * size;
+	vec2 c1 = floor(pos - 0.5) + 0.5;
+	vec2 f = pos - c1;
+	vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+	vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+	vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+	vec2 w3 = f * f * (-0.5 + 0.5 * f);
+	vec2 w12 = w1 + w2;
+	vec2 t0 = (c1 - 1.0) / size;
+	vec2 t3 = (c1 + 2.0) / size;
+	vec2 t12 = (c1 + w2 / w12) / size;
+	vec4 r = textureLod(hist_color, vec2(t12.x, t0.y), 0.0) * (w12.x * w0.y);
+	r += textureLod(hist_color, vec2(t0.x, t12.y), 0.0) * (w0.x * w12.y);
+	r += textureLod(hist_color, t12, 0.0) * (w12.x * w12.y);
+	r += textureLod(hist_color, vec2(t3.x, t12.y), 0.0) * (w3.x * w12.y);
+	r += textureLod(hist_color, vec2(t12.x, t3.y), 0.0) * (w12.x * w3.y);
+	float wsum = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+	return max(r / wsum, vec4(0.0));
+}
+
 void main() {
 	ivec2 px = ivec2(gl_GlobalInvocationID.xy);
 	ivec2 hsize = ivec2(p.sizes.xy);
@@ -80,7 +103,13 @@ void main() {
 		if (clip.w > 0.0) {
 			vec2 puv = (clip.xy / clip.w) * 0.5 + 0.5;
 			if (all(greaterThanEqual(puv, vec2(0.0))) && all(lessThanEqual(puv, vec2(1.0)))) {
-				vec4 h = textureLod(hist_color, puv, 0.0);
+				vec4 h = history_at(puv, vec2(hsize));
+				// how far this cloud moved on screen since last frame through the jet's own motion (march texels; the
+				// turn of the view moves everything alike and is exact): fast flight past near cloud
+				vec4 cinf = p.prev_vp * vec4(rd, 0.0);
+				vec2 puv_inf = abs(cinf.w) > 1e-6 ? (cinf.xy / cinf.w) * 0.5 + 0.5 : puv;
+				float mv = length((puv - puv_inf) * vec2(hsize));
+				float moving = smoothstep(1.5, 10.0, mv);
 				// How far to trust the history: the reprojection is exact for a cloud at its weighted distance, so
 				// turning and flying do not spoil it (and in flight the view always moves: distrusting motion kept
 				// the clouds noisy). What spoils it is a different cloud arriving there (a disocclusion): the
@@ -100,11 +129,14 @@ void main() {
 					// removes a cloud that really left
 					match = 0.85;
 				}
-				float k = mix(1.25, 3.5, match);
+				// the clip tightens and the history counts for less while the cloud moves fast across the screen: what
+				// is reprojected is the cloud's average distance, and a near cloud's parts lie well in front of and
+				// behind it; trusted loosely, they smeared along the motion
+				float k = mix(mix(1.25, 3.5, match), 1.0, moving);
 				h = clip_box(h, m1 - k * sigma, m1 + k * sigma);
-				float w = p.amb_top.w * mix(0.75, 1.0, match);
+				float w = p.amb_top.w * mix(0.75, 1.0, match) * mix(1.0, 0.8, moving);
 				// the current frame lightly filtered (its noise is what the history averages away)
-				vec4 cf = mix(c, m1, mix(0.6, 0.25, match));
+				vec4 cf = mix(c, m1, max(mix(0.6, 0.25, match), 0.5 * moving));
 				result = mix(cf, h, w);
 			}
 		}

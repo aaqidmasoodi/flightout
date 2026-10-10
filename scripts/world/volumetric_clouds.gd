@@ -135,7 +135,9 @@ var _layer := RID()             # full resolution: r transmittance, g cloud fron
 var _layer_size := Vector2i.ZERO
 var layer_texture := Texture2DRD.new()
 var _overlay := RID()           # full resolution: rgb in-scattered light, a transmittance (shaders/cloud_overlay.gdshader)
+var _overlay_b := RID()         # the same for the cloud behind the nearest surface around a pixel (its MSAA edge)
 var overlay_texture := Texture2DRD.new()
+var overlay_b_texture := Texture2DRD.new()
 var shadow0_texture := Texture2DRD.new()
 var shadow1_texture := Texture2DRD.new()
 var shadow_info_texture := Texture2DRD.new()
@@ -303,7 +305,7 @@ func _notification(what: int) -> void:
 		for lv in _far_levels[0][0] + _far_levels[0][1] + _far_levels[1][0] + _far_levels[1][1]:
 			if (lv as RID).is_valid() and _rd.texture_is_valid(lv):
 				_rd.free_rid(lv)
-		var rids: Array = [_raw_color, _raw_depth, _hist_color[0], _hist_color[1], _hist_depth[0], _hist_depth[1], _repeat_sampler, _clamp_sampler, _point_sampler, _ubo, _layer, _overlay,
+		var rids: Array = [_raw_color, _raw_depth, _hist_color[0], _hist_color[1], _hist_depth[0], _hist_depth[1], _repeat_sampler, _clamp_sampler, _point_sampler, _ubo, _layer, _overlay, _overlay_b,
 			_shape, _detail, _weather, _sh[0], _sh0_build, _sh[1], _sh_info, _far[0][0], _far[0][1], _far[1][0], _far[1][1]]
 		if not _cam_pending:
 			rids.append(_cam_buf)      # (a readback may still be reading it: then it goes with the device)
@@ -342,12 +344,19 @@ func _ensure_layer(size: Vector2i) -> void:
 	overlay_texture.texture_rd_rid = _overlay
 	if old_o.is_valid():
 		_rd.free_rid(old_o)
+	var old_b := _overlay_b
+	_overlay_b = _target(RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, size)
+	_rd.texture_clear(_overlay_b, Color(0.0, 0.0, 0.0, 1.0), 0, 1, 0, 1)
+	overlay_b_texture.texture_rd_rid = _overlay_b
+	if old_b.is_valid():
+		_rd.free_rid(old_b)
 	_layer_size = size
 	if not _layer_published:
 		_layer_published = true
 		(func():
 			RenderingServer.global_shader_parameter_set("cloud_layer", layer_texture)
-			RenderingServer.global_shader_parameter_set("cloud_overlay", overlay_texture)).call_deferred()
+			RenderingServer.global_shader_parameter_set("cloud_overlay", overlay_texture)
+			RenderingServer.global_shader_parameter_set("cloud_overlay_b", overlay_b_texture)).call_deferred()
 
 
 func _ensure_targets(size: Vector2i) -> void:
@@ -707,6 +716,8 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 			_rd.texture_clear(_layer, Color(1.0, 60000.0, 60000.0, 1.0), 0, 1, 0, 1)   # clear sky: nothing hides
 		if _overlay.is_valid():
 			_rd.texture_clear(_overlay, Color(0.0, 0.0, 0.0, 1.0), 0, 1, 0, 1)    # and nothing is drawn
+		if _overlay_b.is_valid():
+			_rd.texture_clear(_overlay_b, Color(0.0, 0.0, 0.0, 1.0), 0, 1, 0, 1)
 		return
 	var buffers := render_data.get_render_scene_buffers() as RenderSceneBuffersRD
 	if buffers == null:
@@ -726,5 +737,5 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 			_u_tex(5, _clamp_sampler, _hist_color[1 - _cur]), _u_tex(6, _point_sampler, _hist_depth[1 - _cur])], _half_size)
 		_dispatch("composite", [_u_ubo(), _u_image(1, _overlay), _u_tex(2, _point_sampler, _hist_color[_cur]),
 			_u_tex(3, _point_sampler, _hist_depth[_cur]), _u_tex(4, _point_sampler, depth),
-			_u_image(5, _layer)], size)
+			_u_image(5, _layer), _u_image(6, _overlay_b)], size)
 	_has_history = true

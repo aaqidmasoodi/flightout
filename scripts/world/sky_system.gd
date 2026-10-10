@@ -80,6 +80,7 @@ func _ready() -> void:
 	var clear := Image.create(1, 1, false, Image.FORMAT_RGBAH)
 	clear.set_pixel(0, 0, Color(0.0, 0.0, 0.0, 1.0))           # nothing until the first cloud frame
 	RenderingServer.global_shader_parameter_set("cloud_overlay", ImageTexture.create_from_image(clear))
+	RenderingServer.global_shader_parameter_set("cloud_overlay_b", ImageTexture.create_from_image(clear))
 	# and no cloud shadows until the clouds' shadow map exists (shaders/include/cloud_shadow.gdshaderinc reads its flag)
 	var no_shadow := Image.create(4, 1, false, Image.FORMAT_RGBAF)
 	no_shadow.fill(Color(0.0, 0.0, 0.0, 0.0))
@@ -91,12 +92,25 @@ func _ready() -> void:
 	ov.mesh = qm
 	var om := ShaderMaterial.new()
 	om.shader = preload("res://shaders/cloud_overlay.gdshader")
-	om.render_priority = -128
+	om.render_priority = -127
 	ov.material_override = om
 	ov.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	ov.custom_aabb = AABB(Vector3(-1e7, -1e7, -1e7), Vector3(2e7, 2e7, 2e7))
 	ov.layers = CLOUD_OVERLAY_LAYER
 	add_child(ov)
+	# before it: the cloud behind the nearest surface around each pixel, only on the samples beyond that surface (on
+	# an MSAA edge the jet's samples do not take the cloud behind it: no white rim round the jet in cloud)
+	var ovb := MeshInstance3D.new()
+	ovb.name = "CloudOverlayBehind"
+	ovb.mesh = qm
+	var omb := ShaderMaterial.new()
+	omb.shader = preload("res://shaders/cloud_overlay_behind.gdshader")
+	omb.render_priority = -128
+	ovb.material_override = omb
+	ovb.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	ovb.custom_aabb = ov.custom_aabb
+	ovb.layers = CLOUD_OVERLAY_LAYER
+	add_child(ovb)
 	add_child(we)
 	clouds.set_blue_noise(load("res://assets/clouds/blue_noise_64.png"))
 	_apply_quality()

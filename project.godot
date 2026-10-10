@@ -57,6 +57,10 @@ cloud_overlay={
 "type": "sampler2D",
 "value": ""
 }
+cloud_overlay_b={
+"type": "sampler2D",
+"value": ""
+}
 cloud_shadow0={
 "type": "sampler2D",
 "value": ""

@@ -195,6 +195,9 @@ func _button(text: String, cb: Callable) -> Button:
 	b.add_theme_font_size_override("font_size", 15)
 	b.custom_minimum_size = Vector2(0, 40)
 	b.clip_text = true
+	b.add_theme_stylebox_override("normal", T.flat(Color(1, 1, 1, 0.05), Color(1, 1, 1, 0.16), [1, 1, 1, 1]))
+	b.add_theme_stylebox_override("hover", T.flat(Color(1, 1, 1, 0.1), T.ACCENT, [1, 1, 1, 1]))
+	b.add_theme_stylebox_override("pressed", T.flat(Color(T.ACCENT, 0.2), T.ACCENT, [1, 1, 1, 1]))
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.focus_mode = Control.FOCUS_NONE
 	b.pressed.connect(cb)
@@ -787,6 +790,14 @@ func _draw_fields(font: Font) -> void:
 		var q := _to_screen(Vector2(float(a.x), float(a.z)))
 		if not Rect2(Vector2(-100, -100), c.size + Vector2(200, 200)).has_point(q):
 			continue
+		# airfields outside the region: faint, and named only up close (they crowded the border)
+		var inside := _in_region(Vector2(float(a.x), float(a.z)))
+		if not inside:
+			c.draw_arc(q, 8.0, 0.0, TAU, 24, Color(1, 1, 1, 0.45), 3.0, true)
+			c.draw_arc(q, 8.0, 0.0, TAU, 24, Color(FIELD_COL, 0.6), 1.5, true)
+			if _scale < 500.0:
+				_text(font, q + Vector2(12, -6), String(a.id), 14, Color(FIELD_COL, 0.7), Color(1, 1, 1, 0.4))
+			continue
 		# runways at their true length and heading, but never shorter than a readable symbol
 		for r in a.runways:
 			var A := Vector2(r.a[0], r.a[2])
@@ -807,6 +818,17 @@ func _draw_fields(font: Font) -> void:
 			var r0: Dictionary = a.runways[0]
 			var elev := int(float(r0.a[1]) * 3.28084)
 			_text(font, q + Vector2(17, 10), "%s/%s   %d ft" % [r0.ids[0], r0.ids[1], elev], 14, FIELD_COL, Color(1, 1, 1, 0.6))
+
+
+var _inside_cache := {}
+
+
+func _in_region(p: Vector2) -> bool:
+	if _region.size() < 3:
+		return true
+	if not _inside_cache.has(p):
+		_inside_cache[p] = Geometry2D.is_point_in_polygon(p, _region)
+	return _inside_cache[p]
 
 
 func _draw_others(font: Font) -> void:
