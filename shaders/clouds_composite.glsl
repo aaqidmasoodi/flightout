@@ -118,7 +118,7 @@ void main() {
 		}
 		cl = acc / wsum_b;
 	}
-	if (p.ranges.w > 3.5 && p.ranges.w < 5.5) {
+	if ((p.ranges.w > 3.5 && p.ranges.w < 5.5) || p.ranges.w > 9.5) {
 		// debug 4 / 5: the march-resolution picture itself, nearest texel, opacity as white on black (5: without
 		// the temporal pass)
 		vec4 n = texelFetch(cloud_color, clamp(ivec2(hp + 0.5), ivec2(0), ivec2(p.sizes.xy) - 1), 0);

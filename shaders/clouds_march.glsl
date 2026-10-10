@@ -240,6 +240,11 @@ void main() {
 	pix_angle = pix;
 	float shape_texel = SHAPE_SCALE / 128.0;
 	float near_end = p.ranges.x;
+	// debug views (--clouds-debug=N): 6 without the shadow map, 7 without the light march; 11 and 12 the same as
+	// raw opacity (as 5)
+	int dbg = int(p.ranges.w + 0.5);
+	bool dbg_no_sm = dbg == 6 || dbg == 11;
+	bool dbg_no_lm = dbg == 7 || dbg == 12;
 	float march_end = min(p.ranges.y, t1);
 
 	if (t1 > t0 && p.layer.z > 0.001) {
@@ -321,7 +326,7 @@ void main() {
 				// the shadow map for the rest of the way up
 				float od = 0.0;
 				float reach_l = 0.0;
-				if (t < near_end && (p.ranges.w < 6.5 || p.ranges.w > 7.5)) {     // (debug 7: without the light march)
+				if (t < near_end && !dbg_no_lm) {     // (debug 7, 12: without the light march)
 					float ls = 60.0;
 					// each sample's own offset along the way (fixed offsets showed as bands at fixed heights)
 					float lj = fract(jitter * 7.13 + float(expensive) * 0.618);
@@ -332,7 +337,7 @@ void main() {
 						ls *= 2.0;
 					}
 				}
-				if (p.ranges.w < 5.5 || p.ranges.w > 6.5) {
+				if (!dbg_no_sm) {
 					od += shadow_od(mp + L * reach_l, L);     // (debug 6: without the shadow map)
 				}
 				float sl = sun_light(od, cos_t, dens);
@@ -365,9 +370,16 @@ void main() {
 		// in the map (sunlit tops and flanks, shaded lee sides): no march, no random samples, steady. The near map
 		// (240 km) hands over to the wide one (960 km), and beyond that the weather's mean. Where the march ran out
 		// of steps before its end, the maps take over from there. ----
+		// The march covers its range R (p.ranges.y), fading out over its outer half while the maps fade in; where
+		// the ray leaves the layer or meets the ground sooner (march_end), it has seen everything there is and the
+		// maps add nothing short of R / 2. (Measuring the hand-over from march_end instead laid the maps over clouds
+		// the march had already drawn, from halfway along every ray: the maps' 230 m texels showed as soft squares
+		// and lanes of doubled cloud, worst from high up, where the layer ends well inside the range.) Only where the
+		// march ran out of steps short of march_end do the maps take over straight from where it stopped.
+		float R = p.ranges.y;
 		float t_done = min(t, march_end);
-		float f0 = min(t_done, march_end * 0.5);
-		float fa = max(f0, t0);
+		bool ran_out = t < march_end && T >= 0.01;
+		float fa = max(t0, ran_out ? min(t_done, 0.5 * R) : 0.5 * R);
 		if (t1 > fa && T > 0.01) {
 			float slant = 1.0 / max(abs(rd.y), 0.12);
 			for (int k = 0; k < 2; k++) {
@@ -399,7 +411,7 @@ void main() {
 				if (col.x <= 0.001) {
 					continue;
 				}
-				float fin = t_done < march_end * 0.5 ? 1.0 : smoothstep(f0, march_end, tk);
+				float fin = (ran_out && tk >= t_done) ? 1.0 : smoothstep(0.5 * R, R, tk);
 				// opacity along this ray: between the straight-down and the four-times slant values
 				float a_k = mix(col.x, col.w, saturate((min(slant, 4.0) - 1.0) / 3.0)) * fin;
 				float tr = 1.0 - a_k;
@@ -414,7 +426,7 @@ void main() {
 				vec3 n = normalize(vec3(-grad.x, 1.0, -grad.y));
 				float relief = clamp(0.55 + 0.45 * dot(n, L) / max(L.y, 0.2), 0.55, 1.3);
 				// only far away: where the march ran out before its range, up close, the map stands in plainly
-				sl *= mix(1.0, relief, frac * smoothstep(0.5 * march_end, march_end, tk));
+				sl *= mix(1.0, relief, frac * smoothstep(0.5 * R, R, tk));
 				float hgt = frac;
 				vec3 amb = mix(p.amb_bottom.rgb, p.amb_top.rgb, hgt) * p.sun_color.w;
 				amb += p.sun_color.rgb * p.sun_dir.w * 0.045 * (0.35 + 0.65 * hgt) * smoothstep(0.02, 0.35, L.y);

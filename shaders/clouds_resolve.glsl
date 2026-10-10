@@ -109,8 +109,8 @@ void main() {
 			}
 		}
 	}
-	if (p.ranges.w > 4.5 && p.ranges.w < 5.5) {
-		result = c;                    // debug 5: the raw march, no temporal pass
+	if ((p.ranges.w > 4.5 && p.ranges.w < 5.5) || p.ranges.w > 9.5) {
+		result = c;                    // debug 5, 11, 12: the raw march, no temporal pass
 	}
 	// the depth that goes with the accumulated colour: a cloud's edge is hit in some frames and missed in others,
 	// and the accumulated colour holds its average; this frame's own depth says "no cloud" half the time, and the
