@@ -24,7 +24,7 @@ const VORTEX := {"lifetime": 1.4, "sample": 0.025, "width": 0.3, "growth": 0.5, 
 const LERX := {"lifetime": 0.07, "sample": 0.012, "width": 1.0, "growth": 38.0, "fade_in": 0.0,
 	"color": Color(0.97, 0.98, 1.0), "opacity": 0.35, "wisp": 0.8, "self_lit": 0.2}
 const CONTRAIL := {"lifetime": 20.0, "sample": 0.2, "width": 1.6, "growth": 0.9, "fade_in": 0.18,
-	"color": Color(0.97, 0.98, 1.0), "opacity": 0.7, "wisp": 0.35, "self_lit": 0.1}
+	"color": Color(0.97, 0.98, 1.0), "opacity": 0.7, "wisp": 0.35, "self_lit": 0.1, "ab_glow": true}
 ## contrail lifetime (s) by weather: clear, scattered, broken, overcast, fog, rain (drier air: shorter trails)
 const CONTRAIL_LIFE := [12.0, 20.0, 35.0, 70.0, 30.0, 50.0]
 ## Missile motor smoke: dense and white near the missile, hanging for half a minute while it thins and spreads.

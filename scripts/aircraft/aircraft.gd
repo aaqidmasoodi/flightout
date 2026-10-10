@@ -165,6 +165,8 @@ var _gear_moving_visual := true
 var _vis_pos := Vector3.ZERO         # network correction still being blended out (view only)
 var _vis_rot := Quaternion.IDENTITY
 var _remote_crashed := false
+const SLAT_RATE := 30.0                # degrees per second (slat actuators)
+var _slat_deg := 0.0
 const REMOTE_DETAIL_FAR := 2500.0     # m: beyond this a remote jet's surfaces and gear are updated less often
 var _lod_dt := 0.0
 var _lod_n := 0
@@ -659,9 +661,15 @@ func _update_surfaces() -> void:
 	_set_surface("Stabilator_R", e + a * 0.4)
 	_set_surface("Flaperon_L", -a - fm.flap_pos * 30.0)
 	_set_surface("Flaperon_R", a - fm.flap_pos * 30.0)
-	var slat := maxf(fm.flap_pos, clampf((aoa_deg - 8.0) / 10.0, 0.0, 1.0)) * 28.0
-	_set_surface("Slat_L", slat)
-	_set_surface("Slat_R", slat)
+	# leading-edge slats: scheduled on angle of attack by the flight control system, as on the real jet. Below about
+	# 30 kt the angle of attack means nothing (a breeze or a gust over a parked jet swings it wildly), so the schedule
+	# only takes effect with real airflow, and the slats move at an actuator's pace instead of jumping with every
+	# gust. (Before, parked in a wind they flapped up and down endlessly.)
+	var airflow := clampf((fm.ias - 15.0) / 10.0, 0.0, 1.0)
+	var slat_want := maxf(fm.flap_pos, clampf((aoa_deg - 8.0) / 10.0, 0.0, 1.0) * airflow) * 28.0
+	_slat_deg = move_toward(_slat_deg, slat_want, SLAT_RATE * get_physics_process_delta_time())
+	_set_surface("Slat_L", _slat_deg)
+	_set_surface("Slat_R", _slat_deg)
 	_set_surface("Rudder_L", r)
 	_set_surface("Rudder_R", r)
 

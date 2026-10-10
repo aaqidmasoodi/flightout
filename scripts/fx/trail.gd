@@ -121,9 +121,25 @@ func _process(delta: float) -> void:
 			_push(pos, on)
 	visible = true
 	_mat.set_shader_parameter("live", Vector4(pos.x, pos.y, pos.z, on))
+	if preset.get("ab_glow", false):
+		# lit by the afterburner flame just behind the nozzle; it only shows against the dark
+		var ab := 0.0 if _orphan else clampf(float(anchor.get("ab_stage")), 0.0, 1.0)
+		var dark := 1.0 - smoothstep(-0.05, 0.2, _sun_y())
+		var f := ab * dark * 2.5
+		if f != _flame:
+			_flame = f
+			_mat.set_shader_parameter("flame", f)
 	_mat.set_shader_parameter("now", _clock)
 	_mat.set_shader_parameter("head", _head)
 	_mat.set_shader_parameter("count", _count)
+
+
+var _flame := 0.0
+
+
+static func _sun_y() -> float:
+	var s = RenderingServer.global_shader_parameter_get("sun_dir")
+	return (s as Vector3).y if s is Vector3 else 1.0
 
 
 func _push(p: Vector3, on: float) -> void:

@@ -25,12 +25,16 @@ uniform vec4 color : source_color = vec4(1.0);
 uniform float opacity = 0.6;
 uniform float wisp = 0.5;             // how broken up (noise) the ribbon looks
 uniform float self_lit = 0.0;         // extra brightness in daylight: smoke and vapour scatter sunlight from every side
+uniform float flame = 0.0;            // afterburner light on the trail right behind the nozzle (engine trails only)
+uniform float flame_reach = 45.0;     // metres it reaches along the trail, fading
+uniform vec3 flame_color : source_color = vec3(1.0, 0.5, 0.18);
 global uniform vec3 sun_dir;
 
 varying float v_alpha;
 varying float v_side;
 varying float v_birth;
 varying float v_age;
+varying float v_flame;
 
 vec4 pt(int j) {
 	if (j <= 0) {
@@ -82,6 +86,7 @@ void vertex() {
 	VERTEX = pos + side * UV.y * w * 0.5;
 	NORMAL = to_cam;
 	v_side = UV.y;
+	v_flame = flame > 0.0 ? flame * exp(-length(pos - live.xyz) / flame_reach) : 0.0;
 	v_birth = birth;
 	v_age = age;
 }
@@ -97,7 +102,7 @@ void fragment() {
 	float body = mix(1.0, smoothstep(0.25, 0.75, n * 0.65 + n2 * 0.35), wisp);
 	ALPHA = clamp(v_alpha * opacity * across * across * body, 0.0, 1.0);
 	ALBEDO = color.rgb;
-	EMISSION = color.rgb * self_lit * smoothstep(-0.05, 0.25, sun_dir.y);
+	EMISSION = color.rgb * self_lit * smoothstep(-0.05, 0.25, sun_dir.y) + flame_color * v_flame;
 	ROUGHNESS = 1.0;
 	BACKLIGHT = color.rgb * 0.6;       // sunlight through the vapour
 }

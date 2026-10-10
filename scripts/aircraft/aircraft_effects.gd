@@ -22,6 +22,9 @@ var _set := {}
 var _lamp_on := {}                      # lamp name -> state last applied (lights are only touched when they change)
 var _night_set := -1.0
 var _eng_set := -1.0
+var _ab_light: OmniLight3D
+const AB_LIGHT_ENERGY := 3.0
+const AB_LIGHT_RANGE := 11.0
 
 ## Which exterior lights each type really has (anything not listed: the full set). The Su-27S carries steady
 ## navigation lights (red left, green right, white tail), no anti-collision beacons, no strobes and no formation
@@ -98,6 +101,33 @@ func setup(ac: Node3D, mdl: Node3D) -> void:
 		trails.name = "Trails"
 		add_child(trails)
 		trails.setup(ac, mdl)
+	# the afterburner's light on the jet's own tail and fins, and on the runway or ground below: one small light
+	# between the nozzles, no shadows, short reach, off unless the burner is lit (and faded out with distance)
+	var nz: Array = []
+	for n in ["AfterburnerFlame_L", "AfterburnerFlame_R", "Afterburner_L", "Afterburner_R"]:
+		var a := model.find_child(n, true, false) as Node3D
+		if a:
+			nz.append(ac.to_local(a.global_position) if a.is_inside_tree() else (model.transform * a.position))
+	if not nz.is_empty():
+		var c := Vector3.ZERO
+		for p in nz:
+			c += p
+		c /= nz.size()
+		_ab_light = OmniLight3D.new()
+		_ab_light.name = "AfterburnerLight"
+		_ab_light.light_color = Color(1.0, 0.55, 0.24)
+		_ab_light.omni_range = AB_LIGHT_RANGE
+		_ab_light.omni_attenuation = 1.4
+		_ab_light.light_energy = 0.0
+		_ab_light.light_specular = 0.3
+		_ab_light.shadow_enabled = false
+		_ab_light.light_cull_mask = ~COCKPIT_LAYER & 0xFFFFF
+		_ab_light.distance_fade_enabled = true
+		_ab_light.distance_fade_begin = 300.0
+		_ab_light.distance_fade_length = 100.0
+		_ab_light.position = c + Vector3(0.0, 0.0, 2.5)        # a little behind the nozzles, in the flame
+		_ab_light.visible = false
+		ac.add_child(_ab_light)
 	_flame_mat = ShaderMaterial.new()
 	_flame_mat.shader = FLAME_SHADER
 	for n in ["AfterburnerFlame_L", "AfterburnerFlame_R"]:
@@ -251,6 +281,13 @@ func _process(delta: float) -> void:
 			s.visible = beams
 			s.light_energy = float(s.get_meta("on_energy", 6.0)) if beams else 0.0
 
+	# afterburner light: follows the burner, with the flame's flicker
+	if _ab_light:
+		var abl := clampf((float(aircraft.engine) - AB_THRESHOLD) / (1.0 - AB_THRESHOLD), 0.0, 1.0)
+		_ab_light.visible = abl > 0.02
+		if _ab_light.visible:
+			var flick := 1.0 + 0.07 * sin(_t * 37.0) + 0.05 * sin(_t * 23.3 + 1.7) + 0.03 * sin(_t * 61.0)
+			_ab_light.light_energy = AB_LIGHT_ENERGY * abl * flick
 	# afterburner: glow inside the nozzle follows the engine, flame appears in reheat
 	var eng: float = aircraft.engine
 	if eng == _eng_set:
