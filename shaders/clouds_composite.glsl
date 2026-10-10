@@ -28,7 +28,8 @@ vec4 trimmed(ivec2 hp, float dist) {
 	vec4 c = texelFetch(cloud_color, hp, 0);
 	vec2 d = texelFetch(cloud_depth, hp, 0).xy;
 	if (d.x >= 1e8) {
-		return vec4(0.0, 0.0, 0.0, 1.0);
+		// no depth for it (rare: see clouds_resolve.glsl): against the sky the accumulated cloud is still right
+		return dist >= 1e8 ? c : vec4(0.0, 0.0, 0.0, 1.0);
 	}
 	// fraction of this sample's cloud that lies in front of the pixel's surface
 	float k = clamp((dist - d.x) / max(d.y - d.x, 30.0), 0.0, 1.0);

@@ -112,6 +112,14 @@ void main() {
 	if (p.ranges.w > 4.5) {
 		result = c;                    // debug 5: the raw march, no temporal pass
 	}
+	// the depth that goes with the accumulated colour: a cloud's edge is hit in some frames and missed in others,
+	// and the accumulated colour holds its average; this frame's own depth says "no cloud" half the time, and the
+	// composite (which trims by depth) then dropped the averaged cloud there: a hard grain along every edge. Where
+	// this frame missed but the picture still holds cloud, take the span of the clouds around it.
+	vec4 dout = d;
+	if (d.x >= 1e8 && result.a < 0.998 && dmax > 0.0) {
+		dout = vec4(dmin, dmax, 0.5 * (dmin + dmax), 0.0);
+	}
 	imageStore(out_color, px, result);
-	imageStore(out_depth, px, d);
+	imageStore(out_depth, px, dout);
 }
