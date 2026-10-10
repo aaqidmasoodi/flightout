@@ -99,6 +99,7 @@ var _far_centre := [Vector2.ZERO, Vector2.ZERO]   # wind space
 var _far_valid := [false, false]
 var _far_row := 0                 # next row of the copy being built
 var _cam_pending := false
+var _cam_frame := 0
 var _raw_color := RID()
 var _raw_depth := RID()
 var _hist_color := [RID(), RID()]
@@ -127,12 +128,13 @@ var _ready_frame := false       # this frame's parameters are in the buffer (the
 
 
 class ShadowPass extends CompositorEffect:
-	var fx
+	var fx: WeakRef
 	func _init() -> void:
 		effect_callback_type = EFFECT_CALLBACK_TYPE_PRE_OPAQUE
 	func _render_callback(_type: int, render_data: RenderData) -> void:
-		if fx:
-			fx._shadow_callback(render_data)
+		var f = fx.get_ref() if fx else null
+		if f:
+			f._shadow_callback(render_data)
 
 
 func _init() -> void:
@@ -146,7 +148,7 @@ func _init() -> void:
 	# with MSAA the depth the clouds are trimmed against must be resolved first (no-op without MSAA)
 	access_resolved_depth = true
 	shadow_pass = ShadowPass.new()
-	shadow_pass.fx = self
+	shadow_pass.fx = weakref(self)
 	WorldData.origin_shifted.connect(_on_origin_shifted)
 	_rd = RenderingServer.get_rendering_device()
 	if _rd == null:
@@ -275,8 +277,14 @@ func _all_targets() -> Array:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE and _rd:
+		# the far map's per-level views first: they depend on the far map's textures
+		for lv in _far_levels[0] + _far_levels[1]:
+			if (lv as RID).is_valid() and _rd.texture_is_valid(lv):
+				_rd.free_rid(lv)
 		var rids: Array = _all_targets() + [_repeat_sampler, _clamp_sampler, _point_sampler, _ubo, _layer, _overlay,
-			_shape, _detail, _weather, _sh[0], _sh[1], _sh_info, _cam_buf, _far[0], _far[1]]
+			_shape, _detail, _weather, _sh[0], _sh[1], _sh_info, _far[0], _far[1]]
+		if not _cam_pending:
+			rids.append(_cam_buf)      # (a readback may still be reading it: then it goes with the device)
 		for k in _pipes:
 			rids.append(_pipes[k][1])
 			rids.append(_pipes[k][0])
@@ -484,6 +492,14 @@ func _shadow_callback(render_data: RenderData) -> void:
 		_slab_bottom(), 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 	_rd.texture_update(_sh_info, 0, info.to_byte_array())
 	_sh_phase = (_sh_phase + 1) % SH_ROWS
+	if _cam_arrived:
+		_cam_arrived = false
+		_cam_pending = false
+		if _cam_result >= 0.0:
+			cam_od = _cam_result
+			cam_od_valid = true
+	elif _cam_pending and _frame - _cam_frame > 30:
+		_cam_pending = false               # (a readback that never came back: ask again)
 	var read_cam := not _cam_pending
 	for c in 2:
 		var n := SH0_N if c == 0 else SH1_N
@@ -493,15 +509,21 @@ func _shadow_callback(render_data: RenderData) -> void:
 		_dispatch("shadow", u, Vector2i(n, n / rows), PackedFloat32Array([float(c), float(phase), float(rows), 1.0 if (read_cam and c == 0) else 0.0]))
 	if read_cam:
 		_cam_pending = true
-		_rd.buffer_get_data_async(_cam_buf, _on_cam_light)
+		# a callback on the script, not on this effect: the readback can complete after the effect is gone (at quit),
+		# and a callback into a freed object crashed the game on exit
+		_cam_frame = _frame
+		_rd.buffer_get_data_async(_cam_buf, Callable(get_script(), "_on_cam_light"))
 	_ready_frame = true
 
 
-func _on_cam_light(data: PackedByteArray) -> void:
-	_cam_pending = false
+static var _cam_result := -1.0
+static var _cam_arrived := false
+
+
+static func _on_cam_light(data: PackedByteArray) -> void:
+	_cam_arrived = true
 	if data.size() >= 4:
-		cam_od = data.decode_float(0)
-		cam_od_valid = true
+		_cam_result = data.decode_float(0)
 
 
 ## The lowest any cloud can be (true height), and the highest.
