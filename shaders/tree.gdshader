@@ -10,6 +10,10 @@ uniform float near_radius = 1100.0;
 uniform float band = 220.0;
 uniform float density = 1.0;          // fraction of trees drawn (lower presets thin forests evenly)
 uniform float min_pixels = 2.5;      // trees shorter than this on screen are left to the canopy texture
+// the end of this cell of trees' range (scripts/world/cover_forest.gd): towards it the trees thin out, each at its own
+// distance, so none is left when the cell stops being drawn
+instance uniform float fade_end = 1e9;
+instance uniform float fade_len = 900.0;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 
@@ -31,7 +35,8 @@ void vertex() {
 	// gradually (each tree has its own threshold), and the terrain's canopy texture carries the forest from there
 	float tree_h = length(MODEL_MATRIX[1].xyz) * 14.0;
 	float px = tree_h * abs(PROJECTION_MATRIX[1][1]) * 0.5 * VIEWPORT_SIZE.y / max(d, 1.0);   // y scale is negative under Vulkan
-	if (px < mix(min_pixels, min_pixels * 2.5, h) || hash(mo * 0.071 + 3.7) > density) {
+	if (px < mix(min_pixels, min_pixels * 2.5, h) || hash(mo * 0.071 + 3.7) > density
+			|| d > fade_end - fade_len * hash(mo * 0.037 + 1.9)) {
 		mine = false;
 	}
 	v_sun = 1.0;

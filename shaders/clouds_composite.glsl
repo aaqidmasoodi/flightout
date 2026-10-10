@@ -72,6 +72,10 @@ void main() {
 		}
 	}
 	cl = clamp(cl, lo, hi);
+	if (p.ranges.w > 2.5) {
+		// debug 3: this pixel's scene distance (red: km / 10, green: under 3 km), opaque
+		cl = vec4(min(dist / 10000.0, 1.0), dist < 3000.0 ? 1.0 : 0.0, 0.0, 0.0);
+	}
 	imageStore(overlay_img, px, cl);
 	float front = 1e9;
 	float back = 0.0;

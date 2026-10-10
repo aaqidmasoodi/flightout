@@ -115,7 +115,7 @@ func _apply_settings() -> void:
 		m.set_shader_parameter("near_radius", _near_radius)
 	for c in _cells:
 		for n in _cells[c].nodes:
-			(n as GeometryInstance3D).visibility_range_end = _range * (1.0 if n.has_meta("core") else FILL_RANGE)
+			_set_range(n as GeometryInstance3D, _range * (1.0 if n.has_meta("core") else FILL_RANGE), n.has_meta("core"))
 	_last_cam = Vector2(INF, INF)
 	_near_center = Vector2(INF, INF)
 
@@ -330,16 +330,26 @@ func _add_cell(r: Dictionary) -> void:
 		mmi.multimesh = mm
 		mmi.position = Vector3(o.x, 0.0, o.y)
 		mmi.material_override = _far_mat
-		mmi.visibility_range_end = _range if core else _range * FILL_RANGE
-		mmi.visibility_range_end_margin = 600.0 if core else 400.0
 		if core:
 			mmi.set_meta("core", true)
-		mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+		_set_range(mmi, _range if core else _range * FILL_RANGE, core)
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		add_child(mmi)
 		nodes.append(mmi)
 		planted += int(st[2])
 	_cells[c] = {"nodes": nodes, "near": r.near}
+
+
+## How far a cell of trees reaches. The trees thin out towards the end one by one (shaders/tree.gdshader, `fade_end`),
+## so the cell is empty when the engine stops drawing it: no pop. (Not the engine's own fade: a fading instance is
+## drawn with the transparent things, after the clouds, so distant forest showed through them as dark dots.)
+func _set_range(g: GeometryInstance3D, end: float, core: bool) -> void:
+	var margin := 600.0 if core else 400.0
+	g.visibility_range_end = end + margin
+	g.visibility_range_end_margin = 0.0
+	g.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED
+	g.set_instance_shader_parameter("fade_end", end + margin * 0.5)
+	g.set_instance_shader_parameter("fade_len", margin * 1.5)
 
 
 ## MultiMesh instance data (3x4 transform rows, then RGBA) for a list of [Transform3D, Color], shifted by -offset.

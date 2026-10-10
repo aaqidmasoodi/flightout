@@ -49,7 +49,10 @@ void fragment() {
 		s += smoothstep(0.93, 0.97, vnoise(lpos * 900.0)) * 0.5 * scratches;
 	}
 	float h = haze * smoothstep(0.35, 0.85, vnoise(lpos * 5.0));
-	ALBEDO = tint * (0.55 + 0.45 * h);
+	// clear acrylic scatters almost nothing itself: what you see on it is reflection (the specular below, growing
+	// with the Fresnel term). Only its haze and scratches scatter light diffusely. A diffuse colour on the whole
+	// pane lit the glass milky white at grazing angles in sunlight (the glare seen on the canopy from behind).
+	ALBEDO = tint * mix(0.06, 0.55, clamp(h + s, 0.0, 1.0));
 	ROUGHNESS = clamp(roughness_base + s * 0.45 + h * 0.35, 0.0, 1.0);
 	METALLIC = 0.0;
 	SPECULAR = 0.7;
