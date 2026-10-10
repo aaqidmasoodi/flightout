@@ -321,7 +321,7 @@ void main() {
 					} else {
 						// the map's mip level for this pixel's footprint on it, stretched along the ray at a grazing
 						// view (the larger of the two: blur rather than alias into streaks)
-						float fp = tk * pix * sqrt(min(slant, 8.0));
+						float fp = tk * pix * min(slant, 8.0);
 						col = textureLod(far_tex, uv, max(log2(fp / FAR_TEXEL), 0.0));
 					}
 					float y_true = mix(col.y, col.z, frac);
@@ -407,6 +407,13 @@ void main() {
 		imageStore(out_color, px, first < NO_CLOUD ? vec4(0.0, 1.0 - T, 0.0, 0.0) : vec4(0.3, 0.0, 0.0, 0.0));
 		imageStore(out_depth, px, vec4(100.0, 200.0, 150.0, 0.0));
 		return;
+	}
+	// the march stops once only 1 % of the light behind gets through; that remainder is not real (the cloud goes
+	// on), and against a dark night a bright lamp behind a deck showed through it. Opaque, with the light gathered
+	// so far scaled up to the whole.
+	if (T < 0.0101) {
+		S /= max(1.0 - T, 1e-4);
+		T = 0.0;
 	}
 	float wd = wsum > 1e-4 ? wdist / wsum : NO_CLOUD;
 	imageStore(out_color, px, vec4(S, T));
