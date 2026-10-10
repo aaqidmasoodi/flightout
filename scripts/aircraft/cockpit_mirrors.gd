@@ -27,9 +27,9 @@ const BEZEL := 0.006
 # (aircraft space: forward -Z, right +X, up +Y) and how wide a view it shows (degrees, across).
 # From the eye (0, 1.18, -5.5) the fin tips are about 13 degrees out and 16 up, the wingtips 49 out and 8 down.
 const MIRRORS := [
-	[0.0, 0.26, 0.075, Vector3(0.0, 0.17, 1.0), 46.0],     # both fins and the spine, the sky above and behind
-	[-62.0, 0.22, 0.07, Vector3(-0.64, -0.03, 1.0), 46.0], # left: from the left fin out to the left wingtip
-	[62.0, 0.22, 0.07, Vector3(0.64, -0.03, 1.0), 46.0],   # right: from the right fin out to the right wingtip
+	[0.0, 0.26, 0.075, Vector3(0.0, 0.09, 1.0), 46.0],     # both fins and the spine, the sky above and behind
+	[-62.0, 0.22, 0.07, Vector3(-0.64, 0.0, 1.0), 46.0], # left: from the left fin out to the left wingtip
+	[62.0, 0.22, 0.07, Vector3(0.64, 0.0, 1.0), 46.0],   # right: from the right fin out to the right wingtip
 ]
 const NEAR := 0.35                           # clears the pilot's own head and shoulders
 
@@ -72,10 +72,9 @@ func build(aircraft: Node3D, root: Node3D, pads: MeshInstance3D, eye: Vector3, m
 		var tangent := Vector3(cos(th), -sin(th), 0.0)        # along the arch, left to right
 		# on the arch's face, in the middle of its band (the glass covers the frame there)
 		var on_arch := Vector3(0.0, ARCH_Y, ARCH_FACE) + radial * _arch_r(deg)
-		# glass normal: halfway between "towards the eye" and "towards what it should show" (a few degrees off the
-		# arch's own face, so the mirrors sit almost flat on it)
+		# glass normal: mostly towards the eye (so you see the whole glass), turned a little towards what it shows
 		var look := (spec[3] as Vector3).normalized()
-		var n := ((eye - on_arch).normalized() + look).normalized()
+		var n := ((eye - on_arch).normalized() * 3.0 + look).normalized()
 		var mount := on_arch + n * STANDOFF
 		var x := (tangent - n * tangent.dot(n)).normalized()
 		var y := n.cross(x).normalized()
