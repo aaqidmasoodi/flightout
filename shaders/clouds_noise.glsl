@@ -66,9 +66,26 @@ float worley(vec3 x, float period) {
 	return 1.0 - clamp(sqrt(d), 0.0, 1.0);
 }
 
+// Octaves no finer than four texels per cell (size / 4 cells across the volume): finer ones cannot be held by the
+// texels and alias into regular stripes (stretched upright for cumulus towers, they showed as horizontal ripples).
+float max_freq() {
+	return pc.a.x / 4.0;
+}
+
 float worley_fbm(vec3 uvw, float freq) {
-	return worley(uvw * freq, freq) * 0.625 + worley(uvw * freq * 2.0, freq * 2.0) * 0.25
-		+ worley(uvw * freq * 4.0, freq * 4.0) * 0.125;
+	float s = 0.0;
+	float n = 0.0;
+	float a = 0.625;
+	float f = freq;
+	for (int o = 0; o < 3; o++) {
+		if (f <= max_freq()) {
+			s += worley(uvw * f, f) * a;
+			n += a;
+		}
+		f *= 2.0;
+		a *= 0.4;
+	}
+	return n > 0.0 ? s / n : 0.5;
 }
 
 float perlin_fbm(vec3 uvw, float freq) {
@@ -76,7 +93,9 @@ float perlin_fbm(vec3 uvw, float freq) {
 	float a = 0.5;
 	float f = freq;
 	for (int o = 0; o < 5; o++) {
-		s += gnoise(uvw * f, f) * a;
+		if (f <= max_freq()) {
+			s += gnoise(uvw * f, f) * a;
+		}
 		f *= 2.0;
 		a *= 0.5;
 	}
