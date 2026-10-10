@@ -256,6 +256,7 @@ func _boresight() -> void:
 const FD_T_LAT := 14.0            # s to take out a lateral offset (sets how firmly it turns you onto the centreline)
 const FD_T_VERT := 7.0            # s to take out a height error against the slope
 const FD_MAX_INTERCEPT := deg_to_rad(30.0)
+const FD_RANGE := 4.0              # degrees: the cue never strays further than this from the flight path marker
 
 
 func _update_fd(delta: float) -> void:
@@ -285,12 +286,24 @@ func _update_fd(delta: float) -> void:
 func _flight_director() -> void:
 	if not _fd_on:
 		return
-	var d := Vector3(sin(_fd_trk) * cos(_fd_gam), sin(_fd_gam), -cos(_fd_trk) * cos(_fd_gam))
-	var f := _dir_deg(d)
-	if f.x == INF:
+	# shown against the flight path marker, as real HUD flight directors are: the cue sits where the marker must go
+	# (the commanded path minus the one you are on), up to FD_RANGE degrees from it, and on the marker when you
+	# are flying the commanded path
+	var v: Vector3 = ac.velocity
+	if v.length() < 15.0:
 		return
+	var cur := atan2(v.x, -v.z)
+	var cur_g := asin(clampf(v.normalized().y, -1.0, 1.0))
+	var off := Vector2(rad_to_deg(wrapf(_fd_trk - cur, -PI, PI)), rad_to_deg(_fd_gam - cur_g))
+	off = off.limit_length(FD_RANGE)
+	var fp := _fpm()
 	if bool(ac.get("fpm_caged")):
-		f.x -= _fpm().x                    # caged: steer the caged marker onto it (the drift is taken out of both)
+		fp.x = 0.0                         # caged: steer the caged marker onto it
+	# the offset is in the horizon's frame: turn it with the bank, as the marker sees it
+	var bank := deg_to_rad(float(_attitude()[1]))
+	# (banked right, the horizon tilts anticlockwise: world-right is (cos, sin), world-up (-sin, cos) in degrees up)
+	var o := Vector2(off.x * cos(bank) - off.y * sin(bank), off.x * sin(bank) + off.y * cos(bank))
+	var f := fp + o
 	var p := _deg(clampf(f.x, -WIN_AZ + 0.6, WIN_AZ - 0.6), clampf(f.y, WIN_BOT + 0.6, WIN_TOP - 0.6))
 	draw_arc(p, 6.5, 0, TAU, 20, GREEN, LW)
 	draw_circle(p, 2.2, GREEN)
