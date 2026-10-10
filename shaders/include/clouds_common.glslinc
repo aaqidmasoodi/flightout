@@ -142,7 +142,8 @@ float density_in(vec3 mp, Column c, float lod, float detail_amt, out float h_out
 		// the real pattern while it is sharp; blurred (a coarse level), it would carve smooth folds: its average
 		m = mix(mp_, M_MEAN, smoothstep(0.75, 2.25, dlod));
 	}
-	float amt = detail_amt < -0.5 ? 0.25 : 0.4;
+	// cumulus billow; a stratus sheet is smooth on top (full erosion pitted the decks with dark holes)
+	float amt = (detail_amt < -0.5 ? 0.25 : 0.4) * mix(1.0, 0.35, c.type);
 	d = remap(d, m * amt, 1.0, 0.0, 1.0) * c.cov;
 	return max(d, 0.0) * c.dens;
 }
