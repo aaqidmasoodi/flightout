@@ -42,7 +42,7 @@ static func column(map_x: float, map_z: float, fx) -> Dictionary:
 	var w := sample(map_x, map_z, fx.wind)
 	var var_k: float = fx.variability
 	var type := clampf(float(fx.stratus) + (w.g - 0.5) * 0.9 * var_k, 0.0, 1.0)
-	var cov := float(fx.coverage) + (w.r - 0.5) * 0.85 * var_k + (w.a - 0.5) * 0.55 * var_k * (1.0 - type)
+	var cov := float(fx.coverage) + (w.r - 0.5) * 0.5 * var_k + (w.a - 0.5) * 0.4 * var_k * (1.0 - type)
 	var g2: Vector2 = CloudGround.at(map_x, map_z)
 	var g := lerpf(g2.x, g2.y, float(fx.ground_mix))
 	var hv := (w.b - 0.5) * float(fx.height_variation)
@@ -50,4 +50,4 @@ static func column(map_x: float, map_z: float, fx) -> Dictionary:
 	var depth := maxf(float(fx.top) - float(fx.base), 60.0)
 	var tower := lerpf(lerpf(0.55, 1.3, w.a), 1.0, type)
 	var top := base + depth * tower + hv * 0.4 * (1.0 - type)
-	return {"base": base, "top": top, "cov": clampf(cov, 0.0, 1.0), "type": type}
+	return {"base": base, "top": top, "cov": pow(clampf(cov, 0.0, 1.0), 1.5), "type": type}

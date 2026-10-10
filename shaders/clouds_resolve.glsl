@@ -53,7 +53,16 @@ void main() {
 		vec4 vfar = p.inv_proj * vec4(uv * 2.0 - 1.0, 0.5, 1.0);
 		vec3 rd = normalize(mat3(p.cam_xform) * normalize(vfar.xyz / vfar.w));
 		bool has = d.z < 1e8;
-		float rep_t = has ? d.z : 60000.0;
+		// a pixel without cloud reprojects where its ray meets the cloud layer, like its neighbours with cloud do:
+		// at a gap's edge both then move together, and the edge does not shimmer
+		float rep_t = 60000.0;
+		if (has) {
+			rep_t = d.z;
+		} else if (abs(rd.y) > 1e-3) {
+			float mid = 0.5 * (p.cirrus.w + p.lights_n.y);
+			float tm = (mid - p.cam_pos.y) / rd.y;
+			rep_t = tm > 0.0 ? clamp(tm, 500.0, 60000.0) : 60000.0;
+		}
 		vec3 wp = p.cam_pos.xyz + rd * rep_t;
 		if (has) {
 			wp.xz -= p.wind.zw;               // clouds drift with the wind: where was this cloud last frame

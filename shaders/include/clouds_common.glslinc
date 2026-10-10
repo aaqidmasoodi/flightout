@@ -14,7 +14,7 @@
 
 // (the parameters: clouds_params.glslinc, included before this file)
 
-const float SHAPE_SCALE = 4800.0;      // metres per tile of the shape noise
+const float SHAPE_SCALE = 3400.0;      // metres per tile of the shape noise (cumulus of a few hundred metres to 1 km)
 const float DETAIL_SCALE = 420.0;      // metres per tile of the detail noise
 const float WEATHER_SIZE = 409600.0;   // metres per tile of the weather map (1024 texels of 400 m)
 const float EXT = 0.075;               // extinction per metre per unit of density
@@ -49,9 +49,11 @@ Column column(vec2 map_xz) {
 	Column c;
 	c.type = saturate(p.shape.x + (w.g - 0.5) * 0.9 * var);
 	// regional coverage, then the clustering of the cumulus inside it (none for a stratus sheet)
-	float cov = p.layer.z + (w.r - 0.5) * 0.85 * var;
-	cov += (w.a - 0.5) * 0.55 * var * (1.0 - c.type);
-	c.cov = saturate(cov);
+	float cov = p.layer.z + (w.r - 0.5) * 0.5 * var;
+	cov += (w.a - 0.5) * 0.4 * var * (1.0 - c.type);
+	// the preset's coverage is the share of the sky covered seen from below or above; a column is covered if it
+	// meets cloud at any height, so each height needs less: 0.42 (scattered) -> 0.27, 0.82 (overcast) -> 0.74
+	c.cov = pow(saturate(cov), 1.5);
 	float g = layer_ground(map_xz);
 	float hv = (w.b - 0.5) * p.amb_bottom.w;
 	c.base = g + p.layer.x + hv;
