@@ -109,7 +109,8 @@ func set_value(key: String, value) -> void:
 		return
 	_values[key] = value
 	_apply(key)
-	save()
+	if not _applying_preset:
+		save()                                   # a preset writes the file once, after all its options
 	changed.emit(key, value)
 	if key == "graphics/preset" and int(value) < PRESETS.size():
 		_applying_preset = true
@@ -117,6 +118,7 @@ func set_value(key: String, value) -> void:
 		for k in p:
 			set_value(k, p[k])
 		_applying_preset = false
+		save()
 	elif not _applying_preset and int(get_value("graphics/preset")) < PRESETS.size():
 		var p2: Dictionary = PRESETS[int(get_value("graphics/preset"))]
 		if p2.has(key) and p2[key] != value:

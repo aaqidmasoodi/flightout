@@ -950,6 +950,9 @@ func _physics_process(delta: float) -> void:
 		for arg in OS.get_cmdline_user_args():
 			if arg.begins_with("--press-torch-at="):
 				_dev_press = arg.get_slice("=", 1).to_float()
+		if _dev_press == -1.0:
+			set_physics_process(false)            # not testing: nothing more to do here
+			return
 	if _dev_press > 0.0 and _dev_t >= _dev_press:
 		_dev_press = -2.0
 		var ev := InputEventAction.new()
@@ -962,6 +965,7 @@ func _physics_process(delta: float) -> void:
 		ev.action = "toggle_torch"
 		ev.pressed = false
 		Input.parse_input_event(ev)
+		set_physics_process(false)
 
 func _update_torch(delta: float) -> void:
 	var cam := get_viewport().get_camera_3d()
