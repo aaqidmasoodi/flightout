@@ -156,6 +156,8 @@ var _prev_ias := 0.0
 var _ias_rate := 0.0
 var _tog := 0                        # local switch counters, 2 bits each (see FlightModel.apply_input)
 var _shown := {}                     # switch states the visuals currently show
+var _shown_bits := -1                # the same states packed (a quick check before building the dictionary)
+var _gear_moving_visual := true
 var _vis_pos := Vector3.ZERO         # network correction still being blended out (view only)
 var _vis_rot := Quaternion.IDENTITY
 var _remote_crashed := false
@@ -595,7 +597,14 @@ func _event(text: String) -> void:
 func _set_surface(n: String, deg: float) -> void:
 	if _surfaces.has(n):
 		var e: Array = _surfaces[n]
+		# only when it moved (most ticks the surfaces hold still): every write re-transforms the part and its children
+		if e.size() > 2 and absf(float(e[2]) - deg) < 0.005:
+			return
 		(e[0] as Node3D).transform.basis = (e[1] as Basis) * Basis(Vector3.RIGHT, deg_to_rad(deg))
+		if e.size() > 2:
+			e[2] = deg
+		else:
+			e.append(deg)
 
 
 func _update_surfaces() -> void:
@@ -615,6 +624,9 @@ func _update_surfaces() -> void:
 
 
 func _update_gear_visuals(delta: float) -> void:
+	if fm.gear_pos < 0.01 and not gear_player.is_playing() and not _gear_moving_visual:
+		return                    # gear up and stowed: nothing to move
+	_gear_moving_visual = fm.gear_pos >= 0.01 or gear_player.is_playing()
 	var locked := fm.gear_pos > 0.98 and not gear_player.is_playing()
 	if _nose_gear:
 		var st := rad_to_deg(fm.steer) if locked else 0.0
@@ -645,7 +657,17 @@ func _switches() -> Dictionary:
 
 ## Animations and switch sounds follow the simulation's switch states, whoever changed them (this pilot, a
 ## replay, or a remote jet's snapshot), so every jet looks the same on every screen.
+func _switch_bits() -> int:
+	return int(fm.gear_down) | int(fm.flaps) << 1 | int(fm.airbrake) << 2 | int(fm.limiter) << 3 \
+		| int(fm.canopy_open) << 4 | int(fm.radar_on) << 5 | int(fm.radome_open) << 6 | int(fm.lights_on) << 7 \
+		| int(fm.master_mode) << 8
+
+
 func _sync_switches() -> void:
+	var bits := _switch_bits()
+	if bits == _shown_bits:
+		return                    # nothing switched since the last tick (almost always)
+	_shown_bits = bits
 	var now := _switches()
 	if now.gear != _shown.gear:
 		gear_player.speed_scale = gear_player.get_animation("gear_extend").length / spec.gear_transit_time

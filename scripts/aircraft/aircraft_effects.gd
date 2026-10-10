@@ -19,6 +19,9 @@ var _flame_mat: ShaderMaterial
 var _landing: Array[SpotLight3D] = []
 var _halos := {}                        # lamp name -> billboard glow (the point of light seen from a distance)
 var _set := {}
+var _lamp_on := {}                      # lamp name -> state last applied (lights are only touched when they change)
+var _night_set := -1.0
+var _eng_set := -1.0
 
 ## Which exterior lights each type really has (anything not listed: the full set). The Su-27S carries steady
 ## navigation lights (red left, green right, white tail), no anti-collision beacons, no strobes and no formation
@@ -72,6 +75,11 @@ func setup(ac: Node3D, mdl: Node3D) -> void:
 			spot.light_energy = 0.0
 			spot.set_meta("on_energy", float(e[4]))
 			spot.light_cull_mask = ~COCKPIT_LAYER & 0xFFFFF
+			spot.visible = false
+			# a jet far away lights nothing you can see: its spot drops out of the light lists
+			spot.distance_fade_enabled = true
+			spot.distance_fade_begin = float(e[3]) + 500.0
+			spot.distance_fade_length = 300.0
 			lamp.add_child(spot)
 			_landing.append(spot)
 
@@ -127,6 +135,10 @@ func _add_lamp(n: String, color: Color, emission: float, energy: float, light_ra
 		light.light_energy = 0.0
 		light.shadow_enabled = false
 		light.light_cull_mask = ~COCKPIT_LAYER & 0xFFFFF   # never lights the cockpit interior
+		light.visible = false
+		light.distance_fade_enabled = true                  # a glow on the skin a few metres across: not from afar
+		light.distance_fade_begin = 250.0
+		light.distance_fade_length = 100.0
 		mi.add_child(light)
 	if halo > 0.0:
 		# the lamp as seen from a distance: a soft point of light that keeps its size on screen (fixed size),
@@ -177,8 +189,9 @@ static func _halo_tex() -> Texture2D:
 
 
 func _set_lamp(n: String, on: bool) -> void:
-	if not _lamps.has(n):
+	if not _lamps.has(n) or _lamp_on.get(n) == on:
 		return
+	_lamp_on[n] = on
 	var e: Dictionary = _lamps[n]
 	var m: StandardMaterial3D = e.mat
 	m.emission_energy_multiplier = e.emission if on else 0.0
@@ -187,6 +200,7 @@ func _set_lamp(n: String, on: bool) -> void:
 		# lights the airframe and the ground around it (never the cockpit interior: see its cull mask), so from
 		# your own cockpit you see the glow on the wings and nose
 		l.light_energy = e.energy if on else 0.0
+		l.visible = on
 	if _halos.has(n):
 		(_halos[n] as Node3D).visible = on
 
@@ -208,11 +222,13 @@ func _process(delta: float) -> void:
 	var night := 1.0
 	if env:
 		night = clampf((env.tonemap_exposure - 0.85) / 1.15, 0.12, 1.0)
-	for hn in _halos:
-		var hq := _halos[hn] as MeshInstance3D
-		var hmat := hq.material_override as StandardMaterial3D
-		var base: Color = _lamps[hn].mat.emission
-		hmat.albedo_color = Color(base.r, base.g, base.b, 1.0) * 2.2 * night
+	if absf(night - _night_set) > 0.005:
+		_night_set = night
+		for hn in _halos:
+			var hq := _halos[hn] as MeshInstance3D
+			var hmat := hq.material_override as StandardMaterial3D
+			var base: Color = _lamps[hn].mat.emission
+			hmat.albedo_color = Color(base.r, base.g, base.b, 1.0) * 2.2 * night
 	# navigation lights: steady
 	for n in ["Light_Nav_L", "Light_Nav_R", "Light_Tail_L", "Light_Tail_R"]:
 		_set_lamp(n, on)
@@ -228,11 +244,18 @@ func _process(delta: float) -> void:
 	var land: bool = on and aircraft.gear_down and not aircraft.gear_player.is_playing()
 	_set_lamp("Light_Landing_L", land)
 	_set_lamp("Light_Landing_R", land)
+	# the beams themselves only in poor light (by day they light nothing you would notice)
+	var beams := land and night > 0.3
 	for s in _landing:
-		s.light_energy = float(s.get_meta("on_energy", 6.0)) if land else 0.0
+		if s.visible != beams:
+			s.visible = beams
+			s.light_energy = float(s.get_meta("on_energy", 6.0)) if beams else 0.0
 
 	# afterburner: glow inside the nozzle follows the engine, flame appears in reheat
 	var eng: float = aircraft.engine
+	if eng == _eng_set:
+		return
+	_eng_set = eng
 	var ab := clampf((eng - AB_THRESHOLD) / (1.0 - AB_THRESHOLD), 0.0, 1.0)
 	for m in _glow_mats:
 		m.emission_energy_multiplier = 0.15 + eng * 0.8 + ab * 6.0

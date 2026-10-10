@@ -108,12 +108,24 @@ func _bake(push: PackedByteArray) -> void:
 	_rd.compute_list_end()
 
 
-## Leaving the flight: the shaders go back to tracing (nothing) and the GPU resources are released.
+static var _placeholder: ImageTexture
+
+
+## Leaving the flight: the shaders stop reading the map (a 1x1 stand-in takes its place in the global, so nothing
+## points at a freed texture), and the GPU resources are released a couple of frames later, once no frame in
+## flight uses them any more.
 func release() -> void:
 	RenderingServer.global_shader_parameter_set("terrain_shadow_baked", 0.0)
+	if _placeholder == null:
+		var img := Image.create(1, 1, false, Image.FORMAT_RF)
+		img.set_pixel(0, 0, Color(1.0, 0.0, 0.0))
+		_placeholder = ImageTexture.create_from_image(img)
+	RenderingServer.global_shader_parameter_set("terrain_shadow_map", _placeholder)
 	_ready = false
 	if _rd:
-		RenderingServer.call_on_render_thread(_free_rd)
+		var tree := Engine.get_main_loop() as SceneTree
+		if tree:
+			tree.create_timer(0.25, true, false, true).timeout.connect(func(): RenderingServer.call_on_render_thread(_free_rd))
 
 
 func _free_rd() -> void:

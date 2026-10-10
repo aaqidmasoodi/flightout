@@ -9,14 +9,15 @@ extends Node
 ## the two taking turns, and only while you are in the cockpit, the mirrors are switched on and one is on screen.
 
 const GLASS_SHADER := preload("res://shaders/cockpit/mirror_glass.gdshader")
-const SIZE := Vector2(0.16, 0.075)           # glass, metres (width x height)
+const SIZE := Vector2(0.15, 0.07)            # glass, metres (width x height)
 const PICTURE := Vector2i(256, 120)          # reflection picture, pixels (the glass's shape)
 const RATE_HZ := 15.0                        # per mirror
 const STANDOFF := 0.035                      # glass in front of the arch's inner face, metres
 const FAR := 5000.0
-# where each mirror looks (aircraft space: forward -Z, right +X, up +Y): behind, a little outboard and up
-const LOOK_AFT := Vector3(0.0, 0.05, 1.0)
-const LOOK_OUT := 0.3
+# where each mirror looks (aircraft space: forward -Z, right +X, up +Y): behind and a little up and outboard, over
+# the canopy rail: the sky behind you, with that side's tail fin in the picture
+const LOOK_AFT := Vector3(0.0, 0.1, 1.0)
+const LOOK_OUT := 0.15
 
 var ac: Node3D
 var _mirrors: Array = []                     # {glass, housing, stalk, viewport, camera, centre, x, y, n (canopy-root space)}
@@ -25,6 +26,8 @@ var _acc := 0.0
 var _turn := 0
 var _on := true
 var _mat_off: ShaderMaterial
+var _dev_dir := ""                           # development: --dev-mirror-shot=<dir> saves each mirror's picture
+var _dev_t := 0.0
 
 
 ## pads: the canopy's hand-hold pad mesh (two boxes, left and right). eye: design eye point in aircraft space.
@@ -66,7 +69,7 @@ func build(aircraft: Node3D, root: Node3D, pads: MeshInstance3D, eye: Vector3, m
 		housing.mesh = hb
 		housing.transform = Transform3D(basis, mount - n * 0.0095)
 		housing.material_override = null
-		housing.set_surface_override_material(0, material_of.call("CP_SteelDark"))
+		housing.set_surface_override_material(0, material_of.call("CP_PaintDark"))
 		var stalk := MeshInstance3D.new()
 		var sb := CylinderMesh.new()
 		var stalk_len := maxf((mount - centre).length() - 0.01, 0.01)
@@ -77,7 +80,7 @@ func build(aircraft: Node3D, root: Node3D, pads: MeshInstance3D, eye: Vector3, m
 		var axis := (mount - centre).normalized()
 		var sx := axis.cross(x).normalized() if absf(axis.dot(x)) < 0.95 else axis.cross(y).normalized()
 		stalk.transform = Transform3D(Basis(sx, axis, sx.cross(axis)), centre + axis * (stalk_len * 0.5))
-		stalk.set_surface_override_material(0, material_of.call("CP_SteelDark"))
+		stalk.set_surface_override_material(0, material_of.call("CP_PaintDark"))
 		var glass := MeshInstance3D.new()
 		var q := QuadMesh.new()
 		q.size = SIZE
@@ -116,6 +119,9 @@ func build(aircraft: Node3D, root: Node3D, pads: MeshInstance3D, eye: Vector3, m
 		_mirrors.append(m)
 	if not _mirrors.is_empty():
 		pads.visible = false                         # the mirrors take the hand-holds' places
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--dev-mirror-shot="):
+			_dev_dir = arg.trim_prefix("--dev-mirror-shot=")
 	_apply_setting()
 	Settings.changed.connect(func(k, _v):
 		if k == "graphics/mirrors":
@@ -135,6 +141,14 @@ func _apply_setting() -> void:
 func update(inside: bool, cam: Camera3D, delta: float) -> void:
 	if not _on or not inside or cam == null or _mirrors.is_empty():
 		return
+	if _dev_dir != "":
+		_dev_t += delta
+		if _dev_t > 2.8:
+			for i in _mirrors.size():
+				var img := ((_mirrors[i].viewport as SubViewport).get_texture()).get_image()
+				if img:
+					img.save_png(_dev_dir.path_join("mirror_%d.png" % i))
+			_dev_dir = ""
 	_acc += delta
 	if _acc < 1.0 / (RATE_HZ * _mirrors.size()):
 		return
