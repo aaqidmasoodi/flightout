@@ -69,7 +69,12 @@ float hfetch(vec2 g, float layer) {
 	return textureLod(heights, vec3(uv, layer), 0.0).r * h_scale + h_offset;
 }
 
+// other views than the main camera (the cockpit mirrors' picture) shade the terrain the cheap way (as `lite`): their
+// picture is small and seen in a mirror, the fine detail would not show
+varying flat float v_lite;
+
 void vertex() {
+	v_lite = (lite || any(notEqual(INV_VIEW_MATRIX[3].xyz, MAIN_CAM_INV_VIEW_MATRIX[3].xyz))) ? 1.0 : 0.0;
 	float layer = INSTANCE_CUSTOM.x;
 	float m0 = INSTANCE_CUSTOM.z;
 	float m1 = INSTANCE_CUSTOM.w;
@@ -154,6 +159,7 @@ vec3 cover_col(float c, float macro, float macro2, float det, float fields, floa
 }
 
 void fragment() {
+	bool lt = v_lite > 0.5;
 	float h = v_h;
 	{
 		float hx = hfetch(v_grid + vec2(1.0, 0.0), v_layer) - hfetch(v_grid - vec2(1.0, 0.0), v_layer);
@@ -172,15 +178,15 @@ void fragment() {
 		// by 700 m (their weights are zero beyond, so those lookups are skipped there)
 		const float FINE_NEAR = 5000.0;
 		const float FINE_FAR = 6500.0;
-		float fine = lite ? 0.0 : 1.0 - smoothstep(FINE_NEAR, FINE_FAR, dist);
+		float fine = lt ? 0.0 : 1.0 - smoothstep(FINE_NEAR, FINE_FAR, dist);
 		float macro = texture(macro_tex, tc(sp, 16000.0)).r;
-		float macro2 = lite ? macro : texture(macro_tex, tc(sp, 4000.0) + 0.5).r;
+		float macro2 = lt ? macro : texture(macro_tex, tc(sp, 4000.0) + 0.5).r;
 		float det = texture(detail_tex, tc(sp, 64.0)).r;
-		float det2 = (lite || dist > 900.0) ? det : texture(detail_tex, tc(sp, 8.0) + 0.3).r;
+		float det2 = (lt || dist > 900.0) ? det : texture(detail_tex, tc(sp, 8.0) + 0.3).r;
 		// fields: irregular cells about 125 m across (cell index from a 64 km periodic frame, so it survives origin moves)
 		vec2 fw = (sp + mod(world_origin, vec2(64000.0))) / 125.0;
 		vec2 warp = vec2(0.0);
-		if (!lite) {
+		if (!lt) {
 			// (the field outlines' wobble stays at every distance: a field's colour is picked per cell, so fading
 			// the wobble would make distant fields change colour as you fly)
 			fw += (vec2(texture(detail_tex, tc(sp, 400.0)).r, texture(detail_tex, tc(sp, 400.0) + 0.5).r) - 0.5) * 1.4;
@@ -201,7 +207,7 @@ void fragment() {
 		vec3 c11 = cover_col(cls_at(g0 + vec2(1.0, 1.0), v_layer), macro, macro2, det, fields, h);
 		vec3 c = mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
 		float c_here = cls_at(g0, v_layer);
-		if (morph > 0.0 && !lite) {
+		if (morph > 0.0 && !lt) {
 			// the parent's land cover: only every other sample, so the class blocks are twice as big
 			// the parent reads its cover through the same warp in its own (twice as coarse) sample units
 			vec2 gc = clamp(v_grid * 0.5 + warp - 0.5, vec2(0.0), vec2(tile_quads * 0.5 - 0.001));
@@ -219,14 +225,14 @@ void fragment() {
 		float snowc = (c_here > 65.0 && c_here < 75.0) ? 1.0 : 0.0;
 		float waterc = (c_here > 75.0 && c_here < 85.0) ? 1.0 : 0.0;
 		// steep faces are rock whatever the cover says (snow does not stay on cliffs)
-		float rock_det = (lite || dist > FINE_FAR) ? det : mix(det, texture(detail_tex, tc(sp, 40.0) + 0.7).r, fine);
+		float rock_det = (lt || dist > FINE_FAR) ? det : mix(det, texture(detail_tex, tc(sp, 40.0) + 0.7).r, fine);
 		vec3 rock = mix(vec3(0.24, 0.22, 0.21), vec3(0.38, 0.35, 0.32), rock_det);
 		rock = mix(rock, rock * vec3(1.08, 0.96, 0.84), macro2 * 0.6);
 		float rock_amt = smoothstep(0.38, 0.6, slope + (rock_det - 0.5) * 0.12) * (1.0 - waterc);
 		c = mix(c, rock, rock_amt);
 		c *= mix(0.9 + 0.2 * det2, 1.0, smoothstep(150.0, 900.0, dist));
 		vec3 nw = n;
-		if (!lite && dist < 700.0) {
+		if (!lt && dist < 700.0) {
 			vec2 dn = texture(detail_nrm, tc(sp, 24.0)).xy * 2.0 - 1.0;
 			float relief = (1.0 - smoothstep(60.0, 700.0, dist)) * (0.35 + 0.65 * rock_amt) * (1.0 - waterc);
 			nw = normalize(n + vec3(dn.x, 0.0, dn.y) * relief * 0.6);

@@ -60,6 +60,7 @@ var _fold := 0.0                             # 0 unfolded .. 1 folded (shown)
 var _fold_shown := -1.0
 var _dev_dir := ""                           # development: --dev-mirror-shot=<dir> saves the shared picture
 var _dev_t := 0.0
+var _frame_n := 0
 
 
 ## Middle of the arch's band at an angle from the top (metres from its centre line).
@@ -246,13 +247,20 @@ func update(inside: bool, cam: Camera3D, delta: float) -> void:
 	var air: Transform3D = ac.get_global_transform_interpolated() if ac.is_physics_interpolated_and_enabled() else ac.global_transform
 	air.basis = air.basis.orthonormalized()
 	var t := air * _space(_root) * _capture_local
+	# world direction -> the picture camera's own axes (its rows are the camera's axes), every frame: on a frame the
+	# picture is not re-rendered it is read as if fixed to the jet, so your own tail and a wingman in formation stay
+	# steady in the mirrors and only the scenery moves on a frame late
+	_material.set_shader_parameter("capture_basis", t.basis.orthonormalized().transposed())
+	# the picture: every frame on Ultra, every second frame below (half the cost)
+	_frame_n += 1
+	var every := 1 if int(Settings.get_value("graphics/preset")) == 3 else 2
+	if _frame_n % every != 0:
+		return
 	_cam.global_transform = t
 	_cam.far = cam.far                          # as far as you can see out of the canopy (the terrain far below)
 	# the terrain draws only the tiles in view: tell it this view (behind the jet) needs them too
 	TERRAIN.add_view(_cam.get_frustum())
 	_sync_env()
-	# world direction -> the picture camera's own axes (its rows are the camera's axes)
-	_material.set_shader_parameter("capture_basis", t.basis.orthonormalized().transposed())
 	_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	if _dev_dir != "":
 		_dev_t += delta
